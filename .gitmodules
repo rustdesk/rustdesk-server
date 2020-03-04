@@ -1,0 +1,3 @@
+[submodule "libs/p2p"]
+	path = libs/p2p
+	url = https://github.com/open-trade/p2p

@@ -1,0 +1,13 @@
+[package]
+name = "hbbs"
+version = "0.1.0"
+authors = ["open-trade <info@opentradesolutions.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+p2p = { path = "libs/p2p" }
+
+[workspace]
+members = ["libs/p2p"]
