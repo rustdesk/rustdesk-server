@@ -1,24 +1,27 @@
 use super::message_proto::*;
 use bytes::Bytes;
-use futures::{FutureExt, SinkExt};
+use futures::SinkExt;
 use protobuf::{parse_from_bytes, Message as _};
 use std::{
     collections::HashMap,
     error::Error,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tokio::net::UdpSocket;
-use tokio::stream::StreamExt;
+use tokio::{
+    net::UdpSocket,
+    stream::StreamExt,
+    time::{self, delay_for},
+};
 use tokio_util::{codec::BytesCodec, udp::UdpFramed};
 
 /// Certain router and firewalls scan the packet and if they
 /// find an IP address belonging to their pool that they use to do the NAT mapping/translation, so here we mangle the ip address
 
-pub struct V4AddrMangle(Vec<u8>);
+pub struct V4AddrMangle();
 
 impl V4AddrMangle {
-    pub fn encode(addr: &SocketAddrV4) -> Self {
+    pub fn encode(addr: &SocketAddrV4) -> Vec<u8> {
         let tm = (SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -35,12 +38,12 @@ impl V4AddrMangle {
                 break;
             }
         }
-        Self(bytes[..(16 - n_padding)].to_vec())
+        bytes[..(16 - n_padding)].to_vec()
     }
 
-    pub fn decode(&self) -> SocketAddrV4 {
+    pub fn decode(bytes: &[u8]) -> SocketAddrV4 {
         let mut padded = [0u8; 16];
-        padded[..self.0.len()].copy_from_slice(&self.0);
+        padded[..bytes.len()].copy_from_slice(&bytes);
         let number = u128::from_ne_bytes(padded);
         let tm = (number >> 17) & (u32::max_value() as u128);
         let ip = (((number >> 49) - tm) as u32).to_ne_bytes();
@@ -83,11 +86,9 @@ impl RendezvousServer {
                                     },
                                 );
                             }
-                            tokio_timer::sleep(std::time::Duration::from_secs(60));
                         }
                         Some(Message_oneof_union::peek_peer(pp)) => {
                             rs.handle_peek_peer(&pp, addr, &mut socket).await?;
-                            tokio_timer::sleep(std::time::Duration::from_secs(60));
                         }
                         _ => {}
                     }
@@ -106,7 +107,7 @@ impl RendezvousServer {
         if let Some(peer) = self.peer_map.get(&pp.hbb_addr) {
             let mut msg_out = Message::new();
             msg_out.set_peek_peer_response(PeekPeerResponse {
-                socket_addr: V4AddrMangle::encode(&peer.socket_addr).0.to_vec(),
+                socket_addr: V4AddrMangle::encode(&peer.socket_addr),
                 ..Default::default()
             });
             send_to(&msg_out, addr, socket).await?;
@@ -123,13 +124,17 @@ pub async fn send_to(msg: &Message, addr: SocketAddr, socket: &mut FramedSocket)
     Ok(())
 }
 
+pub async fn sleep(sec: f32) {
+    delay_for(Duration::from_secs_f32(sec)).await;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
     fn test_mangle() {
         let addr = SocketAddrV4::new(Ipv4Addr::new(192, 168, 16, 32), 21116);
-        assert_eq!(addr, V4AddrMangle::encode(&addr).decode());
+        assert_eq!(addr, V4AddrMangle::decode(&V4AddrMangle::encode(&addr)[..]));
     }
 
     #[allow(unused_must_use)]
@@ -140,15 +145,38 @@ mod tests {
         let to_addr = server_addr.parse().unwrap();
         let f2 = async {
             let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+            let local_addr = socket.local_addr().unwrap();
             let mut socket = UdpFramed::new(socket, BytesCodec::new());
             let mut msg_out = Message::new();
+            msg_out.set_register_peer(RegisterPeer {
+                hbb_addr: "123".to_string(),
+                ..Default::default()
+            });
+            send_to(&msg_out, to_addr, &mut socket).await;
             msg_out.set_peek_peer(PeekPeer {
                 hbb_addr: "123".to_string(),
                 ..Default::default()
             });
             send_to(&msg_out, to_addr, &mut socket).await;
+            if let Ok(Some(Ok((bytes, _)))) =
+                time::timeout(Duration::from_millis(1), socket.next()).await
+            {
+                if let Ok(msg_in) = parse_from_bytes::<Message>(&bytes) {
+                    assert_eq!(
+                        local_addr,
+                        SocketAddr::V4(V4AddrMangle::decode(
+                            &msg_in.get_peek_peer_response().socket_addr[..]
+                        ))
+                    );
+                }
+            }
+            if true {
+                Err(Box::new(simple_error::SimpleError::new("done")))
+            } else {
+                Ok(())
+            }
         };
-        tokio::join!(f1, f2);
+        tokio::try_join!(f1, f2);
     }
 
     #[test]
