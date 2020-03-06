@@ -10,6 +10,7 @@ edition = "2018"
 tokio = { version = "0.2", features = ["full"] }
 protobuf = "2.10"
 tokio-util = { version = "0.3", features = ["full"] }
+tokio-timer = "0.2"
 log = "0.4"
 env_logger = "0.7"
 futures = "0.3"

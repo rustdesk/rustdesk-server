@@ -1,4 +1,4 @@
-use super::message_proto::Message;
+use super::message_proto::*;
 use bytes::Bytes;
 use futures::{FutureExt, SinkExt};
 use protobuf::{parse_from_bytes, Message as _};
@@ -18,7 +18,7 @@ use tokio_util::{codec::BytesCodec, udp::UdpFramed};
 pub struct V4AddrMangle(Vec<u8>);
 
 impl V4AddrMangle {
-    pub fn encode(addr: SocketAddrV4) -> Self {
+    pub fn encode(addr: &SocketAddrV4) -> Self {
         let tm = (SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -50,7 +50,7 @@ impl V4AddrMangle {
 }
 
 pub struct Peer {
-    socket_addr: SocketAddr,
+    socket_addr: SocketAddrV4,
 }
 
 type PeerMap = HashMap<String, Peer>;
@@ -59,26 +59,68 @@ pub struct RendezvousServer {
     peer_map: PeerMap,
 }
 
+type FramedSocket = UdpFramed<BytesCodec>;
+type ResultType = Result<(), Box<dyn Error>>;
+
 impl RendezvousServer {
-    pub async fn start(addr: &str) -> Result<Self, Box<dyn Error>> {
+    pub async fn start(addr: &str) -> ResultType {
         let socket = UdpSocket::bind(addr).await?;
         let mut socket = UdpFramed::new(socket, BytesCodec::new());
 
-        let rs = Self {
+        let mut rs = Self {
             peer_map: PeerMap::new(),
         };
         while let Some(Ok((bytes, addr))) = socket.next().await {
             if let SocketAddr::V4(addr_v4) = addr {
                 if let Ok(msg_in) = parse_from_bytes::<Message>(&bytes) {
-                    let msg_out = Message::new();
-                    socket
-                        .send((Bytes::from(msg_out.write_to_bytes().unwrap()), addr))
-                        .await?;
+                    match msg_in.union {
+                        Some(Message_oneof_union::register_peer(rp)) => {
+                            if rp.hbb_addr.len() > 0 {
+                                rs.peer_map.insert(
+                                    rp.hbb_addr,
+                                    Peer {
+                                        socket_addr: addr_v4,
+                                    },
+                                );
+                            }
+                            tokio_timer::sleep(std::time::Duration::from_secs(60));
+                        }
+                        Some(Message_oneof_union::peek_peer(pp)) => {
+                            rs.handle_peek_peer(&pp, addr, &mut socket).await?;
+                            tokio_timer::sleep(std::time::Duration::from_secs(60));
+                        }
+                        _ => {}
+                    }
                 }
             }
         }
-        Ok(rs)
+        Ok(())
     }
+
+    pub async fn handle_peek_peer(
+        &self,
+        pp: &PeekPeer,
+        addr: SocketAddr,
+        socket: &mut FramedSocket,
+    ) -> ResultType {
+        if let Some(peer) = self.peer_map.get(&pp.hbb_addr) {
+            let mut msg_out = Message::new();
+            msg_out.set_peek_peer_response(PeekPeerResponse {
+                socket_addr: V4AddrMangle::encode(&peer.socket_addr).0.to_vec(),
+                ..Default::default()
+            });
+            send_to(&msg_out, addr, socket).await?;
+        }
+        Ok(())
+    }
+}
+
+#[inline]
+pub async fn send_to(msg: &Message, addr: SocketAddr, socket: &mut FramedSocket) -> ResultType {
+    socket
+        .send((Bytes::from(msg.write_to_bytes().unwrap()), addr))
+        .await?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -87,7 +129,30 @@ mod tests {
     #[test]
     fn test_mangle() {
         let addr = SocketAddrV4::new(Ipv4Addr::new(192, 168, 16, 32), 21116);
-        assert_eq!(addr, V4AddrMangle::encode(addr).decode());
-        println!("{:?}", V4AddrMangle::encode(addr).0);
+        assert_eq!(addr, V4AddrMangle::encode(&addr).decode());
+    }
+
+    #[allow(unused_must_use)]
+    #[tokio::main]
+    async fn test_rs_async() {
+        let server_addr = "0.0.0.0:21116";
+        let f1 = RendezvousServer::start(server_addr);
+        let to_addr = server_addr.parse().unwrap();
+        let f2 = async {
+            let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+            let mut socket = UdpFramed::new(socket, BytesCodec::new());
+            let mut msg_out = Message::new();
+            msg_out.set_peek_peer(PeekPeer {
+                hbb_addr: "123".to_string(),
+                ..Default::default()
+            });
+            send_to(&msg_out, to_addr, &mut socket).await;
+        };
+        tokio::join!(f1, f2);
+    }
+
+    #[test]
+    fn test_rs() {
+        self::test_rs_async();
     }
 }

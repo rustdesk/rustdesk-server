@@ -1,9 +1,22 @@
 syntax = "proto3";
 package hbb;
 
+message RegisterPeer {
+  string hbb_addr = 1;
+}
+
+message PeekPeer {
+  string hbb_addr = 1;
+}
+
+message PeekPeerResponse {
+  bytes socket_addr = 1;
+}
+
 message Message {
-  string addr = 1; // hbb address
   oneof union {
-    bytes socket_addr = 6;
+    RegisterPeer register_peer = 6;
+    PeekPeer peek_peer = 7;
+    PeekPeerResponse peek_peer_response = 8;
   }
 }
