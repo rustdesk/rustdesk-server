@@ -8,13 +8,14 @@ edition = "2018"
 
 [dependencies]
 tokio = { version = "0.2", features = ["full"] }
-protobuf = "2.10"
 tokio-util = { version = "0.3", features = ["full"] }
 log = "0.4"
 env_logger = "0.7"
 futures = "0.3"
 bytes = "0.5"
 simple-error = "0.2"
+hbb_common = { path = "libs/hbb_common" }
 
-[build-dependencies]
-protobuf-codegen-pure = "2.10"
+[workspace]
+members = ['libs/hbb_common']
+

@@ -152,15 +152,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "hbb_common"
+version = "0.1.0"
+dependencies = [
+ "protobuf 2.10.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "protobuf-codegen-pure 2.10.2 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
 name = "hbbs"
 version = "0.1.0"
 dependencies = [
  "bytes 0.5.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "env_logger 0.7.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures 0.3.4 (registry+https://github.com/rust-lang/crates.io-index)",
+ "hbb_common 0.1.0",
  "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
- "protobuf 2.10.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "protobuf-codegen-pure 2.10.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "simple-error 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "tokio 0.2.13 (registry+https://github.com/rust-lang/crates.io-index)",
  "tokio-util 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
