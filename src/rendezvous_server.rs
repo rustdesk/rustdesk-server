@@ -60,15 +60,26 @@ impl RendezvousServer {
                             );
                         }
                     }
-                    Some(Message_oneof_union::peek_peer(pp)) => {
-                        if let Some(peer) = self.peer_map.get(&pp.hbb_addr) {
+                    Some(Message_oneof_union::punch_hole_request(ph)) => {
+                        // punch hole request from A, forward to B
+                        if let Some(peer) = self.peer_map.get(&ph.hbb_addr) {
                             let mut msg_out = Message::new();
-                            msg_out.set_peek_peer_response(PeekPeerResponse {
+                            msg_out.set_punch_hole(PunchHole {
                                 socket_addr: V4AddrMangle::encode(&peer.socket_addr),
                                 ..Default::default()
                             });
                             send_to(&msg_out, addr, socket).await?;
                         }
+                    }
+                    Some(Message_oneof_union::punch_hole_sent(phs)) => {
+                        // punch hole sent from B, tell A that B ready
+                        let addr_a = V4AddrMangle::decode(&phs.socket_addr);
+                        let mut msg_out = Message::new();
+                        msg_out.set_punch_hole_response(PunchHoleResponse {
+                            socket_addr: V4AddrMangle::encode(&addr_v4),
+                            ..Default::default()
+                        });
+                        send_to(&msg_out, SocketAddr::V4(addr_a), socket).await?;
                     }
                     _ => {}
                 }
@@ -86,6 +97,7 @@ pub async fn send_to(msg: &Message, addr: SocketAddr, socket: &mut FramedSocket)
     Ok(())
 }
 
+#[inline]
 pub async fn sleep(sec: f32) {
     delay_for(Duration::from_secs_f32(sec)).await;
 }
@@ -110,7 +122,7 @@ mod tests {
                 ..Default::default()
             });
             send_to(&msg_out, to_addr, &mut socket).await;
-            msg_out.set_peek_peer(PeekPeer {
+            msg_out.set_punch_hole_request(PunchHoleRequest {
                 hbb_addr: "123".to_string(),
                 ..Default::default()
             });
@@ -122,7 +134,7 @@ mod tests {
                     assert_eq!(
                         local_addr,
                         SocketAddr::V4(V4AddrMangle::decode(
-                            &msg_in.get_peek_peer_response().socket_addr[..]
+                            &msg_in.get_punch_hole_response().socket_addr[..]
                         ))
                     );
                 }

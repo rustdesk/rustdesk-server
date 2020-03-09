@@ -17,5 +17,5 @@ simple-error = "0.2"
 hbb_common = { path = "libs/hbb_common" }
 
 [workspace]
-members = ['libs/hbb_common']
+members = ["libs/hbb_common"]
 
