@@ -2,11 +2,12 @@
 // https://blog.csdn.net/bytxl/article/details/44344855
 
 use hbbs::*;
-use std::error::Error;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
-    RendezvousServer::start("0.0.0.0:21116").await?;
+    let addr = "0.0.0.0:21116";
+    log::info!("Start Server {}", addr);
+    RendezvousServer::start(&addr).await?;
     Ok(())
 }

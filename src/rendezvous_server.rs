@@ -26,7 +26,6 @@ impl RendezvousServer {
     pub async fn start(addr: &str) -> ResultType {
         let socket = UdpSocket::bind(addr).await?;
         let mut socket = UdpFramed::new(socket, BytesCodec::new());
-
         let mut rs = Self {
             peer_map: PeerMap::new(),
         };
@@ -46,6 +45,7 @@ impl RendezvousServer {
             match msg_in.union {
                 Some(Message_oneof_union::register_peer(rp)) => {
                     if rp.hbb_addr.len() > 0 {
+                        log::debug!("New peer registered: {:?} {:?}", &rp.hbb_addr, &addr);
                         self.peer_map
                             .insert(rp.hbb_addr, Peer { socket_addr: addr });
                     }
@@ -53,6 +53,12 @@ impl RendezvousServer {
                 Some(Message_oneof_union::punch_hole_request(ph)) => {
                     // punch hole request from A, forward to B
                     if let Some(peer) = self.peer_map.get(&ph.hbb_addr) {
+                        log::debug!(
+                            "Punch hole {:?} {:?} request from {:?}",
+                            &ph.hbb_addr,
+                            &peer.socket_addr,
+                            &addr
+                        );
                         let mut msg_out = Message::new();
                         msg_out.set_punch_hole(PunchHole {
                             socket_addr: AddrMangle::encode(&addr),
@@ -64,6 +70,7 @@ impl RendezvousServer {
                 Some(Message_oneof_union::punch_hole_sent(phs)) => {
                     // punch hole sent from B, tell A that B ready
                     let addr_a = AddrMangle::decode(&phs.socket_addr);
+                    log::debug!("Punch hole response to {:?} from {:?}", &addr_a, &addr);
                     let mut msg_out = Message::new();
                     msg_out.set_punch_hole_response(PunchHoleResponse {
                         socket_addr: AddrMangle::encode(&addr),
@@ -165,7 +172,6 @@ mod tests {
                 let msg_in = parse_from_bytes::<Message>(&bytes).unwrap();
                 let remote_addr_b =
                     AddrMangle::decode(&msg_in.get_punch_hole_response().socket_addr[..]);
-                println!("{:?}", msg_in);
                 assert_eq!(local_addr_b, remote_addr_b);
             }
 
