@@ -1,6 +1,6 @@
 use hbb_common::{
-    bytes::BytesMut, log, message_proto::*, protobuf::parse_from_bytes, tokio::net::UdpSocket,
-    udp::FramedSocket, AddrMangle, ResultType,
+    bytes::BytesMut, log, message_proto::*, protobuf::parse_from_bytes, udp::FramedSocket,
+    AddrMangle, ResultType,
 };
 use std::{collections::HashMap, net::SocketAddr};
 
@@ -16,8 +16,7 @@ pub struct RendezvousServer {
 
 impl RendezvousServer {
     pub async fn start(addr: &str) -> ResultType<()> {
-        let socket = UdpSocket::bind(addr).await?;
-        let mut socket = FramedSocket::new(socket);
+        let mut socket = FramedSocket::new(addr).await?;
         let mut rs = Self {
             peer_map: PeerMap::new(),
         };
@@ -87,8 +86,8 @@ mod tests {
     #[tokio::main]
     async fn test_rs_async() {
         let mut port_server: u16 = 0;
-        let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        if let SocketAddr::V4(addr) = socket.local_addr().unwrap() {
+        let socket = FramedSocket::new("127.0.0.1:0").await.unwrap();
+        if let SocketAddr::V4(addr) = socket.get_ref().local_addr().unwrap() {
             port_server = addr.port();
         }
         drop(socket);
@@ -101,9 +100,8 @@ mod tests {
 
     async fn punch_hole(addr_server: SocketAddr) -> ResultType<()> {
         // B register it to server
-        let socket_b = UdpSocket::bind("127.0.0.1:0").await?;
-        let local_addr_b = socket_b.local_addr().unwrap();
-        let mut socket_b = FramedSocket::new(socket_b);
+        let mut socket_b = FramedSocket::new("127.0.0.1:0").await?;
+        let local_addr_b = socket_b.get_ref().local_addr().unwrap();
         let mut msg_out = Message::new();
         msg_out.set_register_peer(RegisterPeer {
             hbb_addr: "123".to_string(),
@@ -112,9 +110,8 @@ mod tests {
         socket_b.send(&msg_out, addr_server).await?;
 
         // A send punch request to server
-        let socket_a = UdpSocket::bind("127.0.0.1:0").await?;
-        let local_addr_a = socket_a.local_addr().unwrap();
-        let mut socket_a = FramedSocket::new(socket_a);
+        let mut socket_a = FramedSocket::new("127.0.0.1:0").await?;
+        let local_addr_a = socket_a.get_ref().local_addr().unwrap();
         msg_out.set_punch_hole_request(PunchHoleRequest {
             hbb_addr: "123".to_string(),
             ..Default::default()
