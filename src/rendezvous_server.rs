@@ -1,13 +1,13 @@
-use bytes::{Bytes, BytesMut};
-use futures::SinkExt;
 use hbb_common::{
+    bytes::BytesMut,
+    log,
     message_proto::*,
-    protobuf::{parse_from_bytes, Message as _},
-    AddrMangle,
+    protobuf::parse_from_bytes,
+    tokio::{net::UdpSocket, stream::StreamExt},
+    udp::FramedSocket,
+    AddrMangle, ResultType,
 };
-use std::{collections::HashMap, error::Error, net::SocketAddr, time::Duration};
-use tokio::{net::UdpSocket, stream::StreamExt, time::delay_for};
-use tokio_util::{codec::BytesCodec, udp::UdpFramed};
+use std::{collections::HashMap, net::SocketAddr};
 
 pub struct Peer {
     socket_addr: SocketAddr,
@@ -19,13 +19,10 @@ pub struct RendezvousServer {
     peer_map: PeerMap,
 }
 
-type FramedSocket = UdpFramed<BytesCodec>;
-type ResultType = Result<(), Box<dyn Error>>;
-
 impl RendezvousServer {
-    pub async fn start(addr: &str) -> ResultType {
+    pub async fn start(addr: &str) -> ResultType<()> {
         let socket = UdpSocket::bind(addr).await?;
-        let mut socket = UdpFramed::new(socket, BytesCodec::new());
+        let mut socket = FramedSocket::new(socket);
         let mut rs = Self {
             peer_map: PeerMap::new(),
         };
@@ -40,7 +37,7 @@ impl RendezvousServer {
         bytes: &BytesMut,
         addr: SocketAddr,
         socket: &mut FramedSocket,
-    ) -> ResultType {
+    ) -> ResultType<()> {
         if let Ok(msg_in) = parse_from_bytes::<Message>(&bytes) {
             match msg_in.union {
                 Some(Message_oneof_union::register_peer(rp)) => {
@@ -64,7 +61,7 @@ impl RendezvousServer {
                             socket_addr: AddrMangle::encode(&addr),
                             ..Default::default()
                         });
-                        send_to(&msg_out, peer.socket_addr, socket).await?;
+                        socket.send(&msg_out, peer.socket_addr).await?;
                     }
                 }
                 Some(Message_oneof_union::punch_hole_sent(phs)) => {
@@ -76,7 +73,7 @@ impl RendezvousServer {
                         socket_addr: AddrMangle::encode(&addr),
                         ..Default::default()
                     });
-                    send_to(&msg_out, addr_a, socket).await?;
+                    socket.send(&msg_out, addr_a).await?;
                 }
                 _ => {}
             }
@@ -85,22 +82,11 @@ impl RendezvousServer {
     }
 }
 
-#[inline]
-pub async fn send_to(msg: &Message, addr: SocketAddr, socket: &mut FramedSocket) -> ResultType {
-    socket
-        .send((Bytes::from(msg.write_to_bytes().unwrap()), addr))
-        .await?;
-    Ok(())
-}
-
-#[inline]
-pub async fn sleep(sec: f32) {
-    delay_for(Duration::from_secs_f32(sec)).await;
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hbb_common::tokio;
+    use std::time::Duration;
 
     #[allow(unused_must_use)]
     #[tokio::main]
@@ -118,23 +104,23 @@ mod tests {
             // B register it to server
             let socket_b = UdpSocket::bind("127.0.0.1:0").await.unwrap();
             let local_addr_b = socket_b.local_addr().unwrap();
-            let mut socket_b = UdpFramed::new(socket_b, BytesCodec::new());
+            let mut socket_b = FramedSocket::new(socket_b);
             let mut msg_out = Message::new();
             msg_out.set_register_peer(RegisterPeer {
                 hbb_addr: "123".to_string(),
                 ..Default::default()
             });
-            send_to(&msg_out, addr_server, &mut socket_b).await;
+            socket_b.send(&msg_out, addr_server).await;
 
             // A send punch request to server
             let socket_a = UdpSocket::bind("127.0.0.1:0").await.unwrap();
             let local_addr_a = socket_a.local_addr().unwrap();
-            let mut socket_a = UdpFramed::new(socket_a, BytesCodec::new());
+            let mut socket_a = FramedSocket::new(socket_a);
             msg_out.set_punch_hole_request(PunchHoleRequest {
                 hbb_addr: "123".to_string(),
                 ..Default::default()
             });
-            send_to(&msg_out, addr_server, &mut socket_a).await;
+            socket_a.send(&msg_out, addr_server).await;
 
             println!(
                 "A {:?} request punch hole to B {:?} via server {:?}",
@@ -160,7 +146,7 @@ mod tests {
                     socket_addr: AddrMangle::encode(&remote_addr_a),
                     ..Default::default()
                 });
-                send_to(&msg_out, addr_server, &mut socket_b).await;
+                socket_b.send(&msg_out, addr_server).await;
             }
 
             // on A side

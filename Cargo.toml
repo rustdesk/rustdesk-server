@@ -7,12 +7,6 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-tokio = { version = "0.2", features = ["full"] }
-tokio-util = { version = "0.3", features = ["full"] }
-log = "0.4"
-env_logger = "0.7"
-futures = "0.3"
-bytes = "0.5"
 simple-error = "0.2"
 hbb_common = { path = "libs/hbb_common" }
 
