@@ -20,6 +20,15 @@ impl RendezvousServer {
         let mut rs = Self {
             peer_map: PeerMap::new(),
         };
+        /* // used to test if udp/tcp share the same NAT port, yes in my test
+        let addr = addr.to_string();
+        hbb_common::tokio::spawn(async {
+            let mut l = hbb_common::tokio::net::TcpListener::bind(addr).await.unwrap();
+            while let Ok((_, addr)) = l.accept().await {
+                log::debug!("Tcp peer {:?}", addr);
+            }
+        });
+        */
         while let Some(Ok((bytes, addr))) = socket.next().await {
             rs.handle_msg(&bytes, addr, &mut socket).await?;
         }
