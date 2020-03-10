@@ -79,8 +79,7 @@ impl RendezvousServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hbb_common::tokio;
-    use std::io::{Error, ErrorKind};
+    use hbb_common::{new_error, tokio};
 
     #[allow(unused_must_use)]
     #[tokio::main]
@@ -127,7 +126,7 @@ mod tests {
         if let Some(Ok((bytes, addr))) = socket_b.next_timeout(1000).await {
             assert_eq!(addr_server, addr);
             let msg_in = parse_from_bytes::<Message>(&bytes)?;
-            let remote_addr_a = AddrMangle::decode(&msg_in.get_punch_hole().socket_addr[..]);
+            let remote_addr_a = AddrMangle::decode(&msg_in.get_punch_hole().socket_addr);
             assert_eq!(local_addr_a, remote_addr_a);
 
             // B punch A
@@ -150,14 +149,13 @@ mod tests {
         if let Some(Ok((bytes, addr))) = socket_a.next_timeout(1000).await {
             assert_eq!(addr_server, addr);
             let msg_in = parse_from_bytes::<Message>(&bytes)?;
-            let remote_addr_b =
-                AddrMangle::decode(&msg_in.get_punch_hole_response().socket_addr[..]);
+            let remote_addr_b = AddrMangle::decode(&msg_in.get_punch_hole_response().socket_addr);
             assert_eq!(local_addr_b, remote_addr_b);
         } else {
             panic!("failed");
         }
 
-        Err(Box::new(Error::new(ErrorKind::Other, "done")))
+        Err(new_error("done"))
     }
 
     #[test]
