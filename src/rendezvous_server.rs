@@ -1,5 +1,5 @@
 use hbb_common::{
-    bytes::BytesMut, log, protobuf::parse_from_bytes, rendezvous_proto::*, udp::FramedSocket,
+    bytes::BytesMut, log, protobuf::parse_from_bytes, rendezvous_proto::*, udp::FramedSocket, tcp::new_listener,
     AddrMangle, ResultType,
 };
 use std::{collections::HashMap, net::SocketAddr};
@@ -20,15 +20,15 @@ impl RendezvousServer {
         let mut rs = Self {
             peer_map: PeerMap::new(),
         };
-        /* // used to test if udp/tcp share the same NAT port, yes in my test
+        // used to test if udp/tcp share the same NAT port, yes in my test.
+        // also be used to help client to get local ip.
         let addr = addr.to_string();
         hbb_common::tokio::spawn(async {
-            let mut l = hbb_common::tokio::net::TcpListener::bind(addr).await.unwrap();
+            let mut l = new_listener(addr, true).await.unwrap();
             while let Ok((_, addr)) = l.accept().await {
-                log::debug!("Tcp peer {:?}", addr);
+                log::debug!("Tcp connection from {:?}", addr);
             }
         });
-        */
         while let Some(Ok((bytes, addr))) = socket.next().await {
             rs.handle_msg(&bytes, addr, &mut socket).await?;
         }
