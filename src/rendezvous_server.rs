@@ -45,10 +45,12 @@ impl RendezvousServer {
             match msg_in.union {
                 Some(RendezvousMessage_oneof_union::register_peer(rp)) => {
                     // B registered
-                    if rp.hbb_addr.len() > 0 {
-                        log::debug!("New peer registered: {:?} {:?}", &rp.hbb_addr, &addr);
-                        self.peer_map
-                            .insert(rp.hbb_addr, Peer { socket_addr: addr });
+                    if rp.id.len() > 0 {
+                        log::debug!("New peer registered: {:?} {:?}", &rp.id, &addr);
+                        self.peer_map.insert(rp.id, Peer { socket_addr: addr });
+                        let mut msg_out = RendezvousMessage::new();
+                        msg_out.set_register_peer_response(RegisterPeerResponse::default());
+                        socket.send(&msg_out, addr).await?
                     }
                 }
                 Some(RendezvousMessage_oneof_union::punch_hole_request(ph)) => {
@@ -57,7 +59,7 @@ impl RendezvousServer {
                     // fetch local addrs if in same intranet.
                     // because punch hole won't work if in the same intranet,
                     // all routers will drop such self-connections.
-                    if let Some(peer) = self.peer_map.get(&ph.hbb_addr) {
+                    if let Some(peer) = self.peer_map.get(&ph.id) {
                         let mut msg_out = RendezvousMessage::new();
                         let same_intranet = match peer.socket_addr {
                             SocketAddr::V4(a) => match addr {
@@ -72,19 +74,19 @@ impl RendezvousServer {
                         let socket_addr = AddrMangle::encode(&addr);
                         if same_intranet {
                             log::debug!(
-                                "Fetch local addrs {:?} {:?} request from {:?}",
-                                &ph.hbb_addr,
+                                "Fetch local addr {:?} {:?} request from {:?}",
+                                &ph.id,
                                 &peer.socket_addr,
                                 &addr
                             );
-                            msg_out.set_fetch_local_addrs(FetchLocalAddrs {
+                            msg_out.set_fetch_local_addr(FetchLocalAddr {
                                 socket_addr,
                                 ..Default::default()
                             });
                         } else {
                             log::debug!(
                                 "Punch hole {:?} {:?} request from {:?}",
-                                &ph.hbb_addr,
+                                &ph.id,
                                 &peer.socket_addr,
                                 &addr
                             );
@@ -94,6 +96,13 @@ impl RendezvousServer {
                             });
                         }
                         socket.send(&msg_out, peer.socket_addr).await?;
+                    } else {
+                        let mut msg_out = RendezvousMessage::new();
+                        msg_out.set_punch_hole_response(PunchHoleResponse {
+                            failure: PunchHoleResponse_Failure::ID_NOT_EXIST,
+                            ..Default::default()
+                        });
+                        socket.send(&msg_out, addr).await?
                     }
                 }
                 Some(RendezvousMessage_oneof_union::punch_hole_sent(phs)) => {
@@ -107,13 +116,13 @@ impl RendezvousServer {
                     });
                     socket.send(&msg_out, addr_a).await?;
                 }
-                Some(RendezvousMessage_oneof_union::local_addrs(la)) => {
+                Some(RendezvousMessage_oneof_union::local_addr(la)) => {
                     // forward local addrs of B to A
                     let addr_a = AddrMangle::decode(&la.socket_addr);
                     log::debug!("Local addrs response to {:?} from {:?}", &addr_a, &addr);
                     let mut msg_out = RendezvousMessage::new();
-                    msg_out.set_local_addrs_response(LocalAddrsResponse {
-                        socket_addrs: la.local_addrs,
+                    msg_out.set_punch_hole_response(PunchHoleResponse {
+                        socket_addr: la.local_addr,
                         ..Default::default()
                     });
                     socket.send(&msg_out, addr_a).await?;
@@ -128,7 +137,7 @@ impl RendezvousServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hbb_common::{new_error, tokio};
+    use hbb_common::{tokio};
 
     #[allow(unused_must_use)]
     #[tokio::main]
@@ -152,7 +161,7 @@ mod tests {
         let local_addr_b = socket_b.get_ref().local_addr().unwrap();
         let mut msg_out = RendezvousMessage::new();
         msg_out.set_register_peer(RegisterPeer {
-            hbb_addr: "123".to_string(),
+            id: "123".to_string(),
             ..Default::default()
         });
         socket_b.send(&msg_out, addr_server).await?;
@@ -161,7 +170,7 @@ mod tests {
         let mut socket_a = FramedSocket::new("127.0.0.1:0").await?;
         let local_addr_a = socket_a.get_ref().local_addr().unwrap();
         msg_out.set_punch_hole_request(PunchHoleRequest {
-            hbb_addr: "123".to_string(),
+            id: "123".to_string(),
             ..Default::default()
         });
         socket_a.send(&msg_out, addr_server).await?;
@@ -204,7 +213,7 @@ mod tests {
             panic!("failed");
         }
 
-        Err(new_error("done"))
+        Err("done".into())
     }
 
     #[test]
