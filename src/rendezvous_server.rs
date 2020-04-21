@@ -43,7 +43,7 @@ impl RendezvousServer {
     ) -> ResultType<()> {
         if let Ok(msg_in) = parse_from_bytes::<RendezvousMessage>(&bytes) {
             match msg_in.union {
-                Some(RendezvousMessage_oneof_union::register_peer(rp)) => {
+                Some(rendezvous_message::Union::register_peer(rp)) => {
                     // B registered
                     if rp.id.len() > 0 {
                         log::debug!("New peer registered: {:?} {:?}", &rp.id, &addr);
@@ -53,7 +53,7 @@ impl RendezvousServer {
                         socket.send(&msg_out, addr).await?
                     }
                 }
-                Some(RendezvousMessage_oneof_union::punch_hole_request(ph)) => {
+                Some(rendezvous_message::Union::punch_hole_request(ph)) => {
                     // punch hole request from A, forward to B,
                     // check if in same intranet first,
                     // fetch local addrs if in same intranet.
@@ -99,13 +99,13 @@ impl RendezvousServer {
                     } else {
                         let mut msg_out = RendezvousMessage::new();
                         msg_out.set_punch_hole_response(PunchHoleResponse {
-                            failure: PunchHoleResponse_Failure::ID_NOT_EXIST,
+                            failure: punch_hole_response::Failure::ID_NOT_EXIST.into(),
                             ..Default::default()
                         });
                         socket.send(&msg_out, addr).await?
                     }
                 }
-                Some(RendezvousMessage_oneof_union::punch_hole_sent(phs)) => {
+                Some(rendezvous_message::Union::punch_hole_sent(phs)) => {
                     // punch hole sent from B, tell A that B is ready to be connected
                     let addr_a = AddrMangle::decode(&phs.socket_addr);
                     log::debug!("Punch hole response to {:?} from {:?}", &addr_a, &addr);
@@ -116,7 +116,7 @@ impl RendezvousServer {
                     });
                     socket.send(&msg_out, addr_a).await?;
                 }
-                Some(RendezvousMessage_oneof_union::local_addr(la)) => {
+                Some(rendezvous_message::Union::local_addr(la)) => {
                     // forward local addrs of B to A
                     let addr_a = AddrMangle::decode(&la.socket_addr);
                     log::debug!("Local addrs response to {:?} from {:?}", &addr_a, &addr);
@@ -137,7 +137,7 @@ impl RendezvousServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hbb_common::{tokio};
+    use hbb_common::tokio;
 
     #[allow(unused_must_use)]
     #[tokio::main]
