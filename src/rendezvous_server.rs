@@ -2,13 +2,15 @@ use hbb_common::{
     allow_err, bytes::BytesMut, log, protobuf::parse_from_bytes, rendezvous_proto::*,
     tcp::new_listener, tokio, udp::FramedSocket, AddrMangle, ResultType,
 };
-use std::{collections::HashMap, net::SocketAddr};
+use std::{collections::HashMap, net::SocketAddr, time::Instant};
 
 pub struct Peer {
     socket_addr: SocketAddr,
+    last_reg_time: Instant,
 }
 
 type PeerMap = HashMap<String, Peer>;
+const REG_TIMEOUT: i32 = 30_000;
 
 pub struct RendezvousServer {
     peer_map: PeerMap,
@@ -47,7 +49,7 @@ impl RendezvousServer {
                     // B registered
                     if rp.id.len() > 0 {
                         log::debug!("New peer registered: {:?} {:?}", &rp.id, &addr);
-                        self.peer_map.insert(rp.id, Peer { socket_addr: addr });
+                        self.peer_map.insert(rp.id, Peer { socket_addr: addr, last_reg_time: Instant::now() });
                         let mut msg_out = RendezvousMessage::new();
                         msg_out.set_register_peer_response(RegisterPeerResponse::default());
                         socket.send(&msg_out, addr).await?
@@ -60,6 +62,14 @@ impl RendezvousServer {
                     // because punch hole won't work if in the same intranet,
                     // all routers will drop such self-connections.
                     if let Some(peer) = self.peer_map.get(&ph.id) {
+                        if peer.last_reg_time.elapsed().as_millis() as i32 >= REG_TIMEOUT {
+                            let mut msg_out = RendezvousMessage::new();
+                            msg_out.set_punch_hole_response(PunchHoleResponse {
+                                failure: punch_hole_response::Failure::OFFLINE.into(),
+                                ..Default::default()
+                            });
+                            return socket.send(&msg_out, addr).await;
+                        }
                         let mut msg_out = RendezvousMessage::new();
                         let same_intranet = match peer.socket_addr {
                             SocketAddr::V4(a) => match addr {
