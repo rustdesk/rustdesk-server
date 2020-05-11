@@ -48,7 +48,7 @@ impl RendezvousServer {
         loop {
             tokio::select! {
                 Some((addr, id)) = rx.recv() => {
-                    allow_err!(rs.handle_punch_hole_request(addr, &id, &mut socket).await);
+                    allow_err!(rs.handle_punch_hole_request(addr, &id, &mut socket, true).await);
                 }
                 Some(Ok((bytes, addr))) = socket.next() => {
                     allow_err!(rs.handle_msg(&bytes, addr, &mut socket).await);
@@ -115,7 +115,8 @@ impl RendezvousServer {
                     }
                 }
                 Some(rendezvous_message::Union::punch_hole_request(ph)) => {
-                    self.handle_punch_hole_request(addr, &ph.id, socket).await?;
+                    self.handle_punch_hole_request(addr, &ph.id, socket, false)
+                        .await?;
                 }
                 Some(rendezvous_message::Union::punch_hole_sent(phs)) => {
                     self.handle_hole_sent(&phs, addr, Some(socket)).await?;
@@ -188,6 +189,7 @@ impl RendezvousServer {
         addr: SocketAddr,
         id: &str,
         socket: &mut FramedSocket,
+        is_tcp: bool,
     ) -> ResultType<()> {
         // punch hole request from A, forward to B,
         // check if in same intranet first,
@@ -201,7 +203,11 @@ impl RendezvousServer {
                     failure: punch_hole_response::Failure::OFFLINE.into(),
                     ..Default::default()
                 });
-                return socket.send(&msg_out, addr).await;
+                return if is_tcp {
+                    self.send_to_tcp(&msg_out, addr).await
+                } else {
+                    socket.send(&msg_out, addr).await
+                };
             }
             let mut msg_out = RendezvousMessage::new();
             let same_intranet = match peer.socket_addr {
@@ -245,7 +251,11 @@ impl RendezvousServer {
                 failure: punch_hole_response::Failure::ID_NOT_EXIST.into(),
                 ..Default::default()
             });
-            socket.send(&msg_out, addr).await?
+            return if is_tcp {
+                self.send_to_tcp(&msg_out, addr).await
+            } else {
+                socket.send(&msg_out, addr).await
+            };
         }
         Ok(())
     }
