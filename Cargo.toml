@@ -8,6 +8,7 @@ edition = "2018"
 
 [dependencies]
 hbb_common = { path = "libs/hbb_common" }
+sled = "0.31"
 
 [workspace]
 members = ["libs/hbb_common"]
