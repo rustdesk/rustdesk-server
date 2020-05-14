@@ -1,7 +1,6 @@
 use hbb_common::{
     allow_err,
-    bytes::Bytes,
-    bytes::BytesMut,
+    bytes::{Bytes, BytesMut},
     bytes_codec::BytesCodec,
     futures_util::{
         sink::SinkExt,
@@ -16,6 +15,7 @@ use hbb_common::{
     udp::FramedSocket,
     AddrMangle, ResultType,
 };
+use serde_derive::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     net::SocketAddr,
@@ -29,28 +29,47 @@ struct Peer {
     last_reg_time: Instant,
 }
 
+#[derive(Debug, Serialize, Deserialize, Default)]
+struct PeerSerde {
+    #[serde(default)]
+    ip: String,
+}
+
 #[derive(Clone)]
 struct PeerMap {
     map: Arc<RwLock<HashMap<String, Peer>>>,
-    db: sled::Db,
+    db: super::SledAsync,
 }
 
 impl PeerMap {
     fn new() -> ResultType<Self> {
         Ok(Self {
             map: Default::default(),
-            db: sled::open("./sled.db")?,
+            db: super::SledAsync::new("./sled.db")?,
         })
     }
 
     #[inline]
     fn insert(&mut self, key: String, peer: Peer) {
-        self.map.write().unwrap().insert(key, peer);
+        if self.map.write().unwrap().insert(key, peer).is_none() {}
     }
 
     #[inline]
-    fn get(&self, key: &str) -> Option<Peer> {
-        self.map.read().unwrap().get(key).map(|x| x.clone())
+    async fn get(&mut self, key: String) -> Option<Peer> {
+        let p = self.map.read().unwrap().get(&key).map(|x| x.clone());
+        if p.is_some() {
+            return p;
+        } else {
+            if let Some(_) = self.db.get(key).await {
+                // to-do
+            }
+        }
+        None
+    }
+
+    #[inline]
+    fn is_in_memory(&self, key: &str) -> bool {
+        self.map.read().unwrap().contains_key(key)
     }
 }
 
@@ -93,7 +112,7 @@ impl RendezvousServer {
                             if let Ok(msg_in) = parse_from_bytes::<RendezvousMessage>(&bytes) {
                                 match msg_in.union {
                                     Some(rendezvous_message::Union::punch_hole_request(ph)) => {
-                                        allow_err!(rs.handle_tcp_punch_hole_request(addr, &ph.id).await);
+                                        allow_err!(rs.handle_tcp_punch_hole_request(addr, ph.id).await);
                                     }
                                     Some(rendezvous_message::Union::punch_hole_sent(phs)) => {
                                         allow_err!(rs.handle_hole_sent(&phs, addr, None).await);
@@ -141,7 +160,15 @@ impl RendezvousServer {
                     }
                 }
                 Some(rendezvous_message::Union::punch_hole_request(ph)) => {
-                    self.handle_udp_punch_hole_request(addr, &ph.id).await?;
+                    let id = ph.id;
+                    if self.pm.is_in_memory(&id) {
+                        self.handle_udp_punch_hole_request(addr, id).await?;
+                    } else {
+                        let mut me = self.clone();
+                        tokio::spawn(async move {
+                            allow_err!(me.handle_udp_punch_hole_request(addr, id).await);
+                        });
+                    }
                 }
                 Some(rendezvous_message::Union::punch_hole_sent(phs)) => {
                     self.handle_hole_sent(&phs, addr, Some(socket)).await?;
@@ -215,14 +242,14 @@ impl RendezvousServer {
     async fn handle_punch_hole_request(
         &mut self,
         addr: SocketAddr,
-        id: &str,
+        id: String,
     ) -> ResultType<(RendezvousMessage, Option<SocketAddr>)> {
         // punch hole request from A, forward to B,
         // check if in same intranet first,
         // fetch local addrs if in same intranet.
         // because punch hole won't work if in the same intranet,
         // all routers will drop such self-connections.
-        if let Some(peer) = self.pm.get(id) {
+        if let Some(peer) = self.pm.get(id.clone()).await {
             if peer.last_reg_time.elapsed().as_millis() as i32 >= REG_TIMEOUT {
                 let mut msg_out = RendezvousMessage::new();
                 msg_out.set_punch_hole_response(PunchHoleResponse {
@@ -308,7 +335,7 @@ impl RendezvousServer {
     async fn handle_tcp_punch_hole_request(
         &mut self,
         addr: SocketAddr,
-        id: &str,
+        id: String,
     ) -> ResultType<()> {
         let (msg, to_addr) = self.handle_punch_hole_request(addr, id).await?;
         if let Some(addr) = to_addr {
@@ -323,7 +350,7 @@ impl RendezvousServer {
     async fn handle_udp_punch_hole_request(
         &mut self,
         addr: SocketAddr,
-        id: &str,
+        id: String,
     ) -> ResultType<()> {
         let (msg, to_addr) = self.handle_punch_hole_request(addr, id).await?;
         self.tx.send((
