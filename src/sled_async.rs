@@ -18,11 +18,15 @@ pub struct SledAsync {
 }
 
 impl SledAsync {
-    pub fn new(path: &str) -> ResultType<Self> {
-        Ok(Self {
+    pub fn new(path: &str, run: bool) -> ResultType<Self> {
+        let mut res = Self {
             db: sled::open(path)?,
             tx: None,
-        })
+        };
+        if run {
+            res.run();
+        }
+        Ok(res)
     }
 
     pub fn run(&mut self) -> std::thread::JoinHandle<()> {
@@ -31,6 +35,7 @@ impl SledAsync {
         let db = self.db.clone();
         std::thread::spawn(move || {
             Self::io_loop(db, rx);
+            log::debug!("Exit SledAsync loop");
         })
     }
 
@@ -55,6 +60,13 @@ impl SledAsync {
         }
     }
 
+    pub fn _close(self, j: std::thread::JoinHandle<()>) {
+        if let Some(tx) = &self.tx {
+            allow_err!(tx.send(Action::Close));
+        }
+        allow_err!(j.join());
+    }
+
     pub async fn get(&mut self, key: String) -> Option<sled::IVec> {
         if let Some(tx) = &self.tx {
             let (tx_once, mut rx) = mpsc::channel::<Option<sled::IVec>>(1);
@@ -67,7 +79,7 @@ impl SledAsync {
     }
 
     #[inline]
-    pub fn deserialize<'a, T: serde::Deserialize<'a>>(v: &'a Option<sled::IVec>) -> Option<T> {
+    pub fn _deserialize<'a, T: serde::Deserialize<'a>>(v: &'a Option<sled::IVec>) -> Option<T> {
         if let Some(v) = v {
             if let Ok(v) = std::str::from_utf8(v) {
                 if let Ok(v) = serde_json::from_str::<T>(&v) {
@@ -78,9 +90,9 @@ impl SledAsync {
         None
     }
 
-    pub fn insert<'a, T: serde::Serialize>(&mut self, key: String, v: &T) {
+    pub fn insert<T: serde::Serialize>(&mut self, key: String, v: T) {
         if let Some(tx) = &self.tx {
-            if let Ok(v) = serde_json::to_vec(v) {
+            if let Ok(v) = serde_json::to_vec(&v) {
                 allow_err!(tx.send(Action::Insert((key, v))));
             }
         }

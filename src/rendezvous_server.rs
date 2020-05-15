@@ -29,6 +29,17 @@ struct Peer {
     last_reg_time: Instant,
 }
 
+impl Default for Peer {
+    fn default() -> Self {
+        Self {
+            socket_addr: "0.0.0.0:0".parse().unwrap(),
+            last_reg_time: Instant::now()
+                .checked_sub(std::time::Duration::from_secs(3600))
+                .unwrap(),
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Default)]
 struct PeerSerde {
     #[serde(default)]
@@ -45,13 +56,23 @@ impl PeerMap {
     fn new() -> ResultType<Self> {
         Ok(Self {
             map: Default::default(),
-            db: super::SledAsync::new("./sled.db")?,
+            db: super::SledAsync::new("./sled.db", true)?,
         })
     }
 
     #[inline]
     fn insert(&mut self, key: String, peer: Peer) {
-        if self.map.write().unwrap().insert(key, peer).is_none() {}
+        let ip = peer.socket_addr.ip();
+        if self
+            .map
+            .write()
+            .unwrap()
+            .insert(key.clone(), peer)
+            .is_none()
+        {
+            let ip = ip.to_string();
+            self.db.insert(key, PeerSerde { ip });
+        }
     }
 
     #[inline]
@@ -61,7 +82,7 @@ impl PeerMap {
             return p;
         } else {
             if let Some(_) = self.db.get(key).await {
-                // to-do
+                return Some(Peer::default());
             }
         }
         None
