@@ -185,6 +185,7 @@ impl RendezvousServer {
                     if self.pm.is_in_memory(&id) {
                         self.handle_udp_punch_hole_request(addr, id).await?;
                     } else {
+                        // not in memory, fetch from db with spawn in case blocking me
                         let mut me = self.clone();
                         tokio::spawn(async move {
                             allow_err!(me.handle_udp_punch_hole_request(addr, id).await);
@@ -196,6 +197,9 @@ impl RendezvousServer {
                 }
                 Some(rendezvous_message::Union::local_addr(la)) => {
                     self.handle_local_addr(&la, addr, Some(socket)).await?;
+                }
+                Some(rendezvous_message::Union::system_info(info)) => {
+                    log::info!("{}", info.value);                    
                 }
                 _ => {}
             }
