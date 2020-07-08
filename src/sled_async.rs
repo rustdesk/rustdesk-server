@@ -8,7 +8,7 @@ use hbb_common::{
 enum Action {
     Insert((String, Vec<u8>)),
     Get((String, mpsc::Sender<Option<sled::IVec>>)),
-    Close,
+    _Close,
 }
 
 #[derive(Clone)]
@@ -55,14 +55,14 @@ impl SledAsync {
                             .await
                     );
                 }
-                Action::Close => break,
+                Action::_Close => break,
             }
         }
     }
 
     pub fn _close(self, j: std::thread::JoinHandle<()>) {
         if let Some(tx) = &self.tx {
-            allow_err!(tx.send(Action::Close));
+            allow_err!(tx.send(Action::_Close));
         }
         allow_err!(j.join());
     }

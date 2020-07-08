@@ -65,38 +65,10 @@ impl PeerMap {
     }
 
     #[inline]
-    async fn update_addr(&mut self, key: String, socket_addr: SocketAddr) {
-        let mut lock = self.map.write().unwrap();
-        let last_reg_time = Instant::now();
-        if let Some(old) = lock.get_mut(&key) {
-            old.socket_addr = socket_addr;
-            old.last_reg_time = last_reg_time;
-        } else {
-            let mut me = self.clone();
-            tokio::spawn(async move {
-                let v = me.db.get(key.clone()).await;
-                let pk = if let Some(v) = super::SledAsync::deserialize::<PeerSerde>(&v) {
-                    v.pk
-                } else {
-                    Vec::new()
-                };
-                me.map.write().unwrap().insert(
-                    key,
-                    Peer {
-                        socket_addr,
-                        last_reg_time,
-                        pk,
-                    },
-                );
-            });
-        }
-    }
-
-    #[inline]
-    fn update_key(&mut self, key: String, socket_addr: SocketAddr, pk: Vec<u8>) {
+    fn update_pk(&mut self, id: String, socket_addr: SocketAddr, pk: Vec<u8>) {
         let mut lock = self.map.write().unwrap();
         lock.insert(
-            key.clone(),
+            id.clone(),
             Peer {
                 socket_addr,
                 last_reg_time: Instant::now(),
@@ -104,19 +76,20 @@ impl PeerMap {
             },
         );
         let ip = socket_addr.ip().to_string();
-        self.db.insert(key, PeerSerde { ip, pk });
+        self.db.insert(id, PeerSerde { ip, pk });
     }
 
     #[inline]
-    async fn get(&mut self, key: String) -> Option<Peer> {
-        let p = self.map.read().unwrap().get(&key).map(|x| x.clone());
+    async fn get(&mut self, id: &str) -> Option<Peer> {
+        let p = self.map.read().unwrap().get(id).map(|x| x.clone());
         if p.is_some() {
             return p;
         } else {
-            let v = self.db.get(key.clone()).await;
+            let id = id.to_owned();
+            let v = self.db.get(id.clone()).await;
             if let Some(v) = super::SledAsync::deserialize::<PeerSerde>(&v) {
                 self.map.write().unwrap().insert(
-                    key,
+                    id,
                     Peer {
                         pk: v.pk,
                         ..Default::default()
@@ -129,19 +102,20 @@ impl PeerMap {
     }
 
     #[inline]
-    fn is_in_memory(&self, key: &str) -> bool {
-        self.map.read().unwrap().contains_key(key)
+    fn is_in_memory(&self, id: &str) -> bool {
+        self.map.read().unwrap().contains_key(id)
     }
 }
 
 const REG_TIMEOUT: i32 = 30_000;
 type Sink = SplitSink<Framed<TcpStream, BytesCodec>, Bytes>;
+type Sender = mpsc::UnboundedSender<(RendezvousMessage, SocketAddr)>;
 
 #[derive(Clone)]
 pub struct RendezvousServer {
     tcp_punch: Arc<Mutex<HashMap<SocketAddr, Sink>>>,
     pm: PeerMap,
-    tx: mpsc::UnboundedSender<(RendezvousMessage, SocketAddr)>,
+    tx: Sender,
 }
 
 impl RendezvousServer {
@@ -208,19 +182,29 @@ impl RendezvousServer {
                     // B registered
                     if rp.id.len() > 0 {
                         log::debug!("New peer registered: {:?} {:?}", &rp.id, &addr);
-                        self.pm.update_addr(rp.id, addr).await;
-                        let mut msg_out = RendezvousMessage::new();
-                        msg_out.set_register_peer_response(RegisterPeerResponse::default());
-                        socket.send(&msg_out, addr).await?
+                        self.update_addr(rp.id, addr, socket).await?;
                     }
                 }
-                Some(rendezvous_message::Union::register_key(rk)) => {
+                Some(rendezvous_message::Union::register_pk(rk)) => {
                     let id = rk.id;
-                    if let Some(peer) = self.pm.get(id.clone()).await {
+                    let mut res = register_pk_response::Result::OK;
+                    if let Some(peer) = self.pm.get(&id).await {
                         if peer.pk.is_empty() {
-                            self.pm.update_key(id, addr, rk.key);
+                            self.pm.update_pk(id, addr, rk.pk);
+                        } else {
+                            if peer.pk != rk.pk {
+                                res = register_pk_response::Result::PK_MISMATCH;
+                            }
                         }
+                    } else {
+                        self.pm.update_pk(id, addr, rk.pk);
                     }
+                    let mut msg_out = RendezvousMessage::new();
+                    msg_out.set_register_pk_response(RegisterPkResponse {
+                        result: res.into(),
+                        ..Default::default()
+                    });
+                    socket.send(&msg_out, addr).await?
                 }
                 Some(rendezvous_message::Union::punch_hole_request(ph)) => {
                     let id = ph.id;
@@ -245,6 +229,58 @@ impl RendezvousServer {
                 }
                 _ => {}
             }
+        }
+        Ok(())
+    }
+
+    #[inline]
+    async fn update_addr(
+        &mut self,
+        id: String,
+        socket_addr: SocketAddr,
+        socket: &mut FramedSocket,
+    ) -> ResultType<()> {
+        let mut lock = self.pm.map.write().unwrap();
+        let last_reg_time = Instant::now();
+        if let Some(old) = lock.get_mut(&id) {
+            old.socket_addr = socket_addr;
+            old.last_reg_time = last_reg_time;
+            let request_pk = old.pk.is_empty();
+            drop(lock);
+            let mut msg_out = RendezvousMessage::new();
+            msg_out.set_register_peer_response(RegisterPeerResponse {
+                request_pk,
+                ..Default::default()
+            });
+            socket.send(&msg_out, socket_addr).await?;
+        } else {
+            drop(lock);
+            let mut pm = self.pm.clone();
+            let tx = self.tx.clone();
+            tokio::spawn(async move {
+                let v = pm.db.get(id.clone()).await;
+                let pk = {
+                    if let Some(v) = super::SledAsync::deserialize::<PeerSerde>(&v) {
+                        v.pk
+                    } else {
+                        Vec::new()
+                    }
+                };
+                let mut msg_out = RendezvousMessage::new();
+                msg_out.set_register_peer_response(RegisterPeerResponse {
+                    request_pk: pk.is_empty(),
+                    ..Default::default()
+                });
+                tx.send((msg_out, socket_addr)).ok();
+                pm.map.write().unwrap().insert(
+                    id,
+                    Peer {
+                        socket_addr,
+                        last_reg_time,
+                        pk,
+                    },
+                );
+            });
         }
         Ok(())
     }
@@ -316,7 +352,7 @@ impl RendezvousServer {
         // fetch local addrs if in same intranet.
         // because punch hole won't work if in the same intranet,
         // all routers will drop such self-connections.
-        if let Some(peer) = self.pm.get(id.clone()).await {
+        if let Some(peer) = self.pm.get(&id).await {
             if peer.last_reg_time.elapsed().as_millis() as i32 >= REG_TIMEOUT {
                 let mut msg_out = RendezvousMessage::new();
                 msg_out.set_punch_hole_response(PunchHoleResponse {
