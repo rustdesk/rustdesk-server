@@ -27,6 +27,7 @@ use std::{
 struct Peer {
     socket_addr: SocketAddr,
     last_reg_time: Instant,
+    pk: Vec<u8>,
 }
 
 impl Default for Peer {
@@ -36,6 +37,7 @@ impl Default for Peer {
             last_reg_time: Instant::now()
                 .checked_sub(std::time::Duration::from_secs(3600))
                 .unwrap(),
+            pk: Vec::new(),
         }
     }
 }
@@ -44,6 +46,8 @@ impl Default for Peer {
 struct PeerSerde {
     #[serde(default)]
     ip: String,
+    #[serde(default)]
+    pk: Vec<u8>,
 }
 
 #[derive(Clone)]
@@ -61,18 +65,46 @@ impl PeerMap {
     }
 
     #[inline]
-    fn insert(&mut self, key: String, peer: Peer) {
-        let ip = peer.socket_addr.ip();
-        if self
-            .map
-            .write()
-            .unwrap()
-            .insert(key.clone(), peer)
-            .is_none()
-        {
-            let ip = ip.to_string();
-            self.db.insert(key, PeerSerde { ip });
+    async fn update_addr(&mut self, key: String, socket_addr: SocketAddr) {
+        let mut lock = self.map.write().unwrap();
+        let last_reg_time = Instant::now();
+        if let Some(old) = lock.get_mut(&key) {
+            old.socket_addr = socket_addr;
+            old.last_reg_time = last_reg_time;
+        } else {
+            let mut me = self.clone();
+            tokio::spawn(async move {
+                let v = me.db.get(key.clone()).await;
+                let pk = if let Some(v) = super::SledAsync::deserialize::<PeerSerde>(&v) {
+                    v.pk
+                } else {
+                    Vec::new()
+                };
+                me.map.write().unwrap().insert(
+                    key,
+                    Peer {
+                        socket_addr,
+                        last_reg_time,
+                        pk,
+                    },
+                );
+            });
         }
+    }
+
+    #[inline]
+    fn update_key(&mut self, key: String, socket_addr: SocketAddr, pk: Vec<u8>) {
+        let mut lock = self.map.write().unwrap();
+        lock.insert(
+            key.clone(),
+            Peer {
+                socket_addr,
+                last_reg_time: Instant::now(),
+                pk: pk.clone(),
+            },
+        );
+        let ip = socket_addr.ip().to_string();
+        self.db.insert(key, PeerSerde { ip, pk });
     }
 
     #[inline]
@@ -81,7 +113,15 @@ impl PeerMap {
         if p.is_some() {
             return p;
         } else {
-            if let Some(_) = self.db.get(key).await {
+            let v = self.db.get(key.clone()).await;
+            if let Some(v) = super::SledAsync::deserialize::<PeerSerde>(&v) {
+                self.map.write().unwrap().insert(
+                    key,
+                    Peer {
+                        pk: v.pk,
+                        ..Default::default()
+                    },
+                );
                 return Some(Peer::default());
             }
         }
@@ -168,16 +208,18 @@ impl RendezvousServer {
                     // B registered
                     if rp.id.len() > 0 {
                         log::debug!("New peer registered: {:?} {:?}", &rp.id, &addr);
-                        self.pm.insert(
-                            rp.id,
-                            Peer {
-                                socket_addr: addr,
-                                last_reg_time: Instant::now(),
-                            },
-                        );
+                        self.pm.update_addr(rp.id, addr).await;
                         let mut msg_out = RendezvousMessage::new();
                         msg_out.set_register_peer_response(RegisterPeerResponse::default());
                         socket.send(&msg_out, addr).await?
+                    }
+                }
+                Some(rendezvous_message::Union::register_key(rk)) => {
+                    let id = rk.id;
+                    if let Some(peer) = self.pm.get(id.clone()).await {
+                        if peer.pk.is_empty() {
+                            self.pm.update_key(id, addr, rk.key);
+                        }
                     }
                 }
                 Some(rendezvous_message::Union::punch_hole_request(ph)) => {
@@ -199,7 +241,7 @@ impl RendezvousServer {
                     self.handle_local_addr(&la, addr, Some(socket)).await?;
                 }
                 Some(rendezvous_message::Union::system_info(info)) => {
-                    log::info!("{}", info.value);                    
+                    log::info!("{}", info.value);
                 }
                 _ => {}
             }

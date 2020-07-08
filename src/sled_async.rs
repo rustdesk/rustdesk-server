@@ -79,7 +79,7 @@ impl SledAsync {
     }
 
     #[inline]
-    pub fn _deserialize<'a, T: serde::Deserialize<'a>>(v: &'a Option<sled::IVec>) -> Option<T> {
+    pub fn deserialize<'a, T: serde::Deserialize<'a>>(v: &'a Option<sled::IVec>) -> Option<T> {
         if let Some(v) = v {
             if let Ok(v) = std::str::from_utf8(v) {
                 if let Ok(v) = serde_json::from_str::<T>(&v) {
