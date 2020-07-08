@@ -301,8 +301,13 @@ impl RendezvousServer {
             &addr
         );
         let mut msg_out = RendezvousMessage::new();
+        let pk = match self.pm.get(&phs.id).await {
+            Some(peer) => peer.pk,
+            _ => Vec::new(),
+        };
         msg_out.set_punch_hole_response(PunchHoleResponse {
             socket_addr: AddrMangle::encode(addr),
+            pk,
             ..Default::default()
         });
         if let Some(socket) = socket {
