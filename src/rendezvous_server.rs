@@ -7,7 +7,7 @@ use hbb_common::{
         stream::{SplitSink, StreamExt},
     },
     log,
-    protobuf::{parse_from_bytes, Message as _},
+    protobuf::Message as _,
     rendezvous_proto::*,
     tcp::new_listener,
     tokio::{self, net::TcpStream, sync::mpsc},
@@ -144,7 +144,7 @@ impl RendezvousServer {
                     let mut rs = rs.clone();
                     tokio::spawn(async move {
                         while let Some(Ok(bytes)) = b.next().await {
-                            if let Ok(msg_in) = parse_from_bytes::<RendezvousMessage>(&bytes) {
+                            if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(&bytes) {
                                 match msg_in.union {
                                     Some(rendezvous_message::Union::punch_hole_request(ph)) => {
                                         allow_err!(rs.handle_tcp_punch_hole_request(addr, ph.id).await);
@@ -176,7 +176,7 @@ impl RendezvousServer {
         addr: SocketAddr,
         socket: &mut FramedSocket,
     ) -> ResultType<()> {
-        if let Ok(msg_in) = parse_from_bytes::<RendezvousMessage>(&bytes) {
+        if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(&bytes) {
             match msg_in.union {
                 Some(rendezvous_message::Union::register_peer(rp)) => {
                     // B registered
@@ -193,6 +193,7 @@ impl RendezvousServer {
                             self.pm.update_pk(id, addr, rk.pk);
                         } else {
                             if peer.pk != rk.pk {
+                                log::warn!("Peer {} pk mismatch: {:?} vs {:?}", id, rk.pk, peer.pk);
                                 res = register_pk_response::Result::PK_MISMATCH;
                             }
                         }
