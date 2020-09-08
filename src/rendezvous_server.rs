@@ -27,6 +27,7 @@ use std::{
 struct Peer {
     socket_addr: SocketAddr,
     last_reg_time: Instant,
+    uuid: Vec<u8>,
     pk: Vec<u8>,
 }
 
@@ -37,6 +38,7 @@ impl Default for Peer {
             last_reg_time: Instant::now()
                 .checked_sub(std::time::Duration::from_secs(3600))
                 .unwrap(),
+            uuid: Vec::new(),
             pk: Vec::new(),
         }
     }
@@ -46,6 +48,8 @@ impl Default for Peer {
 struct PeerSerde {
     #[serde(default)]
     ip: String,
+    #[serde(default)]
+    uuid: Vec<u8>,
     #[serde(default)]
     pk: Vec<u8>,
 }
@@ -65,18 +69,19 @@ impl PeerMap {
     }
 
     #[inline]
-    fn update_pk(&mut self, id: String, socket_addr: SocketAddr, pk: Vec<u8>) {
+    fn update_pk(&mut self, id: String, socket_addr: SocketAddr, uuid: Vec<u8>, pk: Vec<u8>) {
         let mut lock = self.map.write().unwrap();
         lock.insert(
             id.clone(),
             Peer {
                 socket_addr,
                 last_reg_time: Instant::now(),
+                uuid: uuid.clone(),
                 pk: pk.clone(),
             },
         );
         let ip = socket_addr.ip().to_string();
-        self.db.insert(id, PeerSerde { ip, pk });
+        self.db.insert(id, PeerSerde { ip, uuid, pk });
     }
 
     #[inline]
@@ -91,6 +96,7 @@ impl PeerMap {
                 self.map.write().unwrap().insert(
                     id,
                     Peer {
+                        uuid: v.uuid,
                         pk: v.pk,
                         ..Default::default()
                     },
@@ -189,16 +195,14 @@ impl RendezvousServer {
                     let id = rk.id;
                     let mut res = register_pk_response::Result::OK;
                     if let Some(peer) = self.pm.get(&id).await {
-                        if peer.pk.is_empty() {
-                            self.pm.update_pk(id, addr, rk.pk);
-                        } else {
-                            if peer.pk != rk.pk {
-                                log::warn!("Peer {} pk mismatch: {:?} vs {:?}", id, rk.pk, peer.pk);
-                                res = register_pk_response::Result::PK_MISMATCH;
-                            }
+                        if peer.uuid != rk.uuid {
+                            log::warn!("Peer {} pk mismatch: {:?} vs {:?}", id, rk.uuid, peer.uuid);
+                            res = register_pk_response::Result::UUID_MISMATCH;
+                        } else if peer.pk != rk.pk {
+                            self.pm.update_pk(id, addr, rk.uuid, rk.pk);
                         }
                     } else {
-                        self.pm.update_pk(id, addr, rk.pk);
+                        self.pm.update_pk(id, addr, rk.uuid, rk.pk);
                     }
                     let mut msg_out = RendezvousMessage::new();
                     msg_out.set_register_pk_response(RegisterPkResponse {
@@ -260,11 +264,11 @@ impl RendezvousServer {
             let tx = self.tx.clone();
             tokio::spawn(async move {
                 let v = pm.db.get(id.clone()).await;
-                let pk = {
+                let (uuid, pk) = {
                     if let Some(v) = super::SledAsync::deserialize::<PeerSerde>(&v) {
-                        v.pk
+                        (v.uuid, v.pk)
                     } else {
-                        Vec::new()
+                        (Vec::new(), Vec::new())
                     }
                 };
                 let mut msg_out = RendezvousMessage::new();
@@ -278,6 +282,7 @@ impl RendezvousServer {
                     Peer {
                         socket_addr,
                         last_reg_time,
+                        uuid,
                         pk,
                     },
                 );
