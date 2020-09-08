@@ -23,7 +23,7 @@ use std::{
     time::Instant,
 };
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct Peer {
     socket_addr: SocketAddr,
     last_reg_time: Instant,
@@ -80,6 +80,7 @@ impl PeerMap {
                 pk: pk.clone(),
             },
         );
+        drop(lock);
         let ip = socket_addr.ip().to_string();
         self.db.insert(id, PeerSerde { ip, uuid, pk });
     }
@@ -192,13 +193,21 @@ impl RendezvousServer {
                     }
                 }
                 Some(rendezvous_message::Union::register_pk(rk)) => {
+                    if rk.uuid.is_empty() {
+                        return Ok(());
+                    }
                     let id = rk.id;
                     let mut res = register_pk_response::Result::OK;
                     if let Some(peer) = self.pm.get(&id).await {
-                        if peer.uuid != rk.uuid {
-                            log::warn!("Peer {} pk mismatch: {:?} vs {:?}", id, rk.uuid, peer.uuid);
+                        if !peer.uuid.is_empty() && peer.uuid != rk.uuid {
+                            log::warn!(
+                                "Peer {} uuid mismatch: {:?} vs {:?}",
+                                id,
+                                rk.uuid,
+                                peer.uuid
+                            );
                             res = register_pk_response::Result::UUID_MISMATCH;
-                        } else if peer.pk != rk.pk {
+                        } else if peer.uuid.is_empty() || peer.pk != rk.pk {
                             self.pm.update_pk(id, addr, rk.uuid, rk.pk);
                         }
                     } else {
