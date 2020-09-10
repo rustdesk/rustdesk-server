@@ -70,6 +70,7 @@ impl PeerMap {
 
     #[inline]
     fn update_pk(&mut self, id: String, socket_addr: SocketAddr, uuid: Vec<u8>, pk: Vec<u8>) {
+        log::info!("update_pk {} {:?} {:?} {:?}", id, socket_addr, uuid, pk);
         let mut lock = self.map.write().unwrap();
         lock.insert(
             id.clone(),
