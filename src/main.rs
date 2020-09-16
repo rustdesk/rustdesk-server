@@ -8,7 +8,7 @@ use hbbs::*;
 async fn main() -> ResultType<()> {
     env_logger::init();
     let addr = "0.0.0.0:21116";
-    log::info!("Start Server {}", addr);
+    log::info!("Listening on {}", addr);
     RendezvousServer::start(&addr).await?;
     Ok(())
 }

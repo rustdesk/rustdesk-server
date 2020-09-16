@@ -4,6 +4,10 @@ version = "0.1.0"
 authors = ["open-trade <info@opentradesolutions.com>"]
 edition = "2018"
 
+[[bin]]
+name = "hbbf"
+path = "src/hbbf/main.rs"
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
@@ -12,6 +16,7 @@ sled = "0.31"
 serde_derive = "1.0"
 serde = "1.0"
 serde_json = "1.0"
+lazy_static = "1.4"
 
 [workspace]
 members = ["libs/hbb_common"]
