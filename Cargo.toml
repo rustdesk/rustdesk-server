@@ -5,8 +5,8 @@ authors = ["open-trade <info@opentradesolutions.com>"]
 edition = "2018"
 
 [[bin]]
-name = "hbbf"
-path = "src/hbbf/main.rs"
+name = "hbbr"
+path = "src/hbbr/main.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

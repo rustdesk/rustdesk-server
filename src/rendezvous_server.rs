@@ -10,6 +10,7 @@ use hbb_common::{
     protobuf::Message as _,
     rendezvous_proto::*,
     tcp::new_listener,
+    timeout,
     tokio::{self, net::TcpStream, sync::mpsc},
     tokio_util::codec::Framed,
     udp::FramedSocket,
@@ -151,27 +152,28 @@ impl RendezvousServer {
                     tcp_punch.lock().unwrap().insert(addr, a);
                     let mut rs = rs.clone();
                     tokio::spawn(async move {
-                        while let Some(Ok(bytes)) = b.next().await {
+                        while let Ok(Some(Ok(bytes))) = timeout(30_000, b.next()).await {
                             if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(&bytes) {
                                 match msg_in.union {
                                     Some(rendezvous_message::Union::punch_hole_request(ph)) => {
                                         allow_err!(rs.handle_tcp_punch_hole_request(addr, ph.id).await);
                                     }
                                     Some(rendezvous_message::Union::request_relay(mut rf)) => {
-                                        if !rs.pm.is_in_memory(&rf.id) {
-                                            break;
+                                        if let Some(peer) = rs.pm.map.read().unwrap().get(&rf.id).map(|x| x.clone()) {
+                                            let mut msg_out = RendezvousMessage::new();
+                                            rf.socket_addr = AddrMangle::encode(addr);
+                                            msg_out.set_request_relay(rf);
+                                            rs.tx.send((msg_out, peer.socket_addr)).ok();
                                         }
-                                        let mut msg_out = RendezvousMessage::new();
-                                        rf.socket_addr = AddrMangle::encode(addr);
-                                        msg_out.set_request_relay(rf);
-                                        rs.tx.send((msg_out, addr)).ok();
                                     }
                                     Some(rendezvous_message::Union::request_relay_response(mut rfr)) => {
                                         let addr_b = AddrMangle::decode(&rfr.socket_addr);
                                         rfr.socket_addr = Default::default();
-                                        let sender_b= rs.tcp_punch.lock().unwrap().remove(&addr_b);
+                                        let mut msg_out = RendezvousMessage::new();
+                                        msg_out.set_request_relay_response(rfr);
+                                        let sender_b = rs.tcp_punch.lock().unwrap().remove(&addr_b);
                                         if let Some(mut sender_b) = sender_b {
-                                            if let Ok(bytes) = rfr.write_to_bytes() {
+                                            if let Ok(bytes) = msg_out.write_to_bytes() {
                                                 allow_err!(sender_b.send(Bytes::from(bytes)).await);
                                             }
                                         }
@@ -185,7 +187,9 @@ impl RendezvousServer {
                                         allow_err!(rs.handle_local_addr(&la, addr, None).await);
                                         break;
                                     }
-                                    _ => {}
+                                    _ => {
+                                        break;
+                                    }
                                 }
                             } else {
                                 break;
@@ -253,13 +257,6 @@ impl RendezvousServer {
                         tokio::spawn(async move {
                             allow_err!(me.handle_udp_punch_hole_request(addr, id).await);
                         });
-                    }
-                }
-                Some(rendezvous_message::Union::request_relay(rf)) => {
-                    if self.pm.is_in_memory(&rf.id) {
-                        let mut msg_out = RendezvousMessage::new();
-                        msg_out.set_request_relay(rf);
-                        socket.send(&msg_out, addr).await?
                     }
                 }
                 Some(rendezvous_message::Union::punch_hole_sent(phs)) => {
