@@ -157,17 +157,18 @@ impl RendezvousServer {
                                     Some(rendezvous_message::Union::punch_hole_request(ph)) => {
                                         allow_err!(rs.handle_tcp_punch_hole_request(addr, ph.id).await);
                                     }
-                                    Some(rendezvous_message::Union::request_forward(mut rf)) => {
+                                    Some(rendezvous_message::Union::request_relay(mut rf)) => {
                                         if !rs.pm.is_in_memory(&rf.id) {
                                             break;
                                         }
                                         let mut msg_out = RendezvousMessage::new();
                                         rf.socket_addr = AddrMangle::encode(addr);
-                                        msg_out.set_request_forward(rf);
+                                        msg_out.set_request_relay(rf);
                                         rs.tx.send((msg_out, addr)).ok();
                                     }
-                                    Some(rendezvous_message::Union::request_forward_response(rfr)) => {
+                                    Some(rendezvous_message::Union::request_relay_response(mut rfr)) => {
                                         let addr_b = AddrMangle::decode(&rfr.socket_addr);
+                                        rfr.socket_addr = Default::default();
                                         let sender_b= rs.tcp_punch.lock().unwrap().remove(&addr_b);
                                         if let Some(mut sender_b) = sender_b {
                                             if let Ok(bytes) = rfr.write_to_bytes() {
@@ -186,6 +187,8 @@ impl RendezvousServer {
                                     }
                                     _ => {}
                                 }
+                            } else {
+                                break;
                             }
                         }
                         rs.tcp_punch.lock().unwrap().remove(&addr);
@@ -252,10 +255,10 @@ impl RendezvousServer {
                         });
                     }
                 }
-                Some(rendezvous_message::Union::request_forward(rf)) => {
+                Some(rendezvous_message::Union::request_relay(rf)) => {
                     if self.pm.is_in_memory(&rf.id) {
                         let mut msg_out = RendezvousMessage::new();
-                        msg_out.set_request_forward(rf);
+                        msg_out.set_request_relay(rf);
                         socket.send(&msg_out, addr).await?
                     }
                 }
@@ -347,11 +350,11 @@ impl RendezvousServer {
             Some(peer) => peer.pk,
             _ => Vec::new(),
         };
-        let forward_server = phs.forward_server;
+        let relay_server = phs.relay_server;
         msg_out.set_punch_hole_response(PunchHoleResponse {
             socket_addr: AddrMangle::encode(addr),
             pk,
-            forward_server,
+            relay_server,
             ..Default::default()
         });
         if let Some(socket) = socket {
@@ -369,7 +372,7 @@ impl RendezvousServer {
         addr: SocketAddr,
         socket: Option<&'a mut FramedSocket>,
     ) -> ResultType<()> {
-        // forward local addrs of B to A
+        // relay local addrs of B to A
         let addr_a = AddrMangle::decode(&la.socket_addr);
         log::debug!(
             "{} local addrs response to {:?} from {:?}",
@@ -396,7 +399,7 @@ impl RendezvousServer {
         addr: SocketAddr,
         id: String,
     ) -> ResultType<(RendezvousMessage, Option<SocketAddr>)> {
-        // punch hole request from A, forward to B,
+        // punch hole request from A, relay to B,
         // check if in same intranet first,
         // fetch local addrs if in same intranet.
         // because punch hole won't work if in the same intranet,

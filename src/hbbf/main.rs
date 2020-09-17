@@ -38,14 +38,14 @@ async fn make_pair(stream: FramedStream, addr: SocketAddr) -> ResultType<()> {
     let mut stream = stream;
     if let Some(Ok(bytes)) = stream.next_timeout(30_000).await {
         if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(&bytes) {
-            if let Some(rendezvous_message::Union::request_forward(rf)) = msg_in.union {
+            if let Some(rendezvous_message::Union::request_relay(rf)) = msg_in.union {
                 if !rf.uuid.is_empty() {
                     let peer = PEERS.lock().unwrap().remove(&rf.uuid);
                     if let Some(peer) = peer {
                         log::info!("Forward request {} from {} got paired", rf.uuid, addr);
-                        return forward(stream, peer).await;
+                        return relay(stream, peer).await;
                     } else {
-                        log::info!("New forward request {} from {}", rf.uuid, addr);
+                        log::info!("New relay request {} from {}", rf.uuid, addr);
                         PEERS.lock().unwrap().insert(rf.uuid.clone(), stream);
                         sleep(30.).await;
                         PEERS.lock().unwrap().remove(&rf.uuid);
@@ -57,7 +57,7 @@ async fn make_pair(stream: FramedStream, addr: SocketAddr) -> ResultType<()> {
     Ok(())
 }
 
-async fn forward(stream: FramedStream, peer: FramedStream) -> ResultType<()> {
+async fn relay(stream: FramedStream, peer: FramedStream) -> ResultType<()> {
     let mut peer = peer;
     let mut stream = stream;
     peer.set_raw();
