@@ -1,5 +1,6 @@
 use hbb_common::{
-    env_logger, log,
+    env_logger::*,
+    log,
     protobuf::Message as _,
     rendezvous_proto::*,
     sleep,
@@ -18,7 +19,7 @@ lazy_static::lazy_static! {
 
 #[tokio::main]
 async fn main() -> ResultType<()> {
-    env_logger::init();
+    init_from_env(Env::default().filter_or(DEFAULT_FILTER_ENV, "info"));
     let addr = "0.0.0.0:21117";
     log::info!("Listening on {}", addr);
     let mut listener = new_listener(addr, true).await?;
