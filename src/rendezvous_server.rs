@@ -125,16 +125,18 @@ pub struct RendezvousServer {
     tcp_punch: Arc<Mutex<HashMap<SocketAddr, Sink>>>,
     pm: PeerMap,
     tx: Sender,
+    relay_server: String,
 }
 
 impl RendezvousServer {
-    pub async fn start(addr: &str) -> ResultType<()> {
+    pub async fn start(addr: &str, relay_server: String) -> ResultType<()> {
         let mut socket = FramedSocket::new(addr).await?;
         let (tx, mut rx) = mpsc::unbounded_channel::<(RendezvousMessage, SocketAddr)>();
         let mut rs = Self {
             tcp_punch: Arc::new(Mutex::new(HashMap::new())),
             pm: PeerMap::new()?,
             tx: tx.clone(),
+            relay_server,
         };
         let mut listener = new_listener(addr, true).await?;
         loop {
@@ -347,7 +349,10 @@ impl RendezvousServer {
             Some(peer) => peer.pk,
             _ => Vec::new(),
         };
-        let relay_server = phs.relay_server;
+        let mut relay_server = phs.relay_server;
+        if relay_server.is_empty() {
+            relay_server = self.relay_server.clone();
+        }
         msg_out.set_punch_hole_response(PunchHoleResponse {
             socket_addr: AddrMangle::encode(addr),
             pk,
