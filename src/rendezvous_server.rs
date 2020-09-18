@@ -147,7 +147,7 @@ impl RendezvousServer {
             serial,
             rendezvous_servers,
         };
-        let mut listener = new_listener(addr, true).await?;
+        let mut listener = new_listener(addr, false).await?;
         loop {
             tokio::select! {
                 Some((msg, addr)) = rx.recv() => {
