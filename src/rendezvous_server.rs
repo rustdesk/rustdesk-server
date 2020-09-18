@@ -287,6 +287,32 @@ impl RendezvousServer {
                 Some(rendezvous_message::Union::local_addr(la)) => {
                     self.handle_local_addr(&la, addr, Some(socket)).await?;
                 }
+                Some(rendezvous_message::Union::misc_info(mi)) => match mi.union {
+                    Some(misc_info::Union::configure_update(mut cu)) => {
+                        if addr.ip() == std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1))
+                        {
+                            self.serial = cu.serial;
+                            self.rendezvous_servers = cu
+                                .rendezvous_servers
+                                .drain(..)
+                                .map(|x| {
+                                    if !x.contains(":") {
+                                        format!("{}:21116", x)
+                                    } else {
+                                        x
+                                    }
+                                })
+                                .filter(|x| x.parse::<std::net::SocketAddr>().is_ok())
+                                .collect();
+                            log::info!(
+                                "configure updated: serial={} rendezvous-servers={:?}",
+                                self.serial,
+                                self.rendezvous_servers
+                            );
+                        }
+                    }
+                    _ => {}
+                },
                 _ => {}
             }
         }
