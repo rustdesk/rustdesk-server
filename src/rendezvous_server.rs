@@ -228,7 +228,7 @@ impl RendezvousServer {
                     if rp.id.len() > 0 {
                         log::debug!("New peer registered: {:?} {:?}", &rp.id, &addr);
                         self.update_addr(rp.id, addr, socket).await?;
-                        if self.serial != rp.serial {
+                        if self.serial > rp.serial {
                             let mut msg_out = RendezvousMessage::new();
                             let mut mi = MiscInfo::new();
                             mi.set_configure_update(ConfigUpdate {
