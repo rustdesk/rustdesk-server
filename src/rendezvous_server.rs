@@ -126,10 +126,17 @@ pub struct RendezvousServer {
     pm: PeerMap,
     tx: Sender,
     relay_server: String,
+    serial: i32,
+    rendezvous_servers: Vec<String>,
 }
 
 impl RendezvousServer {
-    pub async fn start(addr: &str, relay_server: String) -> ResultType<()> {
+    pub async fn start(
+        addr: &str,
+        relay_server: String,
+        serial: i32,
+        rendezvous_servers: Vec<String>,
+    ) -> ResultType<()> {
         let mut socket = FramedSocket::new(addr).await?;
         let (tx, mut rx) = mpsc::unbounded_channel::<(RendezvousMessage, SocketAddr)>();
         let mut rs = Self {
@@ -137,6 +144,8 @@ impl RendezvousServer {
             pm: PeerMap::new()?,
             tx: tx.clone(),
             relay_server,
+            serial,
+            rendezvous_servers,
         };
         let mut listener = new_listener(addr, true).await?;
         loop {
@@ -219,6 +228,17 @@ impl RendezvousServer {
                     if rp.id.len() > 0 {
                         log::debug!("New peer registered: {:?} {:?}", &rp.id, &addr);
                         self.update_addr(rp.id, addr, socket).await?;
+                        if self.serial != rp.serial {
+                            let mut msg_out = RendezvousMessage::new();
+                            let mut mi = MiscInfo::new();
+                            mi.set_configure_update(ConfigUpdate {
+                                serial: self.serial,
+                                rendezvous_servers: self.rendezvous_servers.clone(),
+                                ..Default::default()
+                            });
+                            msg_out.set_misc_info(mi);
+                            socket.send(&msg_out, addr).await?;
+                        }
                     }
                 }
                 Some(rendezvous_message::Union::register_pk(rk)) => {
@@ -266,9 +286,6 @@ impl RendezvousServer {
                 }
                 Some(rendezvous_message::Union::local_addr(la)) => {
                     self.handle_local_addr(&la, addr, Some(socket)).await?;
-                }
-                Some(rendezvous_message::Union::system_info(info)) => {
-                    log::info!("{}", info.value);
                 }
                 _ => {}
             }
