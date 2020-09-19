@@ -290,6 +290,7 @@ impl RendezvousServer {
                 Some(rendezvous_message::Union::misc_info(mi)) => match mi.union {
                     Some(misc_info::Union::configure_update(mut cu)) => {
                         if addr.ip() == std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1))
+                            && cu.serial > self.serial
                         {
                             self.serial = cu.serial;
                             self.rendezvous_servers = cu
