@@ -2,6 +2,7 @@ use hbb_common::{
     allow_err,
     bytes::{Bytes, BytesMut},
     bytes_codec::BytesCodec,
+    config::Config,
     futures_util::{
         sink::SinkExt,
         stream::{SplitSink, StreamExt},
@@ -296,14 +297,7 @@ impl RendezvousServer {
                             self.rendezvous_servers = cu
                                 .rendezvous_servers
                                 .drain(..)
-                                .map(|x| {
-                                    if !x.contains(":") {
-                                        format!("{}:21116", x)
-                                    } else {
-                                        x
-                                    }
-                                })
-                                .filter(|x| x.parse::<std::net::SocketAddr>().is_ok())
+                                .filter(|x| test_if_valid_server(x).is_ok())
                                 .collect();
                             log::info!(
                                 "configure updated: serial={} rendezvous-servers={:?}",
@@ -562,5 +556,13 @@ impl RendezvousServer {
             },
         ))?;
         Ok(())
+    }
+}
+
+pub fn test_if_valid_server(host: &str) -> ResultType<SocketAddr> {
+    if host.contains(":") {
+        Config::to_socket_addr(host)
+    } else {
+        Config::to_socket_addr(&format!("{}:{}", host, 0))
     }
 }

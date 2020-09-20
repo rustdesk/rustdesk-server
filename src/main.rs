@@ -44,23 +44,15 @@ async fn main() -> ResultType<()> {
     };
     let port = get_arg("port", DEFAULT_PORT);
     let mut relay_server = get_arg("relay-server", "");
-    if !relay_server.contains(":") {
-        relay_server = format!("{}:21117", relay_server);
-    }
-    if !relay_server.parse::<std::net::SocketAddr>().is_ok() {
+    if let Err(err) = test_if_valid_server(&relay_server) {
         relay_server = "".to_owned();
+        log::error!("Invalid relay-server: {}", err);
     }
     let serial: i32 = get_arg("serial", "").parse().unwrap_or(0);
     let rendezvous_servers: Vec<String> = get_arg("rendezvous-servers", "")
         .split(",")
-        .map(|x| {
-            if !x.contains(":") {
-                format!("{}:21116", x)
-            } else {
-                x.to_owned()
-            }
-        })
-        .filter(|x| x.parse::<std::net::SocketAddr>().is_ok())
+        .filter(|x| test_if_valid_server(x).is_ok())
+        .map(|x| x.to_owned())
         .collect();
     let addr = format!("0.0.0.0:{}", port);
     log::info!("Listening on {}", addr);
