@@ -142,6 +142,10 @@ impl RendezvousServer {
     ) -> ResultType<()> {
         let mut socket = FramedSocket::new(addr).await?;
         let (tx, mut rx) = mpsc::unbounded_channel::<(RendezvousMessage, SocketAddr)>();
+        let version = hbb_common::get_version_from_url(&software_url);
+        if !version.is_empty() {
+            log::info!("software_url: {}, version: {}", software_url, version);
+        }
         let mut rs = Self {
             tcp_punch: Arc::new(Mutex::new(HashMap::new())),
             pm: PeerMap::new()?,
@@ -149,7 +153,7 @@ impl RendezvousServer {
             relay_server,
             serial,
             rendezvous_servers,
-            version: hbb_common::get_version_from_url(&software_url),
+            version,
             software_url,
         };
         let mut listener = new_listener(addr, false).await?;
