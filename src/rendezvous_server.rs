@@ -196,7 +196,7 @@ impl RendezvousServer {
                                         break;
                                     }
                                     Some(rendezvous_message::Union::local_addr(la)) => {
-                                        allow_err!(rs.handle_local_addr(&la, addr, None).await);
+                                        allow_err!(rs.handle_local_addr(la, addr, None).await);
                                         break;
                                     }
                                     _ => {
@@ -231,13 +231,11 @@ impl RendezvousServer {
                         self.update_addr(rp.id, addr, socket).await?;
                         if self.serial > rp.serial {
                             let mut msg_out = RendezvousMessage::new();
-                            let mut mi = MiscInfo::new();
-                            mi.set_configure_update(ConfigUpdate {
+                            msg_out.set_configure_update(ConfigUpdate {
                                 serial: self.serial,
                                 rendezvous_servers: self.rendezvous_servers.clone(),
                                 ..Default::default()
                             });
-                            msg_out.set_misc_info(mi);
                             socket.send(&msg_out, addr).await?;
                         }
                     }
@@ -286,28 +284,25 @@ impl RendezvousServer {
                     self.handle_hole_sent(phs, addr, Some(socket)).await?;
                 }
                 Some(rendezvous_message::Union::local_addr(la)) => {
-                    self.handle_local_addr(&la, addr, Some(socket)).await?;
+                    self.handle_local_addr(la, addr, Some(socket)).await?;
                 }
-                Some(rendezvous_message::Union::misc_info(mi)) => match mi.union {
-                    Some(misc_info::Union::configure_update(mut cu)) => {
-                        if addr.ip() == std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1))
-                            && cu.serial > self.serial
-                        {
-                            self.serial = cu.serial;
-                            self.rendezvous_servers = cu
-                                .rendezvous_servers
-                                .drain(..)
-                                .filter(|x| test_if_valid_server(x).is_ok())
-                                .collect();
-                            log::info!(
-                                "configure updated: serial={} rendezvous-servers={:?}",
-                                self.serial,
-                                self.rendezvous_servers
-                            );
-                        }
+                Some(rendezvous_message::Union::configure_update(mut cu)) => {
+                    if addr.ip() == std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1))
+                        && cu.serial > self.serial
+                    {
+                        self.serial = cu.serial;
+                        self.rendezvous_servers = cu
+                            .rendezvous_servers
+                            .drain(..)
+                            .filter(|x| test_if_valid_server(x).is_ok())
+                            .collect();
+                        log::info!(
+                            "configure updated: serial={} rendezvous-servers={:?}",
+                            self.serial,
+                            self.rendezvous_servers
+                        );
                     }
-                    _ => {}
-                },
+                }
                 _ => {}
             }
         }
@@ -408,7 +403,7 @@ impl RendezvousServer {
     #[inline]
     async fn handle_local_addr<'a>(
         &mut self,
-        la: &LocalAddr,
+        la: LocalAddr,
         addr: SocketAddr,
         socket: Option<&'a mut FramedSocket>,
     ) -> ResultType<()> {
@@ -421,8 +416,13 @@ impl RendezvousServer {
             &addr
         );
         let mut msg_out = RendezvousMessage::new();
+        let mut relay_server = la.relay_server;
+        if relay_server.is_empty() {
+            relay_server = self.relay_server.clone();
+        }
         msg_out.set_punch_hole_response(PunchHoleResponse {
             socket_addr: la.local_addr.clone(),
+            relay_server,
             ..Default::default()
         });
         if let Some(socket) = socket {
