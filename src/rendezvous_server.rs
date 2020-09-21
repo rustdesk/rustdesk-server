@@ -2,7 +2,6 @@ use hbb_common::{
     allow_err,
     bytes::{Bytes, BytesMut},
     bytes_codec::BytesCodec,
-    config::Config,
     futures_util::{
         sink::SinkExt,
         stream::{SplitSink, StreamExt},
@@ -129,6 +128,8 @@ pub struct RendezvousServer {
     relay_server: String,
     serial: i32,
     rendezvous_servers: Vec<String>,
+    version: String,
+    software_url: String,
 }
 
 impl RendezvousServer {
@@ -137,6 +138,7 @@ impl RendezvousServer {
         relay_server: String,
         serial: i32,
         rendezvous_servers: Vec<String>,
+        software_url: String,
     ) -> ResultType<()> {
         let mut socket = FramedSocket::new(addr).await?;
         let (tx, mut rx) = mpsc::unbounded_channel::<(RendezvousMessage, SocketAddr)>();
@@ -147,6 +149,8 @@ impl RendezvousServer {
             relay_server,
             serial,
             rendezvous_servers,
+            version: hbb_common::get_version_from_url(&software_url),
+            software_url,
         };
         let mut listener = new_listener(addr, false).await?;
         loop {
@@ -301,6 +305,16 @@ impl RendezvousServer {
                             self.serial,
                             self.rendezvous_servers
                         );
+                    }
+                }
+                Some(rendezvous_message::Union::software_update(su)) => {
+                    if !self.version.is_empty() && su.url != self.version {
+                        let mut msg_out = RendezvousMessage::new();
+                        msg_out.set_software_update(SoftwareUpdate {
+                            url: self.software_url.clone(),
+                            ..Default::default()
+                        });
+                        socket.send(&msg_out, addr).await?;
                     }
                 }
                 _ => {}
@@ -561,8 +575,8 @@ impl RendezvousServer {
 
 pub fn test_if_valid_server(host: &str) -> ResultType<SocketAddr> {
     if host.contains(":") {
-        Config::to_socket_addr(host)
+        hbb_common::to_socket_addr(host)
     } else {
-        Config::to_socket_addr(&format!("{}:{}", host, 0))
+        hbb_common::to_socket_addr(&format!("{}:{}", host, 0))
     }
 }

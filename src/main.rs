@@ -15,6 +15,7 @@ async fn main() -> ResultType<()> {
         -p, --port=[NUMBER(default={})] 'Sets the listening port'
         -s, --serial=[NUMBER(default={0})] 'Sets configure update serial number'
         -R, --rendezvous-servers=[HOSTS] 'Sets rendezvous servers, seperated by colon'
+        -u, --software-url=[URL] 'Sets download url of RustDesk software of newest version'
     -r, --relay-server=[HOST] 'Sets the default relay server'",
         DEFAULT_PORT
     );
@@ -59,6 +60,13 @@ async fn main() -> ResultType<()> {
     log::info!("relay-server={}", relay_server);
     log::info!("serial={}", serial);
     log::info!("rendzvous-servers={:?}", rendezvous_servers);
-    RendezvousServer::start(&addr, relay_server, serial, rendezvous_servers).await?;
+    RendezvousServer::start(
+        &addr,
+        relay_server,
+        serial,
+        rendezvous_servers,
+        get_arg("software-url", ""),
+    )
+    .await?;
     Ok(())
 }
