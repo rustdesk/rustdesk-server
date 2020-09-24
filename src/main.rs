@@ -59,7 +59,7 @@ async fn main() -> ResultType<()> {
     log::info!("Listening on {}", addr);
     log::info!("relay-server={}", relay_server);
     log::info!("serial={}", serial);
-    log::info!("rendzvous-servers={:?}", rendezvous_servers);
+    log::info!("rendezvous-servers={:?}", rendezvous_servers);
     RendezvousServer::start(
         &addr,
         relay_server,
