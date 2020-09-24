@@ -476,8 +476,9 @@ dependencies = [
 
 [[package]]
 name = "hbbs"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
+ "cc 1.0.59 (registry+https://github.com/rust-lang/crates.io-index)",
  "clap 2.33.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "hbb_common 0.1.0",
  "lazy_static 1.4.0 (registry+https://github.com/rust-lang/crates.io-index)",

@@ -13,14 +13,14 @@ async fn main() -> ResultType<()> {
     let args = format!(
         "-c --config=[FILE] +takes_value 'Sets a custom config file'
         -p, --port=[NUMBER(default={})] 'Sets the listening port'
-        -s, --serial=[NUMBER(default={0})] 'Sets configure update serial number'
+        -s, --serial=[NUMBER(default=0)] 'Sets configure update serial number'
         -R, --rendezvous-servers=[HOSTS] 'Sets rendezvous servers, seperated by colon'
         -u, --software-url=[URL] 'Sets download url of RustDesk software of newest version'
     -r, --relay-server=[HOST] 'Sets the default relay server'",
         DEFAULT_PORT
     );
     let matches = App::new("hbbs")
-        .version("1.0")
+        .version(crate::VERSION)
         .author("Zhou Huabing <info@rustdesk.com>")
         .about("RustDesk Rendezvous Server")
         .args_from_usage(&args)

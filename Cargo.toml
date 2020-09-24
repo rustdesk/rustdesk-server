@@ -1,8 +1,9 @@
 [package]
 name = "hbbs"
-version = "0.1.0"
+version = "1.0.0"
 authors = ["open-trade <info@opentradesolutions.com>"]
 edition = "2018"
+build= "build.rs"
 
 [[bin]]
 name = "hbbr"
@@ -19,6 +20,10 @@ serde_json = "1.0"
 lazy_static = "1.4"
 clap = "2.33"
 rust-ini = "0.15"
+
+[build-dependencies]
+cc = "1.0"
+hbb_common = { path = "libs/hbb_common" }
 
 [workspace]
 members = ["libs/hbb_common"]

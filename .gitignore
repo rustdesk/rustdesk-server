@@ -1,2 +1,6 @@
 /target
 **/*.rs.bk
+version.rs
+sled.db
+hbbs.sh
+hbbs.conf

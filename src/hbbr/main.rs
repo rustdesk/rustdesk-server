@@ -28,7 +28,7 @@ async fn main() -> ResultType<()> {
         DEFAULT_PORT
     );
     let matches = App::new("hbbr")
-        .version("1.0")
+        .version(hbbs::VERSION)
         .author("Zhou Huabing <info@rustdesk.com>")
         .about("RustDesk Relay Server")
         .args_from_usage(&args)
