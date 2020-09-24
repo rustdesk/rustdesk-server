@@ -29,7 +29,7 @@ async fn main() -> ResultType<()> {
     );
     let matches = App::new("hbbr")
         .version(hbbs::VERSION)
-        .author("Zhou Huabing <info@rustdesk.com>")
+        .author("CarrieZ Studio<info@rustdesk.com>")
         .about("RustDesk Relay Server")
         .args_from_usage(&args)
         .get_matches();

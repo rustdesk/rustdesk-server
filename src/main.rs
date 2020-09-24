@@ -21,8 +21,8 @@ async fn main() -> ResultType<()> {
     );
     let matches = App::new("hbbs")
         .version(crate::VERSION)
-        .author("Zhou Huabing <info@rustdesk.com>")
-        .about("RustDesk Rendezvous Server")
+        .author("CarrieZ Studio<info@rustdesk.com>")
+        .about("RustDesk ID/Rendezvous Server")
         .args_from_usage(&args)
         .get_matches();
     let mut section = None;
