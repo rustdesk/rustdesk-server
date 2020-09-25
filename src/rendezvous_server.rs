@@ -416,6 +416,7 @@ impl RendezvousServer {
             socket_addr: AddrMangle::encode(addr),
             pk,
             relay_server,
+            nat_type: phs.nat_type,
             ..Default::default()
         });
         if let Some(socket) = socket {
