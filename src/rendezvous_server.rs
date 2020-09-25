@@ -321,6 +321,14 @@ impl RendezvousServer {
                         socket.send(&msg_out, addr).await?;
                     }
                 }
+                Some(rendezvous_message::Union::test_nat_request(_)) => {
+                    let mut msg_out = RendezvousMessage::new();
+                    msg_out.set_test_nat_response(TestNatResponse {
+                        port: addr.port() as _,
+                        ..Default::default()
+                    });
+                    socket.send(&msg_out, addr).await?;
+                }
                 _ => {}
             }
         }
