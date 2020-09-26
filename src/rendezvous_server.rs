@@ -424,13 +424,16 @@ impl RendezvousServer {
         if relay_server.is_empty() {
             relay_server = self.relay_server.clone();
         }
-        msg_out.set_punch_hole_response(PunchHoleResponse {
+        let mut p = PunchHoleResponse {
             socket_addr: AddrMangle::encode(addr),
             pk,
             relay_server,
-            nat_type: phs.nat_type,
             ..Default::default()
-        });
+        };
+        if let Ok(t) = phs.nat_type.enum_value() {
+            p.set_nat_type(t);
+        }
+        msg_out.set_punch_hole_response(p);
         if let Some(socket) = socket {
             socket.send(&msg_out, addr_a).await?;
         } else {
@@ -459,11 +462,13 @@ impl RendezvousServer {
         if relay_server.is_empty() {
             relay_server = self.relay_server.clone();
         }
-        msg_out.set_punch_hole_response(PunchHoleResponse {
+        let mut p = PunchHoleResponse {
             socket_addr: la.local_addr.clone(),
             relay_server,
             ..Default::default()
-        });
+        };
+        p.set_is_local(true);
+        msg_out.set_punch_hole_response(p);
         if let Some(socket) = socket {
             socket.send(&msg_out, addr_a).await?;
         } else {
