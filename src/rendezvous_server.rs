@@ -176,18 +176,16 @@ impl RendezvousServer {
                             if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(&bytes) {
                                 match msg_in.union {
                                     Some(rendezvous_message::Union::punch_hole_request(ph)) => {
+                                        // there maybe several attempt, so sender can be none
                                         if let Some(sender) = sender.take() {
                                             tcp_punch.lock().unwrap().insert(addr, sender);
-                                        } else {
-                                            break;
                                         }
                                         allow_err!(rs.handle_tcp_punch_hole_request(addr, ph).await);
                                     }
                                     Some(rendezvous_message::Union::request_relay(mut rf)) => {
+                                        // there maybe several attempt, so sender can be none
                                         if let Some(sender) = sender.take() {
                                             tcp_punch.lock().unwrap().insert(addr, sender);
-                                        } else {
-                                            break;
                                         }
                                         if let Some(peer) = rs.pm.map.read().unwrap().get(&rf.id).map(|x| x.clone()) {
                                             let mut msg_out = RendezvousMessage::new();
