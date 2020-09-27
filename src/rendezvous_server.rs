@@ -9,7 +9,7 @@ use hbb_common::{
     log,
     protobuf::Message as _,
     rendezvous_proto::*,
-    tcp::new_listener,
+    tcp::{new_listener, FramedStream},
     timeout,
     tokio::{self, net::TcpStream, sync::mpsc},
     tokio_util::codec::Framed,
@@ -135,6 +135,7 @@ pub struct RendezvousServer {
 impl RendezvousServer {
     pub async fn start(
         addr: &str,
+        addr2: &str,
         relay_server: String,
         serial: i32,
         rendezvous_servers: Vec<String>,
@@ -157,6 +158,7 @@ impl RendezvousServer {
             software_url,
         };
         let mut listener = new_listener(addr, false).await?;
+        let mut listener2 = new_listener(addr2, false).await?;
         loop {
             tokio::select! {
                 Some((msg, addr)) = rx.recv() => {
@@ -164,6 +166,24 @@ impl RendezvousServer {
                 }
                 Some(Ok((bytes, addr))) = socket.next() => {
                     allow_err!(rs.handle_msg(&bytes, addr, &mut socket).await);
+                }
+                Ok((stream, addr)) = listener2.accept() => {
+                    let stream = FramedStream::from(stream);
+                    tokio::spawn(async move {
+                        let mut stream = stream;
+                        if let Some(Ok(bytes)) = stream.next_timeout(30_000).await {
+                            if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(&bytes) {
+                                if let Some(rendezvous_message::Union::test_nat_request(_)) = msg_in.union {
+                                    let mut msg_out = RendezvousMessage::new();
+                                    msg_out.set_test_nat_response(TestNatResponse {
+                                        port: addr.port() as _,
+                                        ..Default::default()
+                                    });
+                                    stream.send(&msg_out).await.ok();
+                                }
+                            }
+                        }
+                    });
                 }
                 Ok((stream, addr)) = listener.accept() => {
                     log::debug!("Tcp connection from {:?}", addr);

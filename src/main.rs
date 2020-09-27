@@ -57,11 +57,14 @@ async fn main() -> ResultType<()> {
         .collect();
     let addr = format!("0.0.0.0:{}", port);
     log::info!("Listening on {}", addr);
+    let addr2 = format!("0.0.0.0:{}", port.parse::<i32>().unwrap_or(0) - 1);
+    log::info!("Listening on {}, extra port for NAT test", addr2);
     log::info!("relay-server={}", relay_server);
     log::info!("serial={}", serial);
     log::info!("rendezvous-servers={:?}", rendezvous_servers);
     RendezvousServer::start(
         &addr,
+        &addr2,
         relay_server,
         serial,
         rendezvous_servers,
