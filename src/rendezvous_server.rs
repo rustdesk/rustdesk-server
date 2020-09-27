@@ -181,7 +181,7 @@ impl RendezvousServer {
                                         } else {
                                             break;
                                         }
-                                        allow_err!(rs.handle_tcp_punch_hole_request(addr, ph.id).await);
+                                        allow_err!(rs.handle_tcp_punch_hole_request(addr, ph).await);
                                     }
                                     Some(rendezvous_message::Union::request_relay(mut rf)) => {
                                         if let Some(sender) = sender.take() {
@@ -196,11 +196,17 @@ impl RendezvousServer {
                                             rs.tx.send((msg_out, peer.socket_addr)).ok();
                                         }
                                     }
-                                    Some(rendezvous_message::Union::request_relay_response(mut rfr)) => {
-                                        let addr_b = AddrMangle::decode(&rfr.socket_addr);
-                                        rfr.socket_addr = Default::default();
+                                    Some(rendezvous_message::Union::relay_response(mut rr)) => {
+                                        let addr_b = AddrMangle::decode(&rr.socket_addr);
+                                        rr.socket_addr = Default::default();
+                                        let id = rr.get_id();
+                                        if !id.is_empty() {
+                                            if let Some(peer) = rs.pm.get(&id).await {
+                                                rr.set_pk(peer.pk.clone());
+                                            }
+                                        }
                                         let mut msg_out = RendezvousMessage::new();
-                                        msg_out.set_request_relay_response(rfr);
+                                        msg_out.set_relay_response(rr);
                                         allow_err!(rs.send_to_tcp_sync(&msg_out, addr_b).await);
                                         break;
                                     }
@@ -297,14 +303,13 @@ impl RendezvousServer {
                     socket.send(&msg_out, addr).await?
                 }
                 Some(rendezvous_message::Union::punch_hole_request(ph)) => {
-                    let id = ph.id;
-                    if self.pm.is_in_memory(&id) {
-                        self.handle_udp_punch_hole_request(addr, id).await?;
+                    if self.pm.is_in_memory(&ph.id) {
+                        self.handle_udp_punch_hole_request(addr, ph).await?;
                     } else {
                         // not in memory, fetch from db with spawn in case blocking me
                         let mut me = self.clone();
                         tokio::spawn(async move {
-                            allow_err!(me.handle_udp_punch_hole_request(addr, id).await);
+                            allow_err!(me.handle_udp_punch_hole_request(addr, ph).await);
                         });
                     }
                 }
@@ -420,14 +425,10 @@ impl RendezvousServer {
             Some(peer) => peer.pk,
             _ => Vec::new(),
         };
-        let mut relay_server = phs.relay_server;
-        if relay_server.is_empty() {
-            relay_server = self.relay_server.clone();
-        }
         let mut p = PunchHoleResponse {
             socket_addr: AddrMangle::encode(addr),
             pk,
-            relay_server,
+            relay_server: phs.relay_server.clone(),
             ..Default::default()
         };
         if let Ok(t) = phs.nat_type.enum_value() {
@@ -458,13 +459,9 @@ impl RendezvousServer {
             &addr
         );
         let mut msg_out = RendezvousMessage::new();
-        let mut relay_server = la.relay_server;
-        if relay_server.is_empty() {
-            relay_server = self.relay_server.clone();
-        }
         let mut p = PunchHoleResponse {
             socket_addr: la.local_addr.clone(),
-            relay_server,
+            relay_server: la.relay_server,
             ..Default::default()
         };
         p.set_is_local(true);
@@ -481,8 +478,9 @@ impl RendezvousServer {
     async fn handle_punch_hole_request(
         &mut self,
         addr: SocketAddr,
-        id: String,
+        ph: PunchHoleRequest,
     ) -> ResultType<(RendezvousMessage, Option<SocketAddr>)> {
+        let id = ph.id;
         // punch hole request from A, relay to B,
         // check if in same intranet first,
         // fetch local addrs if in same intranet.
@@ -518,6 +516,7 @@ impl RendezvousServer {
                 );
                 msg_out.set_fetch_local_addr(FetchLocalAddr {
                     socket_addr,
+                    relay_server: self.relay_server.clone(),
                     ..Default::default()
                 });
             } else {
@@ -529,6 +528,8 @@ impl RendezvousServer {
                 );
                 msg_out.set_punch_hole(PunchHole {
                     socket_addr,
+                    nat_type: ph.nat_type,
+                    relay_server: self.relay_server.clone(),
                     ..Default::default()
                 });
             }
@@ -574,9 +575,9 @@ impl RendezvousServer {
     async fn handle_tcp_punch_hole_request(
         &mut self,
         addr: SocketAddr,
-        id: String,
+        ph: PunchHoleRequest,
     ) -> ResultType<()> {
-        let (msg, to_addr) = self.handle_punch_hole_request(addr, id).await?;
+        let (msg, to_addr) = self.handle_punch_hole_request(addr, ph).await?;
         if let Some(addr) = to_addr {
             self.tx.send((msg, addr))?;
         } else {
@@ -589,9 +590,9 @@ impl RendezvousServer {
     async fn handle_udp_punch_hole_request(
         &mut self,
         addr: SocketAddr,
-        id: String,
+        ph: PunchHoleRequest,
     ) -> ResultType<()> {
-        let (msg, to_addr) = self.handle_punch_hole_request(addr, id).await?;
+        let (msg, to_addr) = self.handle_punch_hole_request(addr, ph).await?;
         self.tx.send((
             msg,
             match to_addr {
