@@ -10,4 +10,6 @@ There are two executables
 
 By default, hbbs listens on 21115(tcp) and 21116(tcp/udp), hbbr listens on 21117(tcp)
 
+[check here](https://rustdesk.com/blog/id-relay-set/) for more information about setting up your cloud with hbbs/hbbr.
+
 [**DOWNLOAD**](https://github.com/rustdesk/rustdesk-server/releases)
