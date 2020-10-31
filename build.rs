@@ -1,3 +1,3 @@
 fn main() {
-  hbb_common::gen_version();
+    hbb_common::gen_version();
 }

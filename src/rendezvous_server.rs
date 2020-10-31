@@ -7,7 +7,7 @@ use hbb_common::{
         stream::{SplitSink, StreamExt},
     },
     log,
-    protobuf::Message as _,
+    protobuf::{Message as _, MessageField},
     rendezvous_proto::*,
     tcp::{new_listener, FramedStream},
     timeout,
@@ -236,12 +236,19 @@ impl RendezvousServer {
                                         allow_err!(rs.handle_local_addr(la, addr, None).await);
                                         break;
                                     }
-                                    Some(rendezvous_message::Union::test_nat_request(_)) => {
+                                    Some(rendezvous_message::Union::test_nat_request(tar)) => {
                                         let mut msg_out = RendezvousMessage::new();
-                                        msg_out.set_test_nat_response(TestNatResponse {
+                                        let mut res = TestNatResponse {
                                             port: addr.port() as _,
                                             ..Default::default()
-                                        });
+                                        }
+                                        if rs.serial > tar.serial {
+                                            let mut cu = ConfigUpdate::new();
+                                            cu.serial = rs.serial;
+                                            cu.rendezvous_servers = rs.rendezvous_servers.clone();
+                                            res.cu = MessageField::from_option(Some(cu));
+                                        }
+                                        msg_out.set_test_nat_response(res);
                                         if let Some(tcp) = sender.as_mut() {
                                             if let Ok(bytes) = msg_out.write_to_bytes() {
                                                 allow_err!(tcp.send(Bytes::from(bytes)).await);
