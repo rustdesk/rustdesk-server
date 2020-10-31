@@ -16,8 +16,14 @@ async fn main() -> ResultType<()> {
         -s, --serial=[NUMBER(default=0)] 'Sets configure update serial number'
         -R, --rendezvous-servers=[HOSTS] 'Sets rendezvous servers, seperated by colon'
         -u, --software-url=[URL] 'Sets download url of RustDesk software of newest version'
-    -r, --relay-server=[HOST] 'Sets the default relay server'",
-        DEFAULT_PORT
+        -r, --relay-server{}=[HOST] 'Sets the default relay server{}'",
+        DEFAULT_PORT,
+        if LICENSE_KEY.is_empty() { "" } else { "s" },
+        if LICENSE_KEY.is_empty() {
+            ""
+        } else {
+            "s, seperated by colon, only available for licensed users"
+        }
     );
     let matches = App::new("hbbs")
         .version(crate::VERSION)
@@ -44,28 +50,38 @@ async fn main() -> ResultType<()> {
         return default.to_owned();
     };
     let port = get_arg("port", DEFAULT_PORT);
-    let mut relay_server = get_arg("relay-server", "");
-    if let Err(err) = test_if_valid_server(&relay_server) {
-        relay_server = "".to_owned();
-        log::error!("Invalid relay-server: {}", err);
+    let mut relay_servers: Vec<String> = get_arg(
+        &format!(
+            "relay-server{}",
+            if LICENSE_KEY.is_empty() { "" } else { "s" }
+        ),
+        "",
+    )
+    .split(",")
+    .filter(|x| !x.is_empty() && test_if_valid_server(x, "relay-server").is_ok())
+    .map(|x| x.to_owned())
+    .collect();
+    if relay_servers.len() > 1 && LICENSE_KEY.is_empty() {
+        log::error!("Only support multiple relay servers for licenced users");
+        relay_servers = vec![relay_servers[0].clone()];
     }
     let serial: i32 = get_arg("serial", "").parse().unwrap_or(0);
     let rendezvous_servers: Vec<String> = get_arg("rendezvous-servers", "")
         .split(",")
-        .filter(|x| test_if_valid_server(x).is_ok())
+        .filter(|x| !x.is_empty() && test_if_valid_server(x, "rendezvous-server").is_ok())
         .map(|x| x.to_owned())
         .collect();
     let addr = format!("0.0.0.0:{}", port);
     log::info!("Listening on {}", addr);
     let addr2 = format!("0.0.0.0:{}", port.parse::<i32>().unwrap_or(0) - 1);
     log::info!("Listening on {}, extra port for NAT test", addr2);
-    log::info!("relay-server={}", relay_server);
+    log::info!("relay-servers={:?}", relay_servers);
     log::info!("serial={}", serial);
     log::info!("rendezvous-servers={:?}", rendezvous_servers);
     RendezvousServer::start(
         &addr,
         &addr2,
-        relay_server,
+        relay_servers,
         serial,
         rendezvous_servers,
         get_arg("software-url", ""),

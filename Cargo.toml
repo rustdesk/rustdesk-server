@@ -13,13 +13,13 @@ path = "src/hbbr/main.rs"
 
 [dependencies]
 hbb_common = { path = "libs/hbb_common" }
-sled = "0.31"
+sled = "0.34"
 serde_derive = "1.0"
 serde = "1.0"
 serde_json = "1.0"
 lazy_static = "1.4"
 clap = "2.33"
-rust-ini = "0.15"
+rust-ini = "0.16"
 
 [build-dependencies]
 cc = "1.0"
