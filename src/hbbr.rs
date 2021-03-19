@@ -17,6 +17,6 @@ fn main() -> ResultType<()> {
         .args_from_usage(&args)
         .get_matches();
     let stop: Arc<Mutex<bool>> = Default::default();
-    start(matches.value_of("port").unwrap_or(DEFAULT_PORT), stop)?;
+    start(matches.value_of("port").unwrap_or(DEFAULT_PORT), "", stop)?;
     Ok(())
 }

@@ -29,12 +29,14 @@ pub fn start() {
             0,
             Default::default(),
             Default::default(),
+            "",
             STOP.clone(),
         ));
     });
     std::thread::spawn(|| {
         allow_err!(relay_server::start(
             relay_server::DEFAULT_PORT,
+            "",
             STOP.clone()
         ));
     });

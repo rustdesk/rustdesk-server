@@ -83,6 +83,7 @@ fn main() -> ResultType<()> {
         serial,
         rendezvous_servers,
         get_arg("software-url", ""),
+        "",
         stop,
     )?;
     Ok(())

@@ -124,7 +124,6 @@ impl PeerMap {
 }
 
 const REG_TIMEOUT: i32 = 30_000;
-pub const LICENSE_KEY: &'static str = "";
 type Sink = SplitSink<Framed<TcpStream, BytesCodec>, Bytes>;
 type Sender = mpsc::UnboundedSender<(RendezvousMessage, SocketAddr)>;
 static mut ROTATION_RELAY_SERVER: usize = 0;
@@ -150,6 +149,7 @@ impl RendezvousServer {
         serial: i32,
         rendezvous_servers: Vec<String>,
         software_url: String,
+        license: &str,
         stop: Arc<Mutex<bool>>,
     ) -> ResultType<()> {
         let mut socket = FramedSocket::new(addr).await?;
@@ -183,7 +183,7 @@ impl RendezvousServer {
                     allow_err!(socket.send(&msg, addr).await);
                 }
                 Some(Ok((bytes, addr))) = socket.next() => {
-                    allow_err!(rs.handle_msg(&bytes, addr, &mut socket).await);
+                    allow_err!(rs.handle_msg(&bytes, addr, &mut socket, license).await);
                 }
                 Ok((stream, addr)) = listener2.accept() => {
                     let stream = FramedStream::from(stream);
@@ -208,6 +208,7 @@ impl RendezvousServer {
                     let (a, mut b) = Framed::new(stream, BytesCodec::new()).split();
                     let tcp_punch = rs.tcp_punch.clone();
                     let mut rs = rs.clone();
+                    let license = license.to_owned();
                     tokio::spawn(async move {
                         let mut sender = Some(a);
                         while let Ok(Some(Ok(bytes))) = timeout(30_000, b.next()).await {
@@ -218,7 +219,7 @@ impl RendezvousServer {
                                         if let Some(sender) = sender.take() {
                                             tcp_punch.lock().unwrap().insert(addr, sender);
                                         }
-                                        allow_err!(rs.handle_tcp_punch_hole_request(addr, ph).await);
+                                        allow_err!(rs.handle_tcp_punch_hole_request(addr, ph, &license).await);
                                     }
                                     Some(rendezvous_message::Union::request_relay(mut rf)) => {
                                         // there maybe several attempt, so sender can be none
@@ -299,6 +300,7 @@ impl RendezvousServer {
         bytes: &BytesMut,
         addr: SocketAddr,
         socket: &mut FramedSocket,
+        license: &str,
     ) -> ResultType<()> {
         if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(&bytes) {
             match msg_in.union {
@@ -348,12 +350,14 @@ impl RendezvousServer {
                 }
                 Some(rendezvous_message::Union::punch_hole_request(ph)) => {
                     if self.pm.is_in_memory(&ph.id) {
-                        self.handle_udp_punch_hole_request(addr, ph).await?;
+                        self.handle_udp_punch_hole_request(addr, ph, license)
+                            .await?;
                     } else {
                         // not in memory, fetch from db with spawn in case blocking me
                         let mut me = self.clone();
+                        let license = license.to_owned();
                         tokio::spawn(async move {
-                            allow_err!(me.handle_udp_punch_hole_request(addr, ph).await);
+                            allow_err!(me.handle_udp_punch_hole_request(addr, ph, &license).await);
                         });
                     }
                 }
@@ -526,8 +530,9 @@ impl RendezvousServer {
         &mut self,
         addr: SocketAddr,
         ph: PunchHoleRequest,
+        license: &str,
     ) -> ResultType<(RendezvousMessage, Option<SocketAddr>)> {
-        if ph.licence_key != LICENSE_KEY {
+        if !license.is_empty() && ph.licence_key != license {
             let mut msg_out = RendezvousMessage::new();
             msg_out.set_punch_hole_response(PunchHoleResponse {
                 failure: punch_hole_response::Failure::LICENCE_MISMATCH.into(),
@@ -639,8 +644,9 @@ impl RendezvousServer {
         &mut self,
         addr: SocketAddr,
         ph: PunchHoleRequest,
+        license: &str,
     ) -> ResultType<()> {
-        let (msg, to_addr) = self.handle_punch_hole_request(addr, ph).await?;
+        let (msg, to_addr) = self.handle_punch_hole_request(addr, ph, license).await?;
         if let Some(addr) = to_addr {
             self.tx.send((msg, addr))?;
         } else {
@@ -654,8 +660,9 @@ impl RendezvousServer {
         &mut self,
         addr: SocketAddr,
         ph: PunchHoleRequest,
+        license: &str,
     ) -> ResultType<()> {
-        let (msg, to_addr) = self.handle_punch_hole_request(addr, ph).await?;
+        let (msg, to_addr) = self.handle_punch_hole_request(addr, ph, license).await?;
         self.tx.send((
             msg,
             match to_addr {

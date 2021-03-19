@@ -23,7 +23,7 @@ lazy_static::lazy_static! {
 pub const DEFAULT_PORT: &'static str = "21117";
 
 #[tokio::main(basic_scheduler)]
-pub async fn start(port: &str, stop: Arc<Mutex<bool>>) -> ResultType<()> {
+pub async fn start(port: &str, license: &str, stop: Arc<Mutex<bool>>) -> ResultType<()> {
     let addr = format!("0.0.0.0:{}", port);
     log::info!("Listening on {}", addr);
     let mut timer = interval(Duration::from_millis(300));
@@ -31,8 +31,9 @@ pub async fn start(port: &str, stop: Arc<Mutex<bool>>) -> ResultType<()> {
     loop {
         tokio::select! {
             Ok((stream, addr)) = listener.accept() => {
+                let license = license.to_owned();
                 tokio::spawn(async move {
-                    make_pair(FramedStream::from(stream), addr).await.ok();
+                    make_pair(FramedStream::from(stream), addr, &license).await.ok();
                 });
             }
             _ = timer.tick() => {
@@ -46,11 +47,14 @@ pub async fn start(port: &str, stop: Arc<Mutex<bool>>) -> ResultType<()> {
     Ok(())
 }
 
-async fn make_pair(stream: FramedStream, addr: SocketAddr) -> ResultType<()> {
+async fn make_pair(stream: FramedStream, addr: SocketAddr, license: &str) -> ResultType<()> {
     let mut stream = stream;
     if let Some(Ok(bytes)) = stream.next_timeout(30_000).await {
         if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(&bytes) {
             if let Some(rendezvous_message::Union::request_relay(rf)) = msg_in.union {
+                if !license.is_empty() && rf.licence_key != license {
+                    return Ok(());
+                }
                 if !rf.uuid.is_empty() {
                     let peer = PEERS.lock().unwrap().remove(&rf.uuid);
                     if let Some(peer) = peer {
