@@ -7,7 +7,7 @@ build= "build.rs"
 
 [[bin]]
 name = "hbbr"
-path = "src/hbbr/main.rs"
+path = "src/hbbr.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
