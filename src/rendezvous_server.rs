@@ -65,7 +65,7 @@ impl PeerMap {
     fn new() -> ResultType<Self> {
         Ok(Self {
             map: Default::default(),
-            db: super::SledAsync::new("./sled.db", true)?,
+            db: super::SledAsync::new("./hbbs.db", true)?,
         })
     }
 
