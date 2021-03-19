@@ -1,12 +1,10 @@
 use clap::App;
 mod relay_server;
-use hbb_common::{env_logger::*, tokio, ResultType};
-use relay_server::start;
+use hbb_common::{env_logger::*, ResultType};
+use relay_server::*;
+use std::sync::{Arc, Mutex};
 
-const DEFAULT_PORT: &'static str = "21117";
-
-#[tokio::main]
-async fn main() -> ResultType<()> {
+fn main() -> ResultType<()> {
     init_from_env(Env::default().filter_or(DEFAULT_FILTER_ENV, "info"));
     let args = format!(
         "-p, --port=[NUMBER(default={})] 'Sets the listening port'",
@@ -18,6 +16,7 @@ async fn main() -> ResultType<()> {
         .about("RustDesk Relay Server")
         .args_from_usage(&args)
         .get_matches();
-    start(matches.value_of("port").unwrap_or(DEFAULT_PORT)).await?;
+    let stop: Arc<Mutex<bool>> = Default::default();
+    start(matches.value_of("port").unwrap_or(DEFAULT_PORT), stop)?;
     Ok(())
 }

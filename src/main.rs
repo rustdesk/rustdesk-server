@@ -2,13 +2,12 @@
 // https://blog.csdn.net/bytxl/article/details/44344855
 
 use clap::App;
-use hbb_common::{env_logger::*, log, tokio, ResultType};
+use hbb_common::{env_logger::*, log, ResultType};
 use hbbs::*;
 use ini::Ini;
-const DEFAULT_PORT: &'static str = "21116";
+use std::sync::{Arc, Mutex};
 
-#[tokio::main]
-async fn main() -> ResultType<()> {
+fn main() -> ResultType<()> {
     init_from_env(Env::default().filter_or(DEFAULT_FILTER_ENV, "info"));
     let args = format!(
         "-c --config=[FILE] +takes_value 'Sets a custom config file'
@@ -72,12 +71,11 @@ async fn main() -> ResultType<()> {
         .map(|x| x.to_owned())
         .collect();
     let addr = format!("0.0.0.0:{}", port);
-    log::info!("Listening on {}", addr);
     let addr2 = format!("0.0.0.0:{}", port.parse::<i32>().unwrap_or(0) - 1);
-    log::info!("Listening on {}, extra port for NAT test", addr2);
     log::info!("relay-servers={:?}", relay_servers);
     log::info!("serial={}", serial);
     log::info!("rendezvous-servers={:?}", rendezvous_servers);
+    let stop: Arc<Mutex<bool>> = Default::default();
     RendezvousServer::start(
         &addr,
         &addr2,
@@ -85,7 +83,7 @@ async fn main() -> ResultType<()> {
         serial,
         rendezvous_servers,
         get_arg("software-url", ""),
-    )
-    .await?;
+        stop,
+    )?;
     Ok(())
 }

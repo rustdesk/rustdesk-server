@@ -11,7 +11,12 @@ use hbb_common::{
     rendezvous_proto::*,
     tcp::{new_listener, FramedStream},
     timeout,
-    tokio::{self, net::TcpStream, sync::mpsc},
+    tokio::{
+        self,
+        net::TcpStream,
+        sync::mpsc,
+        time::{interval, Duration},
+    },
     tokio_util::codec::Framed,
     udp::FramedSocket,
     AddrMangle, ResultType,
@@ -60,6 +65,8 @@ struct PeerMap {
     map: Arc<RwLock<HashMap<String, Peer>>>,
     db: super::SledAsync,
 }
+
+pub const DEFAULT_PORT: &'static str = "21116";
 
 impl PeerMap {
     fn new() -> ResultType<Self> {
@@ -135,6 +142,7 @@ pub struct RendezvousServer {
 }
 
 impl RendezvousServer {
+    #[tokio::main(basic_scheduler)]
     pub async fn start(
         addr: &str,
         addr2: &str,
@@ -142,6 +150,7 @@ impl RendezvousServer {
         serial: i32,
         rendezvous_servers: Vec<String>,
         software_url: String,
+        stop: Arc<Mutex<bool>>,
     ) -> ResultType<()> {
         let mut socket = FramedSocket::new(addr).await?;
         let (tx, mut rx) = mpsc::unbounded_channel::<(RendezvousMessage, SocketAddr)>();
@@ -161,8 +170,15 @@ impl RendezvousServer {
         };
         let mut listener = new_listener(addr, false).await?;
         let mut listener2 = new_listener(addr2, false).await?;
+        let mut timer = interval(Duration::from_millis(300));
         loop {
             tokio::select! {
+                _ = timer.tick() => {
+                    if *stop.lock().unwrap() {
+                        log::info!("Stopped");
+                        break;
+                    }
+                }
                 Some((msg, addr)) = rx.recv() => {
                     allow_err!(socket.send(&msg, addr).await);
                 }
@@ -274,6 +290,7 @@ impl RendezvousServer {
                 }
             }
         }
+        Ok(())
     }
 
     #[inline]

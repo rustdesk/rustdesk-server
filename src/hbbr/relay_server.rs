@@ -4,7 +4,11 @@ use hbb_common::{
     rendezvous_proto::*,
     sleep,
     tcp::{new_listener, FramedStream},
-    tokio, ResultType,
+    tokio::{
+        self,
+        time::{interval, Duration},
+    },
+    ResultType,
 };
 use std::{
     collections::HashMap,
@@ -16,9 +20,13 @@ lazy_static::lazy_static! {
     static ref PEERS: Arc<Mutex<HashMap<String, FramedStream>>> = Arc::new(Mutex::new(HashMap::new()));
 }
 
-pub async fn start(port: &str) -> ResultType<()> {
+pub const DEFAULT_PORT: &'static str = "21117";
+
+#[tokio::main(basic_scheduler)]
+pub async fn start(port: &str, stop: Arc<Mutex<bool>>) -> ResultType<()> {
     let addr = format!("0.0.0.0:{}", port);
     log::info!("Listening on {}", addr);
+    let mut timer = interval(Duration::from_millis(300));
     let mut listener = new_listener(addr, false).await?;
     loop {
         tokio::select! {
@@ -27,8 +35,15 @@ pub async fn start(port: &str) -> ResultType<()> {
                     make_pair(FramedStream::from(stream), addr).await.ok();
                 });
             }
+            _ = timer.tick() => {
+                if *stop.lock().unwrap() {
+                    log::info!("Stopped");
+                    break;
+                }
+            }
         }
     }
+    Ok(())
 }
 
 async fn make_pair(stream: FramedStream, addr: SocketAddr) -> ResultType<()> {
