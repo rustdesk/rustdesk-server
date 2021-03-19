@@ -7,6 +7,8 @@ use hbbs::*;
 use ini::Ini;
 use std::sync::{Arc, Mutex};
 
+const LICENSE_KEY: &'static str = "";
+
 fn main() -> ResultType<()> {
     init_from_env(Env::default().filter_or(DEFAULT_FILTER_ENV, "info"));
     let args = format!(
@@ -83,7 +85,7 @@ fn main() -> ResultType<()> {
         serial,
         rendezvous_servers,
         get_arg("software-url", ""),
-        "",
+        LICENSE_KEY,
         stop,
     )?;
     Ok(())
