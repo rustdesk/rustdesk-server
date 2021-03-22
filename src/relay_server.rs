@@ -25,7 +25,7 @@ pub const DEFAULT_PORT: &'static str = "21117";
 #[tokio::main(basic_scheduler)]
 pub async fn start(port: &str, license: &str, stop: Arc<Mutex<bool>>) -> ResultType<()> {
     let addr = format!("0.0.0.0:{}", port);
-    log::info!("Listening on {}", addr);
+    log::info!("Listening on tcp {}", addr);
     let mut timer = interval(Duration::from_millis(300));
     let mut listener = new_listener(addr, false).await?;
     loop {

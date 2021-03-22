@@ -163,6 +163,8 @@ impl RendezvousServer {
         license: &str,
         stop: Arc<Mutex<bool>>,
     ) -> ResultType<()> {
+        log::info!("Listening on tcp/udp {}", addr);
+        log::info!("Listening on tcp {}, extra port for NAT test", addr2);
         let mut socket = FramedSocket::new(addr).await?;
         let (tx, mut rx) = mpsc::unbounded_channel::<(RendezvousMessage, SocketAddr)>();
         let version = hbb_common::get_version_from_url(&software_url);
