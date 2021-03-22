@@ -2,7 +2,6 @@ use hbb_common::{
     allow_err,
     bytes::{Bytes, BytesMut},
     bytes_codec::BytesCodec,
-    config,
     futures_util::{
         sink::SinkExt,
         stream::{SplitSink, StreamExt},
@@ -74,7 +73,7 @@ impl PeerMap {
         let mut db: String = "hbbs.db".to_owned();
         #[cfg(windows)]
         {
-            if let Some(path) = config::Config::icon_path().parent() {
+            if let Some(path) = hbb_common::config::Config::icon_path().parent() {
                 db = format!("{}\\{}", path.to_str().unwrap_or("."), db);
             }
         }
