@@ -66,6 +66,10 @@ struct PeerMap {
     db: super::SledAsync,
 }
 
+lazy_static::lazy_static! {
+    static ref PUBLIC_IP: Arc<RwLock<String>> = Default::default();
+}
+
 pub const DEFAULT_PORT: &'static str = "21116";
 
 impl PeerMap {
@@ -218,6 +222,9 @@ impl RendezvousServer {
                 }
                 Ok((stream, addr)) = listener.accept() => {
                     log::debug!("Tcp connection from {:?}", addr);
+                    if let Ok(local_addr) = stream.local_addr() {
+                        *PUBLIC_IP.write().unwrap() = local_addr.ip().to_string();
+                    }
                     let (a, mut b) = Framed::new(stream, BytesCodec::new()).split();
                     let tcp_punch = rs.tcp_punch.clone();
                     let mut rs = rs.clone();
@@ -593,7 +600,7 @@ impl RendezvousServer {
                 };
                 msg_out.set_fetch_local_addr(FetchLocalAddr {
                     socket_addr,
-                    relay_server: self.relay_servers[i].clone(),
+                    relay_server: check_relay_server(&self.relay_servers[i]),
                     ..Default::default()
                 });
             } else {
@@ -610,7 +617,7 @@ impl RendezvousServer {
                 msg_out.set_punch_hole(PunchHole {
                     socket_addr,
                     nat_type: ph.nat_type,
-                    relay_server: self.relay_servers[i].clone(),
+                    relay_server: check_relay_server(&self.relay_servers[i]),
                     ..Default::default()
                 });
             }
@@ -697,4 +704,11 @@ pub fn test_if_valid_server(host: &str, name: &str) -> ResultType<SocketAddr> {
         log::error!("Invalid {} {}: {:?}", name, host, res);
     }
     res
+}
+
+fn check_relay_server(addr: &str) -> String {
+    if addr.contains("0.0.0.0") {
+        return addr.replace("0.0.0.0", &*PUBLIC_IP.read().unwrap());
+    }
+    addr.to_owned()
 }
