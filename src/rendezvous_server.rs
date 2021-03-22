@@ -2,6 +2,7 @@ use hbb_common::{
     allow_err,
     bytes::{Bytes, BytesMut},
     bytes_codec::BytesCodec,
+    config,
     futures_util::{
         sink::SinkExt,
         stream::{SplitSink, StreamExt},
@@ -70,9 +71,20 @@ pub const DEFAULT_PORT: &'static str = "21116";
 
 impl PeerMap {
     fn new() -> ResultType<Self> {
+        let mut db: String = "hbbs.db".to_owned();
+        #[cfg(windows)]
+        {
+            if let Some(path) = config::Config::icon_path().parent() {
+                db = format!("{}\\{}", path.to_str().unwrap_or("."), db);
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            db = format!("./{}", db);
+        }
         Ok(Self {
             map: Default::default(),
-            db: super::SledAsync::new("./hbbs.db", true)?,
+            db: super::SledAsync::new(&db, true)?,
         })
     }
 

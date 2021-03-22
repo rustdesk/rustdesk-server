@@ -12,7 +12,7 @@ fn is_running() -> bool {
     !*STOP.lock().unwrap()
 }
 
-pub fn start() {
+pub fn start(license: &str, host: &str) {
     if is_running() {
         return;
     }
@@ -20,7 +20,8 @@ pub fn start() {
     let port = rendezvous_server::DEFAULT_PORT;
     let addr = format!("0.0.0.0:{}", port);
     let addr2 = format!("0.0.0.0:{}", port.parse::<i32>().unwrap_or(0) - 1);
-    let relay_servers: Vec<String> = Default::default();
+    let relay_servers: Vec<String> = vec![format!("{}:{}", host, relay_server::DEFAULT_PORT)];
+    let tmp_license = license.to_owned();
     std::thread::spawn(move || {
         allow_err!(rendezvous_server::RendezvousServer::start(
             &addr,
@@ -29,14 +30,15 @@ pub fn start() {
             0,
             Default::default(),
             Default::default(),
-            "",
+            &tmp_license,
             STOP.clone(),
         ));
     });
-    std::thread::spawn(|| {
+    let tmp_license = license.to_owned();
+    std::thread::spawn(move || {
         allow_err!(relay_server::start(
             relay_server::DEFAULT_PORT,
-            "",
+            &tmp_license,
             STOP.clone()
         ));
     });
