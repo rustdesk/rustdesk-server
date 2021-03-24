@@ -74,7 +74,6 @@ fn main() -> ResultType<()> {
         .collect();
     let addr = format!("0.0.0.0:{}", port);
     let addr2 = format!("0.0.0.0:{}", port.parse::<i32>().unwrap_or(0) - 1);
-    log::info!("relay-servers={:?}", relay_servers);
     log::info!("serial={}", serial);
     log::info!("rendezvous-servers={:?}", rendezvous_servers);
     let stop: Arc<Mutex<bool>> = Default::default();

@@ -169,6 +169,7 @@ impl RendezvousServer {
     ) -> ResultType<()> {
         log::info!("Listening on tcp/udp {}", addr);
         log::info!("Listening on tcp {}, extra port for NAT test", addr2);
+        log::info!("relay-servers={:?}", relay_servers);
         let mut socket = FramedSocket::new(addr).await?;
         let (tx, mut rx) = mpsc::unbounded_channel::<(RendezvousMessage, SocketAddr)>();
         let version = hbb_common::get_version_from_url(&software_url);
@@ -223,6 +224,9 @@ impl RendezvousServer {
                 Ok((stream, addr)) = listener.accept() => {
                     log::debug!("Tcp connection from {:?}", addr);
                     if let Ok(local_addr) = stream.local_addr() {
+                        if PUBLIC_IP.write().unwrap().is_empty() {
+                            log::info!("Public ip is {}", local_addr.ip().to_string());
+                        }
                         *PUBLIC_IP.write().unwrap() = local_addr.ip().to_string();
                     }
                     let (a, mut b) = Framed::new(stream, BytesCodec::new()).split();
@@ -708,7 +712,7 @@ pub fn test_if_valid_server(host: &str, name: &str) -> ResultType<SocketAddr> {
 
 fn check_relay_server(addr: &str) -> String {
     if addr.contains("0.0.0.0") {
-        return addr.replace("0.0.0.0", &*PUBLIC_IP.read().unwrap());
+        return addr.replace("0.0.0.0", &PUBLIC_IP.read().unwrap());
     }
     addr.to_owned()
 }
