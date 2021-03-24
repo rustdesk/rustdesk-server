@@ -321,7 +321,7 @@ impl RendezvousServer {
                 Some(rendezvous_message::Union::register_peer(rp)) => {
                     // B registered
                     if rp.id.len() > 0 {
-                        log::debug!("New peer registered: {:?} {:?}", &rp.id, &addr);
+                        log::trace!("New peer registered: {:?} {:?}", &rp.id, &addr);
                         self.update_addr(rp.id, addr, socket).await?;
                         if self.serial > rp.serial {
                             let mut msg_out = RendezvousMessage::new();
