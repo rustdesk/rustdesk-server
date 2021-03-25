@@ -6,6 +6,7 @@ use hbb_common::{
     tcp::{new_listener, FramedStream},
     tokio::{
         self,
+        net::TcpListener,
         time::{interval, Duration},
     },
     ResultType,
@@ -26,8 +27,19 @@ pub const DEFAULT_PORT: &'static str = "21117";
 pub async fn start(port: &str, license: &str, stop: Arc<Mutex<bool>>) -> ResultType<()> {
     let addr = format!("0.0.0.0:{}", port);
     log::info!("Listening on tcp {}", addr);
-    let mut timer = interval(Duration::from_millis(300));
     let mut listener = new_listener(addr, false).await?;
+    loop {
+        if *stop.lock().unwrap() {
+            sleep(0.1).await;
+            continue;
+        }
+        log::info!("Start");
+        io_loop(&mut listener, license, stop.clone()).await;
+    }
+}
+
+async fn io_loop(listener: &mut TcpListener, license: &str, stop: Arc<Mutex<bool>>) {
+    let mut timer = interval(Duration::from_millis(100));
     loop {
         tokio::select! {
             Ok((stream, addr)) = listener.accept() => {
@@ -44,7 +56,6 @@ pub async fn start(port: &str, license: &str, stop: Arc<Mutex<bool>>) -> ResultT
             }
         }
     }
-    Ok(())
 }
 
 async fn make_pair(stream: FramedStream, addr: SocketAddr, license: &str) -> ResultType<()> {

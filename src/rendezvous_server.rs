@@ -9,11 +9,12 @@ use hbb_common::{
     log,
     protobuf::{Message as _, MessageField},
     rendezvous_proto::*,
+    sleep,
     tcp::{new_listener, FramedStream},
     timeout,
     tokio::{
         self,
-        net::TcpStream,
+        net::{TcpListener, TcpStream},
         sync::mpsc,
         time::{interval, Duration},
     },
@@ -137,6 +138,7 @@ impl PeerMap {
 const REG_TIMEOUT: i32 = 30_000;
 type Sink = SplitSink<Framed<TcpStream, BytesCodec>, Bytes>;
 type Sender = mpsc::UnboundedSender<(RendezvousMessage, SocketAddr)>;
+type Receiver = mpsc::UnboundedReceiver<(RendezvousMessage, SocketAddr)>;
 static mut ROTATION_RELAY_SERVER: usize = 0;
 
 #[derive(Clone)]
@@ -184,7 +186,34 @@ impl RendezvousServer {
         };
         let mut listener = new_listener(addr, false).await?;
         let mut listener2 = new_listener(addr2, false).await?;
-        let mut timer = interval(Duration::from_millis(300));
+        loop {
+            if *stop.lock().unwrap() {
+                sleep(0.1).await;
+                continue;
+            }
+            log::info!("Start");
+            rs.io_loop(
+                &mut rx,
+                &mut listener,
+                &mut listener2,
+                &mut socket,
+                license,
+                stop.clone(),
+            )
+            .await;
+        }
+    }
+
+    async fn io_loop(
+        &mut self,
+        rx: &mut Receiver,
+        listener: &mut TcpListener,
+        listener2: &mut TcpListener,
+        socket: &mut FramedSocket,
+        license: &str,
+        stop: Arc<Mutex<bool>>,
+    ) {
+        let mut timer = interval(Duration::from_millis(100));
         loop {
             tokio::select! {
                 _ = timer.tick() => {
@@ -197,7 +226,7 @@ impl RendezvousServer {
                     allow_err!(socket.send(&msg, addr).await);
                 }
                 Some(Ok((bytes, addr))) = socket.next() => {
-                    allow_err!(rs.handle_msg(&bytes, addr, &mut socket, license).await);
+                    allow_err!(self.handle_msg(&bytes, addr, socket, license).await);
                 }
                 Ok((stream, addr)) = listener2.accept() => {
                     let stream = FramedStream::from(stream);
@@ -220,8 +249,8 @@ impl RendezvousServer {
                 Ok((stream, addr)) = listener.accept() => {
                     log::debug!("Tcp connection from {:?}", addr);
                     let (a, mut b) = Framed::new(stream, BytesCodec::new()).split();
-                    let tcp_punch = rs.tcp_punch.clone();
-                    let mut rs = rs.clone();
+                    let tcp_punch = self.tcp_punch.clone();
+                    let mut rs = self.clone();
                     let license = license.to_owned();
                     tokio::spawn(async move {
                         let mut sender = Some(a);
@@ -305,7 +334,6 @@ impl RendezvousServer {
                 }
             }
         }
-        Ok(())
     }
 
     #[inline]
