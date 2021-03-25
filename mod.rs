@@ -8,15 +8,7 @@ lazy_static::lazy_static! {
     static ref STOP: Arc<Mutex<bool>> = Arc::new(Mutex::new(true));
 }
 
-fn is_running() -> bool {
-    !*STOP.lock().unwrap()
-}
-
-pub fn start(license: &str, host: &str) {
-    if is_running() {
-        return;
-    }
-    *STOP.lock().unwrap() = false;
+pub fn bootstrap(license: &str, host: &str) {
     let port = rendezvous_server::DEFAULT_PORT;
     let addr = format!("0.0.0.0:{}", port);
     let addr2 = format!("0.0.0.0:{}", port.parse::<i32>().unwrap_or(0) - 1);
@@ -46,4 +38,8 @@ pub fn start(license: &str, host: &str) {
 
 pub fn stop() {
     *STOP.lock().unwrap() = true;
+}
+
+pub fn start() {
+    *STOP.lock().unwrap() = false;
 }
