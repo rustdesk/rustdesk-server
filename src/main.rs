@@ -7,8 +7,6 @@ use hbbs::*;
 use ini::Ini;
 use std::sync::{Arc, Mutex};
 
-const LICENSE_KEY: &'static str = "";
-
 fn main() -> ResultType<()> {
     init_from_env(Env::default().filter_or(DEFAULT_FILTER_ENV, "info"));
     let args = format!(
@@ -17,14 +15,10 @@ fn main() -> ResultType<()> {
         -s, --serial=[NUMBER(default=0)] 'Sets configure update serial number'
         -R, --rendezvous-servers=[HOSTS] 'Sets rendezvous servers, seperated by colon'
         -u, --software-url=[URL] 'Sets download url of RustDesk software of newest version'
-        -r, --relay-server{}=[HOST] 'Sets the default relay server{}'",
+        -r, --relay-servers=[HOST] 'Sets the default relay servers, seperated by colon, only
+        available for licensed users'
+        -k, --key=[KEY] 'Only allow the client with the same key'",
         DEFAULT_PORT,
-        if LICENSE_KEY.is_empty() { "" } else { "s" },
-        if LICENSE_KEY.is_empty() {
-            ""
-        } else {
-            "s, seperated by colon, only available for licensed users"
-        }
     );
     let matches = App::new("hbbs")
         .version(crate::VERSION)
@@ -51,21 +45,11 @@ fn main() -> ResultType<()> {
         return default.to_owned();
     };
     let port = get_arg("port", DEFAULT_PORT);
-    let mut relay_servers: Vec<String> = get_arg(
-        &format!(
-            "relay-server{}",
-            if LICENSE_KEY.is_empty() { "" } else { "s" }
-        ),
-        "",
-    )
-    .split(",")
-    .filter(|x| !x.is_empty() && test_if_valid_server(x, "relay-server").is_ok())
-    .map(|x| x.to_owned())
-    .collect();
-    if relay_servers.len() > 1 && LICENSE_KEY.is_empty() {
-        log::error!("Only support multiple relay servers for licenced users");
-        relay_servers = vec![relay_servers[0].clone()];
-    }
+    let relay_servers: Vec<String> = get_arg("relay-servers", "")
+        .split(",")
+        .filter(|x| !x.is_empty() && test_if_valid_server(x, "relay-server").is_ok())
+        .map(|x| x.to_owned())
+        .collect();
     let serial: i32 = get_arg("serial", "").parse().unwrap_or(0);
     let rendezvous_servers: Vec<String> = get_arg("rendezvous-servers", "")
         .split(",")
@@ -84,7 +68,7 @@ fn main() -> ResultType<()> {
         serial,
         rendezvous_servers,
         get_arg("software-url", ""),
-        LICENSE_KEY,
+        &get_arg("key", ""),
         stop,
     )?;
     Ok(())
