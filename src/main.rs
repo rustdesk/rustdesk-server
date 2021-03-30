@@ -15,8 +15,7 @@ fn main() -> ResultType<()> {
         -s, --serial=[NUMBER(default=0)] 'Sets configure update serial number'
         -R, --rendezvous-servers=[HOSTS] 'Sets rendezvous servers, seperated by colon'
         -u, --software-url=[URL] 'Sets download url of RustDesk software of newest version'
-        -r, --relay-servers=[HOST] 'Sets the default relay servers, seperated by colon, only
-        available for licensed users'
+        -r, --relay-servers=[HOST] 'Sets the default relay servers, seperated by colon'
         -k, --key=[KEY] 'Only allow the client with the same key'",
         DEFAULT_PORT,
     );
