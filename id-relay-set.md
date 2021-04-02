@@ -12,7 +12,7 @@ There are two executables:
   - hbbs - RustDesk ID/Rendezvous server
   - hbbr - RustDesk relay server
 
-They are built on Centos7, tested on Centos7/8, Ubuntu 18/20.
+They are built on Centos7, tested on Centos7/8, Ubuntu 18/20, can also run on Synology if you have access to terminal.
 
 ### STEP-2 : Run hbbs and hbbr on server
 
