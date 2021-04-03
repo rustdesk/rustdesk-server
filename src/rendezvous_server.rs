@@ -162,9 +162,12 @@ impl RendezvousServer {
         serial: i32,
         rendezvous_servers: Vec<String>,
         software_url: String,
-        license: &str,
+        key: &str,
         stop: Arc<Mutex<bool>>,
     ) -> ResultType<()> {
+        if !key.is_empty() {
+            log::info!("Key: {}", key);
+        }
         log::info!("Listening on tcp/udp {}", addr);
         log::info!("Listening on tcp {}, extra port for NAT test", addr2);
         log::info!("relay-servers={:?}", relay_servers);
@@ -197,7 +200,7 @@ impl RendezvousServer {
                 &mut listener,
                 &mut listener2,
                 &mut socket,
-                license,
+                key,
                 stop.clone(),
             )
             .await;
@@ -210,7 +213,7 @@ impl RendezvousServer {
         listener: &mut TcpListener,
         listener2: &mut TcpListener,
         socket: &mut FramedSocket,
-        license: &str,
+        key: &str,
         stop: Arc<Mutex<bool>>,
     ) {
         let mut timer = interval(Duration::from_millis(100));
@@ -226,7 +229,7 @@ impl RendezvousServer {
                     allow_err!(socket.send(&msg, addr).await);
                 }
                 Some(Ok((bytes, addr))) = socket.next() => {
-                    allow_err!(self.handle_msg(&bytes, addr, socket, license).await);
+                    allow_err!(self.handle_msg(&bytes, addr, socket, key).await);
                 }
                 Ok((stream, addr)) = listener2.accept() => {
                     let stream = FramedStream::from(stream);
@@ -251,7 +254,7 @@ impl RendezvousServer {
                     let (a, mut b) = Framed::new(stream, BytesCodec::new()).split();
                     let tcp_punch = self.tcp_punch.clone();
                     let mut rs = self.clone();
-                    let license = license.to_owned();
+                    let key = key.to_owned();
                     tokio::spawn(async move {
                         let mut sender = Some(a);
                         while let Ok(Some(Ok(bytes))) = timeout(30_000, b.next()).await {
@@ -262,7 +265,7 @@ impl RendezvousServer {
                                         if let Some(sender) = sender.take() {
                                             tcp_punch.lock().unwrap().insert(addr, sender);
                                         }
-                                        allow_err!(rs.handle_tcp_punch_hole_request(addr, ph, &license).await);
+                                        allow_err!(rs.handle_tcp_punch_hole_request(addr, ph, &key).await);
                                     }
                                     Some(rendezvous_message::Union::request_relay(mut rf)) => {
                                         // there maybe several attempt, so sender can be none
@@ -342,7 +345,7 @@ impl RendezvousServer {
         bytes: &BytesMut,
         addr: SocketAddr,
         socket: &mut FramedSocket,
-        license: &str,
+        key: &str,
     ) -> ResultType<()> {
         if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(&bytes) {
             match msg_in.union {
@@ -392,14 +395,13 @@ impl RendezvousServer {
                 }
                 Some(rendezvous_message::Union::punch_hole_request(ph)) => {
                     if self.pm.is_in_memory(&ph.id) {
-                        self.handle_udp_punch_hole_request(addr, ph, license)
-                            .await?;
+                        self.handle_udp_punch_hole_request(addr, ph, key).await?;
                     } else {
                         // not in memory, fetch from db with spawn in case blocking me
                         let mut me = self.clone();
-                        let license = license.to_owned();
+                        let key = key.to_owned();
                         tokio::spawn(async move {
-                            allow_err!(me.handle_udp_punch_hole_request(addr, ph, &license).await);
+                            allow_err!(me.handle_udp_punch_hole_request(addr, ph, &key).await);
                         });
                     }
                 }
@@ -572,9 +574,9 @@ impl RendezvousServer {
         &mut self,
         addr: SocketAddr,
         ph: PunchHoleRequest,
-        license: &str,
+        key: &str,
     ) -> ResultType<(RendezvousMessage, Option<SocketAddr>)> {
-        if !license.is_empty() && ph.licence_key != license {
+        if !key.is_empty() && ph.licence_key != key {
             let mut msg_out = RendezvousMessage::new();
             msg_out.set_punch_hole_response(PunchHoleResponse {
                 failure: punch_hole_response::Failure::LICENCE_MISMATCH.into(),
@@ -686,9 +688,9 @@ impl RendezvousServer {
         &mut self,
         addr: SocketAddr,
         ph: PunchHoleRequest,
-        license: &str,
+        key: &str,
     ) -> ResultType<()> {
-        let (msg, to_addr) = self.handle_punch_hole_request(addr, ph, license).await?;
+        let (msg, to_addr) = self.handle_punch_hole_request(addr, ph, key).await?;
         if let Some(addr) = to_addr {
             self.tx.send((msg, addr))?;
         } else {
@@ -702,9 +704,9 @@ impl RendezvousServer {
         &mut self,
         addr: SocketAddr,
         ph: PunchHoleRequest,
-        license: &str,
+        key: &str,
     ) -> ResultType<()> {
-        let (msg, to_addr) = self.handle_punch_hole_request(addr, ph, license).await?;
+        let (msg, to_addr) = self.handle_punch_hole_request(addr, ph, key).await?;
         self.tx.send((
             msg,
             match to_addr {

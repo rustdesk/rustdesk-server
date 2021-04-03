@@ -24,7 +24,10 @@ lazy_static::lazy_static! {
 pub const DEFAULT_PORT: &'static str = "21117";
 
 #[tokio::main(basic_scheduler)]
-pub async fn start(port: &str, license: &str, stop: Arc<Mutex<bool>>) -> ResultType<()> {
+pub async fn start(port: &str, key: &str, stop: Arc<Mutex<bool>>) -> ResultType<()> {
+    if !key.is_empty() {
+        log::info!("Key: {}", key);
+    }
     let addr = format!("0.0.0.0:{}", port);
     log::info!("Listening on tcp {}", addr);
     let mut listener = new_listener(addr, false).await?;
@@ -34,18 +37,18 @@ pub async fn start(port: &str, license: &str, stop: Arc<Mutex<bool>>) -> ResultT
             continue;
         }
         log::info!("Start");
-        io_loop(&mut listener, license, stop.clone()).await;
+        io_loop(&mut listener, key, stop.clone()).await;
     }
 }
 
-async fn io_loop(listener: &mut TcpListener, license: &str, stop: Arc<Mutex<bool>>) {
+async fn io_loop(listener: &mut TcpListener, key: &str, stop: Arc<Mutex<bool>>) {
     let mut timer = interval(Duration::from_millis(100));
     loop {
         tokio::select! {
             Ok((stream, addr)) = listener.accept() => {
-                let license = license.to_owned();
+                let key = key.to_owned();
                 tokio::spawn(async move {
-                    make_pair(FramedStream::from(stream), addr, &license).await.ok();
+                    make_pair(FramedStream::from(stream), addr, &key).await.ok();
                 });
             }
             _ = timer.tick() => {
@@ -58,12 +61,12 @@ async fn io_loop(listener: &mut TcpListener, license: &str, stop: Arc<Mutex<bool
     }
 }
 
-async fn make_pair(stream: FramedStream, addr: SocketAddr, license: &str) -> ResultType<()> {
+async fn make_pair(stream: FramedStream, addr: SocketAddr, key: &str) -> ResultType<()> {
     let mut stream = stream;
     if let Some(Ok(bytes)) = stream.next_timeout(30_000).await {
         if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(&bytes) {
             if let Some(rendezvous_message::Union::request_relay(rf)) = msg_in.union {
-                if !license.is_empty() && rf.licence_key != license {
+                if !key.is_empty() && rf.licence_key != key {
                     return Ok(());
                 }
                 if !rf.uuid.is_empty() {
