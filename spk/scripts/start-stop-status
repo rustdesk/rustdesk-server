@@ -1,0 +1,156 @@
+#!/bin/sh
+
+
+sError="ERROR: "
+[ ! -z "$SYNOPKG_PKGNAME" ] && sError="<br />${sError}"
+TIMEOUT=120
+PACKAGE_NAME="RustDesk Server"
+PACKAGE_BASE="/var/packages/${PACKAGE_NAME}/target"
+HBBR_BIN="${PACKAGE_BASE}/bin/hbbr"
+HBBR_PORT=`synogetkeyvalue "${PACKAGE_BASE}/config/hbbr.conf" port`
+HBBR_LOG="${PACKAGE_BASE}/logs/hbbr.log"
+HBBS_BIN="${PACKAGE_BASE}/bin/hbbs"
+HBBS_PORT=`synogetkeyvalue "${PACKAGE_BASE}/config/hbbs.conf" port`
+HBBS_LOG="${PACKAGE_BASE}/logs/hbbs.log"
+PACKAGE_ENABLED="/var/packages/${PACKAGE_NAME}/enabled"
+PS_CMD="/bin/ps -w"
+DSM_MAJORVERSION=`synogetkeyvalue /etc.defaults/VERSION majorversion`
+if [[ $DSM_MAJORVERSION -gt 5 ]]; then
+    PS_CMD="$PS_CMD -x"
+fi
+
+CheckIfDaemonAlive() {
+    local PID="$1"
+    PROCESS_ALIVE="0"
+    [ -z "$PID" ] && return 1
+
+    kill -0 "$PID"
+    [ "0" == "$?" ] && PROCESS_ALIVE="1"
+}
+
+running_hbbr() {
+    local PID=$(${PS_CMD} | sed -e 's/^[ \t]*//' | grep -v grep | grep hbbr | grep "${PACKAGE_NAME}" | head -n1 | cut -f1 -d' ')
+    CheckIfDaemonAlive $PID
+    [ "0" == "$PROCESS_ALIVE" ] && return 1
+    return 0
+}
+
+running_hbbs() {
+    local PID=$(${PS_CMD} | sed -e 's/^[ \t]*//' | grep -v grep | grep hbbs | grep "${PACKAGE_NAME}" | head -n1 | cut -f1 -d' ')
+    CheckIfDaemonAlive $PID
+    [ "0" == "$PROCESS_ALIVE" ] && return 1
+    return 0
+}
+
+start() {  
+    [ "$SYNOPKG_TEMP_LOGFILE" == "" ] && SYNOPKG_TEMP_LOGFILE="/var/log/rustdeskserver.start.log"
+    LANG=C cd "$PACKAGE_BASE" && (nohup "$HBBR_BIN" -p $HBBR_PORT > "$HBBR_LOG" 2>&1 &) && (nohup "$HBBS_BIN" -r 127.0.0.1 -p $HBBS_PORT > "$HBBS_LOG" 2>&1 &)
+
+
+    i=0
+    while true; do
+        if ! running_hbbr || ! running_hbbs ; then
+#           echo "WAIT: ${i}s of ${TIMEOUT}s"
+            sleep 5s
+            i=$((i+5))
+        else
+            break
+        fi
+        [ $i -ge $TIMEOUT ] && break
+    done
+
+    # 检查hbbr进程状态
+    if ! running_hbbr ; then
+        echo -e "${sError}hbbr进程已死" | tee -a $SYNOPKG_TEMP_LOGFILE
+        stop
+        return 1
+    fi
+
+    # 检查hbbs进程状态
+    if ! running_hbbs ; then
+        echo -e "${sError}hbbs进程已死" | tee -a $SYNOPKG_TEMP_LOGFILE
+        stop
+        return 1
+    fi
+
+    return 0
+}
+
+stop() {
+    [ "$SYNOPKG_TEMP_LOGFILE" == "" ] && SYNOPKG_TEMP_LOGFILE="/var/log/rustdeskserver.stop.log"
+    # 检查hbbr进程状态
+    if running_hbbr ; then
+        local PID=$(${PS_CMD} | sed -e 's/^[ \t]*//' | grep -v grep | grep hbbr | grep "${PACKAGE_NAME}" | head -n1 | cut -f1 -d' ')
+        [ -z "$PID" ] && return 0
+        kill -15 $PID
+        sleep 5s
+
+        # 检查hbbr进程状态
+        if running_hbbr ; then
+            kill -9 $PID
+            sleep 5s
+            if running_hbbr ; then
+                echo "${sError}无法关闭hbbr进程 (pid=$PID)!" | tee -a $SYNOPKG_TEMP_LOGFILE
+                return 1
+            fi
+        fi
+    fi
+
+    # 检查hbbs进程状态
+    if running_hbbs ; then
+        local PID=$(${PS_CMD} | sed -e 's/^[ \t]*//' | grep -v grep | grep hbbs | grep "${PACKAGE_NAME}" | head -n1 | cut -f1 -d' ')
+        [ -z "$PID" ] && return 0
+        kill -15 $PID
+        sleep 5s
+
+        # 检查hbbs进程状态
+        if running_hbbs ; then
+            kill -9 $PID
+            sleep 5s
+            if running_hbbs ; then
+                echo "${sError}无法关闭hbbs进程 (pid=$PID)!" | tee -a $SYNOPKG_TEMP_LOGFILE
+                return 1
+            fi
+        fi
+    fi
+
+    return 0
+}
+
+case $1 in
+    start)
+        # 启动服务器
+        start
+        exit $?
+    ;;
+    stop)
+        # 关闭服务器
+        stop
+        exit $?
+    ;;
+    status)
+        # 检查套件开关
+        if [ ! -f "${PACKAGE_ENABLED}" ]; then
+            echo "${sError}套件没有开启" | tee -a $SYNOPKG_TEMP_LOGFILE
+            exit 0
+        fi
+
+        # 检查hbbr进程状态
+        if ! running_hbbr ; then
+            echo "${sError}hbbr进程已死" | tee -a $SYNOPKG_TEMP_LOGFILE
+            exit 1
+        fi
+
+        # 检查hbbs进程状态
+        if ! running_hbbs ; then
+            echo "${sError}hbbs进程已死" | tee -a $SYNOPKG_TEMP_LOGFILE
+            exit 1
+        fi
+
+        exit 0
+    ;;
+    log)
+        echo "$PACKAGE_BASE/logs/server.log"
+        exit 0
+    ;;
+esac
