@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# https://blog.cmj.tw/SynologyApp.htm 暂时不搞签名
 /bin/rm -rf package
 mkdir package
 cd package
