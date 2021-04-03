@@ -8,10 +8,11 @@ PACKAGE_NAME="RustDesk Server"
 PACKAGE_BASE="/var/packages/${PACKAGE_NAME}/target"
 HBBR_BIN="${PACKAGE_BASE}/bin/hbbr"
 HBBR_PORT=`synogetkeyvalue "${PACKAGE_BASE}/config/hbbr.conf" port`
-HBBR_LOG="${PACKAGE_BASE}/logs/hbbr.log"
+HBBR_LOG="/var/log/hbbr.log"
 HBBS_BIN="${PACKAGE_BASE}/bin/hbbs"
 HBBS_PORT=`synogetkeyvalue "${PACKAGE_BASE}/config/hbbs.conf" port`
-HBBS_LOG="${PACKAGE_BASE}/logs/hbbs.log"
+KEY=`synogetkeyvalue "${PACKAGE_BASE}/config/hbbs.conf" key`
+HBBS_LOG="/var/log/hbbs.log"
 PACKAGE_ENABLED="/var/packages/${PACKAGE_NAME}/enabled"
 PS_CMD="/bin/ps -w"
 DSM_MAJORVERSION=`synogetkeyvalue /etc.defaults/VERSION majorversion`
@@ -44,7 +45,7 @@ running_hbbs() {
 
 start() {  
     [ "$SYNOPKG_TEMP_LOGFILE" == "" ] && SYNOPKG_TEMP_LOGFILE="/var/log/rustdeskserver.start.log"
-    LANG=C cd "$PACKAGE_BASE" && (nohup "$HBBR_BIN" -p $HBBR_PORT > "$HBBR_LOG" 2>&1 &) && (nohup "$HBBS_BIN" -r 127.0.0.1 -p $HBBS_PORT > "$HBBS_LOG" 2>&1 &)
+    LANG=C cd "$PACKAGE_BASE" && (nohup "$HBBR_BIN" -p $HBBR_PORT -k "$KEY" > "$HBBR_LOG" 2>&1 &) && (nohup "$HBBS_BIN" -p $HBBS_PORT -k "$KEY" > "$HBBS_LOG" 2>&1 &)
 
 
     i=0
@@ -61,14 +62,14 @@ start() {
 
     # 检查hbbr进程状态
     if ! running_hbbr ; then
-        echo -e "${sError}hbbr进程已死" | tee -a $SYNOPKG_TEMP_LOGFILE
+        echo -e "${sError}hbbr process not running" | tee -a $SYNOPKG_TEMP_LOGFILE
         stop
         return 1
     fi
 
     # 检查hbbs进程状态
     if ! running_hbbs ; then
-        echo -e "${sError}hbbs进程已死" | tee -a $SYNOPKG_TEMP_LOGFILE
+        echo -e "${sError}hbbs process not running" | tee -a $SYNOPKG_TEMP_LOGFILE
         stop
         return 1
     fi
@@ -90,7 +91,7 @@ stop() {
             kill -9 $PID
             sleep 5s
             if running_hbbr ; then
-                echo "${sError}无法关闭hbbr进程 (pid=$PID)!" | tee -a $SYNOPKG_TEMP_LOGFILE
+                echo "${sError}Failed to kill hbbr process(pid=$PID)!" | tee -a $SYNOPKG_TEMP_LOGFILE
                 return 1
             fi
         fi
@@ -131,19 +132,19 @@ case $1 in
     status)
         # 检查套件开关
         if [ ! -f "${PACKAGE_ENABLED}" ]; then
-            echo "${sError}套件没有开启" | tee -a $SYNOPKG_TEMP_LOGFILE
+            echo "${sError}package not started" | tee -a $SYNOPKG_TEMP_LOGFILE
             exit 0
         fi
 
         # 检查hbbr进程状态
         if ! running_hbbr ; then
-            echo "${sError}hbbr进程已死" | tee -a $SYNOPKG_TEMP_LOGFILE
+            echo "${sError}hbbr process killed" | tee -a $SYNOPKG_TEMP_LOGFILE
             exit 1
         fi
 
         # 检查hbbs进程状态
         if ! running_hbbs ; then
-            echo "${sError}hbbs进程已死" | tee -a $SYNOPKG_TEMP_LOGFILE
+            echo "${sError}hbbs process killed" | tee -a $SYNOPKG_TEMP_LOGFILE
             exit 1
         fi
 

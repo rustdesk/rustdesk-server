@@ -11,6 +11,7 @@ FWFILENAME="RustDesk_Server.sc"
 
 [ "${hbbr_port}" == "" ]  && hbbr_port="21117"
 [ "${hbbs_port}" == "" ]  && hbbs_port="21116"
+[ "${key}" == "" ]  && key=""
 nat_port=`expr ${hbbs_port} - 1`
 
 preinst() {
@@ -47,14 +48,16 @@ postinst() {
         fi
 
         # 添加应用配置
-        sed -i "s/中继端口：21117/中继端口：${hbbr_port}/" "/var/packages/${PACKAGE_NAME}/INFO"
-        sed -i "s/ID\/注册端口：21116/ID\/注册端口：${hbbs_port}/" "/var/packages/${PACKAGE_NAME}/INFO"
-        sed -i "s/NAT测试端口：21115/NAT测试端口：${nat_port}/" "/var/packages/${PACKAGE_NAME}/INFO"
+				sed -i "s/relay port: 21117/relay port: ${hbbr_port}/" "/var/packages/${PACKAGE_NAME}/INFO"
+				sed -i "s/ID\/rendezvous port: 21116/ID\/rendezvous port: ${hbbs_port}/" "/var/packages/${PACKAGE_NAME}/INFO"
+				sed -i "s/NAT test port: 21115/NAT test port: ${nat_port}/" "/var/packages/${PACKAGE_NAME}/INFO"
+        sed -i "s/Key: ()/Key: (${key})/" "/var/packages/${PACKAGE_NAME}/INFO"
         sed -i "s/21117/${hbbr_port}/" "/var/packages/${PACKAGE_NAME}/scripts/${FWFILENAME}"
         sed -i "s/21116/${hbbs_port}/" "/var/packages/${PACKAGE_NAME}/scripts/${FWFILENAME}"
         sed -i "s/21115/${nat_port}/" "/var/packages/${PACKAGE_NAME}/scripts/${FWFILENAME}"
         sed -i "s/port=[^ ]*/port=${hbbr_port}/g" "${PACKAGE_BASE}/config/hbbr.conf"
         sed -i "s/port=[^ ]*/port=${hbbs_port}/g" "${PACKAGE_BASE}/config/hbbs.conf"
+        sed -i "s/key=[^ ]*/key=${key}/g" "${PACKAGE_BASE}/config/hbbs.conf"
 
         # 添加防火墙配置
         cat "/var/packages/${PACKAGE_NAME}/scripts/${FWFILENAME}" >"/tmp/${FWFILENAME}"
@@ -141,9 +144,11 @@ postupgrade() {
     hbbr_port=`${GETKEYVALUE} "${PACKAGE_BASE}/config/hbbr.conf" port` >>/tmp/wakko.txt
     hbbs_port=`${GETKEYVALUE} "${PACKAGE_BASE}/config/hbbs.conf" port` >>/tmp/wakko.txt
     nat_port=`expr ${hbbs_port} - 1`
-    sed -i "s/中继端口：21117/中继端口：${hbbr_port}/" "/var/packages/${PACKAGE_NAME}/INFO" >>/tmp/wakko.txt
-    sed -i "s/ID\/注册端口：21116/ID\/注册端口：${hbbs_port}/" "/var/packages/${PACKAGE_NAME}/INFO" >>/tmp/wakko.txt
-    sed -i "s/NAT测试端口：21115/NAT测试端口：${nat_port}/" "/var/packages/${PACKAGE_NAME}/INFO" >>/tmp/wakko.txt
+    key=`${GETKEYVALUE} "${PACKAGE_BASE}/config/hbbs.conf" key` >>/tmp/wakko.txt
+    sed -i "s/relay port: 21117/relay port: ${hbbr_port}/" "/var/packages/${PACKAGE_NAME}/INFO" >>/tmp/wakko.txt
+    sed -i "s/ID\/rendezvous port: 21116/ID\/rendezvous port: ${hbbs_port}/" "/var/packages/${PACKAGE_NAME}/INFO" >>/tmp/wakko.txt
+    sed -i "s/NAT test port: 21115/NAT test port: ${nat_port}/" "/var/packages/${PACKAGE_NAME}/INFO" >>/tmp/wakko.txt
+    sed -i "s/Key: ()/Key: (${key})/" "/var/packages/${PACKAGE_NAME}/INFO"
     sed -i "s/21117/${hbbr_port}/" "/var/packages/${PACKAGE_NAME}/scripts/${FWFILENAME}" >>/tmp/wakko.txt
     sed -i "s/21116/${hbbs_port}/" "/var/packages/${PACKAGE_NAME}/scripts/${FWFILENAME}" >>/tmp/wakko.txt
     sed -i "s/21115/${nat_port}/" "/var/packages/${PACKAGE_NAME}/scripts/${FWFILENAME}" >>/tmp/wakko.txt
