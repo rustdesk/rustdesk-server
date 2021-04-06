@@ -514,6 +514,7 @@ dependencies = [
  "protobuf-codegen-pure",
  "quinn",
  "rand",
+ "regex",
  "serde",
  "serde_derive",
  "serde_json",
