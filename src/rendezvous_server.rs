@@ -321,6 +321,27 @@ impl RendezvousServer {
                                         }
                                         break;
                                     }
+                                    Some(rendezvous_message::Union::register_pk(rk)) => {
+                                        if rk.uuid.is_empty() {
+                                            break;
+                                        }
+                                        let mut res = register_pk_response::Result::OK;
+                                        if let Some(peer) = rs.pm.get(&rk.id).await {
+                                            if peer.uuid != rk.uuid {
+                                                res = register_pk_response::Result::ID_EXISTS;
+                                            }
+                                        }
+                                        let mut msg_out = RendezvousMessage::new();
+                                        msg_out.set_register_pk_response(RegisterPkResponse {
+                                            result: res.into(),
+                                            ..Default::default()
+                                        });
+                                        if let Some(tcp) = sender.as_mut() {
+                                            if let Ok(bytes) = msg_out.write_to_bytes() {
+                                                allow_err!(tcp.send(Bytes::from(bytes)).await);
+                                            }
+                                        }
+                                    }
                                     _ => {
                                         break;
                                     }
@@ -372,7 +393,7 @@ impl RendezvousServer {
                     let id = rk.id;
                     let mut res = register_pk_response::Result::OK;
                     if let Some(peer) = self.pm.get(&id).await {
-                        if !peer.uuid.is_empty() && peer.uuid != rk.uuid {
+                        if peer.uuid != rk.uuid {
                             log::warn!(
                                 "Peer {} uuid mismatch: {:?} vs {:?}",
                                 id,
@@ -380,7 +401,7 @@ impl RendezvousServer {
                                 peer.uuid
                             );
                             res = register_pk_response::Result::UUID_MISMATCH;
-                        } else if peer.uuid.is_empty() || peer.pk != rk.pk {
+                        } else if peer.pk != rk.pk {
                             self.pm.update_pk(id, addr, rk.uuid, rk.pk);
                         }
                     } else {
