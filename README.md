@@ -2,7 +2,7 @@
 
 This is a repository used to release RustDesk server software and track issues.
 
-Built on Centos7 and Windows 10, tested on Centos7/8, Ubuntu 18/20.
+Built on Centos7 and Windows10, tested on Centos7/8, Ubuntu 18/20.
 
 There are two executables
   - hbbs - RustDesk ID/Rendezvous server
