@@ -16,6 +16,7 @@ fn main() -> ResultType<()> {
         -R, --rendezvous-servers=[HOSTS] 'Sets rendezvous servers, seperated by colon'
         -u, --software-url=[URL] 'Sets download url of RustDesk software of newest version'
         -r, --relay-servers=[HOST] 'Sets the default relay servers, seperated by colon'
+        -C, --change-id=[BOOL(default=Y)] 'Sets if support to change id'
         -k, --key=[KEY] 'Only allow the client with the same key'",
         DEFAULT_PORT,
     );
@@ -50,6 +51,7 @@ fn main() -> ResultType<()> {
         .map(|x| x.to_owned())
         .collect();
     let serial: i32 = get_arg("serial", "").parse().unwrap_or(0);
+    let id_change_support: bool = get_arg("change-id", "Y").to_uppercase() == "Y";
     let rendezvous_servers: Vec<String> = get_arg("rendezvous-servers", "")
         .split(",")
         .filter(|x| !x.is_empty() && test_if_valid_server(x, "rendezvous-server").is_ok())
@@ -69,6 +71,7 @@ fn main() -> ResultType<()> {
         get_arg("software-url", ""),
         &get_arg("key", ""),
         stop,
+        id_change_support,
     )?;
     Ok(())
 }

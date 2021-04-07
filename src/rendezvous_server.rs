@@ -164,6 +164,7 @@ impl RendezvousServer {
         software_url: String,
         key: &str,
         stop: Arc<Mutex<bool>>,
+        id_change_support: bool,
     ) -> ResultType<()> {
         if !key.is_empty() {
             log::info!("Key: {}", key);
@@ -171,6 +172,7 @@ impl RendezvousServer {
         log::info!("Listening on tcp/udp {}", addr);
         log::info!("Listening on tcp {}, extra port for NAT test", addr2);
         log::info!("relay-servers={:?}", relay_servers);
+        log::info!("change-id={:?}", id_change_support);
         let mut socket = FramedSocket::new(addr).await?;
         let (tx, mut rx) = mpsc::unbounded_channel::<(RendezvousMessage, SocketAddr)>();
         let version = hbb_common::get_version_from_url(&software_url);
@@ -202,6 +204,7 @@ impl RendezvousServer {
                 &mut socket,
                 key,
                 stop.clone(),
+                id_change_support,
             )
             .await;
         }
@@ -215,6 +218,7 @@ impl RendezvousServer {
         socket: &mut FramedSocket,
         key: &str,
         stop: Arc<Mutex<bool>>,
+        id_change_support: bool,
     ) {
         let mut timer = interval(Duration::from_millis(100));
         loop {
@@ -326,7 +330,9 @@ impl RendezvousServer {
                                             break;
                                         }
                                         let mut res = register_pk_response::Result::OK;
-                                        if let Some(peer) = rs.pm.get(&rk.id).await {
+                                        if !id_change_support {
+                                            res = register_pk_response::Result::NOT_SUPPORT;
+                                        } else if let Some(peer) = rs.pm.get(&rk.id).await {
                                             if peer.uuid != rk.uuid {
                                                 res = register_pk_response::Result::ID_EXISTS;
                                             }
