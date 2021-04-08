@@ -332,6 +332,8 @@ impl RendezvousServer {
                                         let mut res = register_pk_response::Result::OK;
                                         if !id_change_support {
                                             res = register_pk_response::Result::NOT_SUPPORT;
+                                        } else if !hbb_common::is_valid_custom_id(&rk.id) {
+                                            res = register_pk_response::Result::INVALID_ID_FORMAT;
                                         } else if let Some(peer) = rs.pm.get(&rk.id).await {
                                             if peer.uuid != rk.uuid {
                                                 res = register_pk_response::Result::ID_EXISTS;
@@ -398,9 +400,7 @@ impl RendezvousServer {
                     }
                     let id = rk.id;
                     let mut res = register_pk_response::Result::OK;
-                    if !hbb_common::is_valid_custom_id(&id) {
-                        res = register_pk_response::Result::INVALID_ID_FORMAT;
-                    } else if let Some(peer) = self.pm.get(&id).await {
+                    if let Some(peer) = self.pm.get(&id).await {
                         if peer.uuid != rk.uuid {
                             log::warn!(
                                 "Peer {} uuid mismatch: {:?} vs {:?}",
@@ -640,6 +640,17 @@ impl RendezvousServer {
                 },
             };
             let socket_addr = AddrMangle::encode(addr);
+            let relay_server = {
+                if self.relay_servers.is_empty() {
+                    "".to_owned()
+                } else {
+                    let i = unsafe {
+                        ROTATION_RELAY_SERVER += 1;
+                        ROTATION_RELAY_SERVER % self.relay_servers.len()
+                    };
+                    self.relay_servers[i].clone()
+                }
+            };
             if same_intranet {
                 log::debug!(
                     "Fetch local addr {:?} {:?} request from {:?}",
@@ -647,13 +658,9 @@ impl RendezvousServer {
                     &peer.socket_addr,
                     &addr
                 );
-                let i = unsafe {
-                    ROTATION_RELAY_SERVER += 1;
-                    ROTATION_RELAY_SERVER % self.relay_servers.len()
-                };
                 msg_out.set_fetch_local_addr(FetchLocalAddr {
                     socket_addr,
-                    relay_server: self.relay_servers[i].clone(),
+                    relay_server,
                     ..Default::default()
                 });
             } else {
@@ -663,14 +670,10 @@ impl RendezvousServer {
                     &peer.socket_addr,
                     &addr
                 );
-                let i = unsafe {
-                    ROTATION_RELAY_SERVER += 1;
-                    ROTATION_RELAY_SERVER % self.relay_servers.len()
-                };
                 msg_out.set_punch_hole(PunchHole {
                     socket_addr,
                     nat_type: ph.nat_type,
-                    relay_server: self.relay_servers[i].clone(),
+                    relay_server,
                     ..Default::default()
                 });
             }
