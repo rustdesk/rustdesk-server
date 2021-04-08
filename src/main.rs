@@ -4,6 +4,7 @@
 use clap::App;
 use hbb_common::{env_logger::*, log, ResultType};
 use hbbs::*;
+mod lic;
 use ini::Ini;
 use std::sync::{Arc, Mutex};
 
@@ -17,8 +18,9 @@ fn main() -> ResultType<()> {
         -u, --software-url=[URL] 'Sets download url of RustDesk software of newest version'
         -r, --relay-servers=[HOST] 'Sets the default relay servers, seperated by colon'
         -C, --change-id=[BOOL(default=Y)] 'Sets if support to change id'
+        {}
         -k, --key=[KEY] 'Only allow the client with the same key'",
-        DEFAULT_PORT,
+        DEFAULT_PORT, lic::EMAIL_ARG
     );
     let matches = App::new("hbbs")
         .version(crate::VERSION)
@@ -62,6 +64,9 @@ fn main() -> ResultType<()> {
     log::info!("serial={}", serial);
     log::info!("rendezvous-servers={:?}", rendezvous_servers);
     let stop: Arc<Mutex<bool>> = Default::default();
+    if !lic::check_lic(&get_arg("email", "")) {
+        return Ok(());
+    }
     RendezvousServer::start(
         &addr,
         &addr2,
