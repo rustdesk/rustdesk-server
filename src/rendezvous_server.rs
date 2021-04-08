@@ -332,6 +332,8 @@ impl RendezvousServer {
                                         let mut res = register_pk_response::Result::OK;
                                         if !id_change_support {
                                             res = register_pk_response::Result::NOT_SUPPORT;
+                                        } else if !hbb_common::is_valid_custom_id(&rk.id) {
+                                            res = register_pk_response::Result::INVALID_ID_FORMAT;
                                         } else if let Some(peer) = rs.pm.get(&rk.id).await {
                                             if peer.uuid != rk.uuid {
                                                 res = register_pk_response::Result::ID_EXISTS;
@@ -398,9 +400,7 @@ impl RendezvousServer {
                     }
                     let id = rk.id;
                     let mut res = register_pk_response::Result::OK;
-                    if !hbb_common::is_valid_custom_id(&id) {
-                        res = register_pk_response::Result::INVALID_ID_FORMAT;
-                    } else if let Some(peer) = self.pm.get(&id).await {
+                    if let Some(peer) = self.pm.get(&id).await {
                         if peer.uuid != rk.uuid {
                             log::warn!(
                                 "Peer {} uuid mismatch: {:?} vs {:?}",
