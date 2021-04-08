@@ -20,6 +20,10 @@ lazy_static = "1.4"
 clap = "2.33"
 rust-ini = "0.16"
 reqwest = "0.10"
+machine-uid = "0.2"
+mac_address = "1.1"
+whoami = "0.9"
+base64 = "0.13"
 
 [build-dependencies]
 hbb_common = { path = "libs/hbb_common" }

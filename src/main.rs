@@ -20,7 +20,8 @@ fn main() -> ResultType<()> {
         -C, --change-id=[BOOL(default=Y)] 'Sets if support to change id'
         {}
         -k, --key=[KEY] 'Only allow the client with the same key'",
-        DEFAULT_PORT, lic::EMAIL_ARG
+        DEFAULT_PORT,
+        lic::EMAIL_ARG
     );
     let matches = App::new("hbbs")
         .version(crate::VERSION)
