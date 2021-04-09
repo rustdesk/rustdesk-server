@@ -1,4 +1,12 @@
-use hbb_common::{bail, log, sodiumoxide::crypto::sign, ResultType};
+use hbb_common::{
+    bail, log,
+    sodiumoxide::crypto::{
+        secretbox::{self, Key, Nonce},
+        sign,
+    },
+    ResultType,
+};
+use rand::Rng;
 use serde_derive::{Deserialize, Serialize};
 use std::io::prelude::*;
 use std::path::Path;
@@ -21,6 +29,8 @@ pub struct Post {
     email: String,
     #[serde(default)]
     status: String,
+    #[serde(default)]
+    nonce: usize,
 }
 
 const LICENSE_FILE: &'static str = ".license.txt";
@@ -66,18 +76,27 @@ fn write_lic(lic: &License) {
 }
 
 fn check_email(lic: License, email: String) -> ResultType<bool> {
+    log::info!("Checking email with the server ...");
+    let mut rng = rand::thread_rng();
+    let nonce: usize = rng.gen();
     use reqwest::blocking::Client;
-    let p: Post = Client::new()
+    let resp = Client::new()
         .post("http://rustdesk.com/api/check-email")
         .json(&Post {
             lic,
             email,
+            nonce,
             ..Default::default()
         })
-        .send()?
-        .json()?;
-    if !p.status.is_empty() {
-        bail!("{}", p.status);
+        .send()?;
+    if resp.status().is_success() {
+        let text = base64::decode(resp.text()?)?;
+        let p = dec_data(&text, nonce)?;
+        if !p.status.is_empty() {
+            bail!("{}", p.status);
+        }
+    } else {
+        bail!("Server error: {}", resp.status());
     }
     Ok(true)
 }
@@ -125,6 +144,17 @@ fn dec_lic(s: &str) -> ResultType<License> {
     } else {
         bail!("sign:verify failed");
     }
+}
+
+fn dec_data(data: &[u8], n: usize) -> ResultType<Post> {
+    let key = b"\xa94\xb4\xb4\xda\xf82\x96\x8b\xb0\x9d\x04d\"\x94T\xa6\xdb\xf6\xd5i=Y.\xf5\xf5i\xa9\x14\x91\xa7\xa9";
+    let mut nonce = Nonce([0u8; secretbox::NONCEBYTES]);
+    nonce.0[..std::mem::size_of_val(&n)].copy_from_slice(&n.to_le_bytes());
+    let key = secretbox::Key(*key);
+    if let Ok(res) = secretbox::open(&data, &nonce, &key) {
+        return Ok(serde_json::from_slice::<Post>(&res)?);
+    }
+    bail!("Encryption error");
 }
 
 pub const EMAIL_ARG: &'static str =

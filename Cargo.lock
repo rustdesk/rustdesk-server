@@ -624,6 +624,7 @@ dependencies = [
  "lazy_static",
  "mac_address",
  "machine-uid",
+ "rand 0.8.3",
  "reqwest",
  "rocksdb",
  "rust-ini",
