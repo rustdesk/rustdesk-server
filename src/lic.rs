@@ -1,7 +1,7 @@
 use hbb_common::{
     bail, log,
     sodiumoxide::crypto::{
-        secretbox::{self, Key, Nonce},
+        secretbox::{self, Nonce},
         sign,
     },
     ResultType,
