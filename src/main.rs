@@ -47,6 +47,9 @@ fn main() -> ResultType<()> {
         }
         return default.to_owned();
     };
+    if !lic::check_lic(&get_arg("email", "")) {
+        return Ok(());
+    }
     let port = get_arg("port", DEFAULT_PORT);
     let relay_servers: Vec<String> = get_arg("relay-servers", "")
         .split(",")
@@ -65,9 +68,6 @@ fn main() -> ResultType<()> {
     log::info!("serial={}", serial);
     log::info!("rendezvous-servers={:?}", rendezvous_servers);
     let stop: Arc<Mutex<bool>> = Default::default();
-    if !lic::check_lic(&get_arg("email", "")) {
-        return Ok(());
-    }
     RendezvousServer::start(
         &addr,
         &addr2,
