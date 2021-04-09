@@ -6,11 +6,21 @@ use std::path::Path;
 #[derive(Debug, PartialEq, Default, Serialize, Deserialize, Clone)]
 pub struct License {
     #[serde(default)]
-    pub hostname: String,
+    hostname: String,
     #[serde(default)]
-    pub uid: String,
+    uid: String,
     #[serde(default)]
-    pub mac: String,
+    mac: String,
+}
+
+#[derive(Debug, PartialEq, Default, Serialize, Deserialize, Clone)]
+pub struct Post {
+    #[serde(default)]
+    lic: License,
+    #[serde(default)]
+    email: String,
+    #[serde(default)]
+    status: String,
 }
 
 const LICENSE_FILE: &'static str = ".license.txt";
@@ -32,16 +42,47 @@ pub fn check_lic(email: &str) -> bool {
         return false;
     }
 
+    match check_email(lic.clone(), email.to_owned()) {
+        Ok(v) => {
+            if v {
+                write_lic(&lic);
+            }
+            return v;
+        }
+        Err(err) => {
+            log::error!("{}", err);
+            return false;
+        }
+    }
+}
+
+fn write_lic(lic: &License) {
     if let Ok(s) = enc_lic(&lic) {
-        if let Ok(mut f) = std::fs::File::create(path) {
+        if let Ok(mut f) = std::fs::File::create(LICENSE_FILE) {
             f.write_all(s.as_bytes()).ok();
             f.sync_all().ok();
         }
     }
-    true
 }
 
-pub fn get_lic() -> License {
+fn check_email(lic: License, email: String) -> ResultType<bool> {
+    use reqwest::blocking::Client;
+    let p: Post = Client::new()
+        .post("http://rustdesk.com/api/check-email")
+        .json(&Post {
+            lic,
+            email,
+            ..Default::default()
+        })
+        .send()?
+        .json()?;
+    if !p.status.is_empty() {
+        bail!("{}", p.status);
+    }
+    Ok(true)
+}
+
+fn get_lic() -> License {
     let hostname = whoami::hostname();
     let uid = machine_uid::get().unwrap_or("".to_owned());
     let mac = if let Ok(Some(ma)) = mac_address::get_mac_address() {
@@ -52,7 +93,7 @@ pub fn get_lic() -> License {
     License { hostname, uid, mac }
 }
 
-pub fn enc_lic(lic: &License) -> ResultType<String> {
+fn enc_lic(lic: &License) -> ResultType<String> {
     let tmp = serde_json::to_vec::<License>(lic)?;
     const SK: &[u64] = &[
         139, 164, 88, 86, 6, 123, 221, 248, 96, 36, 106, 207, 99, 124, 27, 196, 5, 159, 58, 253,
@@ -69,7 +110,7 @@ pub fn enc_lic(lic: &License) -> ResultType<String> {
     Ok(tmp)
 }
 
-pub fn dec_lic(s: &str) -> ResultType<License> {
+fn dec_lic(s: &str) -> ResultType<License> {
     let tmp: String = s.chars().rev().collect();
     const PK: &[u64] = &[
         88, 168, 68, 104, 60, 5, 163, 198, 165, 38, 12, 85, 114, 203, 96, 163, 70, 48, 0, 131, 57,
