@@ -28,13 +28,26 @@
         }]
     },{
         "type": "textfield",
+        "desc": "Registered email, check http://rustdesk.com/server for more information",
+        "subitems": [{
+            "key": "email",
+            "desc": "Email",
+            "validator": {
+                "allowBlank": false,
+                "regex": {
+                  "expr": "/^\\w+([-+.']\\w+)*@\\w+([-.]\\w+)*\\.\\w+([-.]\\w+)*$/",
+                  "errorText": "Invalid email format"
+                }
+            }
+        }]
+    },{
+        "type": "textfield",
         "desc": "Only allow the client with the same key",
         "subitems": [{
             "key": "key",
             "desc": "Key",
-            "defaultValue": "21117",
             "validator": {
-                "allowBlank": True,
+                "allowBlank": true
             }
         }]
     }]
