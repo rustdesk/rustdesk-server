@@ -1,6 +1,6 @@
 ### RustDesk | Your Remote Desktop Software
 
-**DOWNLOAD**](https://github.com/rustdesk/rustdesk-server/releases)
+[**DOWNLOAD**](https://github.com/rustdesk/rustdesk-server/releases)
 
 This is a repository used to release RustDesk server software and track issues.
 
