@@ -60,26 +60,27 @@ fn write_lic(lic: &str) {
 
 fn check_email(machine: String, email: String) -> ResultType<bool> {
     log::info!("Checking email with the server ...");
-    use reqwest::blocking::Client;
-    let resp = Client::new()
-        .post("http://rustdesk.com/api/check-email")
-        .json(&Post {
-            machine: machine.clone(),
-            email,
-            ..Default::default()
-        })
+    let resp = minreq::post("http://rustdesk.com/api/check-email")
+        .with_body(
+            serde_json::to_string(&Post {
+                machine: machine.clone(),
+                email,
+                ..Default::default()
+            })
+            .unwrap(),
+        )
         .send()?;
-    if resp.status().is_success() {
-        let p: Post = resp.json()?;
-        if !verify(&p.machine, &machine) {
-            bail!("Verification failure");
-        }
+    if resp.reason_phrase == "OK" {
+        let p: Post = serde_json::from_str(&resp.as_str()?)?;
         if !p.status.is_empty() {
             bail!("{}", p.status);
         }
+        if !verify(&p.machine, &machine) {
+            bail!("Verification failure");
+        }
         write_lic(&p.machine);
     } else {
-        bail!("Server error: {}", resp.status());
+        bail!("Server error: {}", resp.reason_phrase);
     }
     Ok(true)
 }
