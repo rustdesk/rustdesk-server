@@ -36,7 +36,7 @@ pub fn check_lic(email: &str) -> bool {
     }
 
     if email.is_empty() {
-        log::error!("Registered email required.");
+        log::error!("Registered email required (-m option). Please visit https://rustdesk.com/server for more infomration.");
         return false;
     }
 
