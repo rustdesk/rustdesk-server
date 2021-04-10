@@ -164,6 +164,7 @@ impl RendezvousServer {
         software_url: String,
         key: &str,
         stop: Arc<Mutex<bool>>,
+        id_change_support: bool,
     ) -> ResultType<()> {
         if !key.is_empty() {
             log::info!("Key: {}", key);
@@ -171,6 +172,7 @@ impl RendezvousServer {
         log::info!("Listening on tcp/udp {}", addr);
         log::info!("Listening on tcp {}, extra port for NAT test", addr2);
         log::info!("relay-servers={:?}", relay_servers);
+        log::info!("change-id={:?}", id_change_support);
         let mut socket = FramedSocket::new(addr).await?;
         let (tx, mut rx) = mpsc::unbounded_channel::<(RendezvousMessage, SocketAddr)>();
         let version = hbb_common::get_version_from_url(&software_url);
@@ -202,6 +204,7 @@ impl RendezvousServer {
                 &mut socket,
                 key,
                 stop.clone(),
+                id_change_support,
             )
             .await;
         }
@@ -215,6 +218,7 @@ impl RendezvousServer {
         socket: &mut FramedSocket,
         key: &str,
         stop: Arc<Mutex<bool>>,
+        id_change_support: bool,
     ) {
         let mut timer = interval(Duration::from_millis(100));
         loop {
@@ -321,6 +325,31 @@ impl RendezvousServer {
                                         }
                                         break;
                                     }
+                                    Some(rendezvous_message::Union::register_pk(rk)) => {
+                                        if rk.uuid.is_empty() {
+                                            break;
+                                        }
+                                        let mut res = register_pk_response::Result::OK;
+                                        if !id_change_support {
+                                            res = register_pk_response::Result::NOT_SUPPORT;
+                                        } else if !hbb_common::is_valid_custom_id(&rk.id) {
+                                            res = register_pk_response::Result::INVALID_ID_FORMAT;
+                                        } else if let Some(peer) = rs.pm.get(&rk.id).await {
+                                            if peer.uuid != rk.uuid {
+                                                res = register_pk_response::Result::ID_EXISTS;
+                                            }
+                                        }
+                                        let mut msg_out = RendezvousMessage::new();
+                                        msg_out.set_register_pk_response(RegisterPkResponse {
+                                            result: res.into(),
+                                            ..Default::default()
+                                        });
+                                        if let Some(tcp) = sender.as_mut() {
+                                            if let Ok(bytes) = msg_out.write_to_bytes() {
+                                                allow_err!(tcp.send(Bytes::from(bytes)).await);
+                                            }
+                                        }
+                                    }
                                     _ => {
                                         break;
                                     }
@@ -372,7 +401,7 @@ impl RendezvousServer {
                     let id = rk.id;
                     let mut res = register_pk_response::Result::OK;
                     if let Some(peer) = self.pm.get(&id).await {
-                        if !peer.uuid.is_empty() && peer.uuid != rk.uuid {
+                        if peer.uuid != rk.uuid {
                             log::warn!(
                                 "Peer {} uuid mismatch: {:?} vs {:?}",
                                 id,
@@ -380,7 +409,7 @@ impl RendezvousServer {
                                 peer.uuid
                             );
                             res = register_pk_response::Result::UUID_MISMATCH;
-                        } else if peer.uuid.is_empty() || peer.pk != rk.pk {
+                        } else if peer.pk != rk.pk {
                             self.pm.update_pk(id, addr, rk.uuid, rk.pk);
                         }
                     } else {
@@ -611,6 +640,17 @@ impl RendezvousServer {
                 },
             };
             let socket_addr = AddrMangle::encode(addr);
+            let relay_server = {
+                if self.relay_servers.is_empty() {
+                    "".to_owned()
+                } else {
+                    let i = unsafe {
+                        ROTATION_RELAY_SERVER += 1;
+                        ROTATION_RELAY_SERVER % self.relay_servers.len()
+                    };
+                    self.relay_servers[i].clone()
+                }
+            };
             if same_intranet {
                 log::debug!(
                     "Fetch local addr {:?} {:?} request from {:?}",
@@ -618,13 +658,9 @@ impl RendezvousServer {
                     &peer.socket_addr,
                     &addr
                 );
-                let i = unsafe {
-                    ROTATION_RELAY_SERVER += 1;
-                    ROTATION_RELAY_SERVER % self.relay_servers.len()
-                };
                 msg_out.set_fetch_local_addr(FetchLocalAddr {
                     socket_addr,
-                    relay_server: self.relay_servers[i].clone(),
+                    relay_server,
                     ..Default::default()
                 });
             } else {
@@ -634,14 +670,10 @@ impl RendezvousServer {
                     &peer.socket_addr,
                     &addr
                 );
-                let i = unsafe {
-                    ROTATION_RELAY_SERVER += 1;
-                    ROTATION_RELAY_SERVER % self.relay_servers.len()
-                };
                 msg_out.set_punch_hole(PunchHole {
                     socket_addr,
                     nat_type: ph.nat_type,
-                    relay_server: self.relay_servers[i].clone(),
+                    relay_server,
                     ..Default::default()
                 });
             }
