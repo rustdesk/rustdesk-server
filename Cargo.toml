@@ -24,7 +24,7 @@ machine-uid = "0.2"
 mac_address = "1.1"
 whoami = "0.9"
 base64 = "0.13"
-rand = "0.8"
+cryptoxide = "0.3"
 
 [build-dependencies]
 hbb_common = { path = "libs/hbb_common" }
