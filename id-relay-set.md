@@ -9,7 +9,7 @@
 Three platform versions provided:
   - Linux
   - Windows
-  - Synology, packaged based on above Linux build, The running logs are /var/log/hbbs.log and /var/log/hbbr.log. It is recommended to install the LogAnalysis suite to view. Please ignore the error message of the C++ version if it runs normally.
+  - Synology, packaged based on above Linux build, The running logs are /var/log/hbbs.log and /var/log/hbbr.log. It is recommended to install [the LogAnalysis package](https://www.cphub.net) to view. Please ignore the error message of the C++ version if it runs normally.
 
 Below tutorial is based on Linux build.
 
