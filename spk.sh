@@ -12,8 +12,9 @@ cp ../target/release/hbbs bin/
 cp ../target/release/hbbr bin/
 strip bin/hbbs
 strip bin/hbbr
-tar czf ../spk/package.tgz ./*
+tar -czf ../spk/package.tgz *
 cd ..
 cd spk
-tar cf rustdesk-server-synology.spk ./*
+#md5 package.tgz | awk '{print "checksum=\"" $4 "\""}' >> INFO
+tar -cvf rustdesk-server-synology.spk *
 mv rustdesk-server-synology.spk ..
