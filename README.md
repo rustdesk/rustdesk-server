@@ -1,4 +1,4 @@
-### RustDesk Sever Program
+# RustDesk Sever Program
 
 [**DOWNLOAD**](https://github.com/rustdesk/rustdesk-server/releases)
 
