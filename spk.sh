@@ -16,5 +16,6 @@ tar -czf ../spk/package.tgz *
 cd ..
 cd spk
 #md5 package.tgz | awk '{print "checksum=\"" $4 "\""}' >> INFO
-tar -cvf rustdesk-server-synology.spk *
-mv rustdesk-server-synology.spk ..
+file=rustdesk-server-synology-x64.spk
+tar -cvf $file *
+mv $file ..
