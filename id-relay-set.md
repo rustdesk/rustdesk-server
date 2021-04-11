@@ -4,15 +4,20 @@
 
 ## STEP-1 : Download server-side software programs
 
-Check this link below for download programs.
-
 [Download](https://github.com/rustdesk/rustdesk-server/)
+
+Three platform versions provided:
+  - Linux
+  - Windows
+  - Synology, packaged based on above Linux build, The running logs are /var/log/hbbs.log and /var/log/hbbr.log. It is recommended to install the LogAnalysis suite to view. Please ignore the error message of the C++ version if it runs normally.
+
+Below tutorial is based on Linux build.
 
 There are two executables:
   - hbbs - RustDesk ID/Rendezvous server
   - hbbr - RustDesk relay server
 
-They are built on Centos7 and Windows10, tested on Centos7/8, Ubuntu 18/20, can also run on Synology if you have access to terminal.
+They are built on Centos7, tested on Centos7/8, Ubuntu 18/20.
 
 ### STEP-2 : Run hbbs and hbbr on server
 
