@@ -21,11 +21,20 @@ pub struct Post {
     email: String,
     #[serde(default)]
     status: String,
+    #[serde(default)]
+    version: String,
+    #[serde(default)]
+    next_check_time: u32,
 }
 
 const LICENSE_FILE: &'static str = ".license.txt";
 
-pub fn check_lic(email: &str) -> bool {
+pub fn check_lic(email: &str, version: &str) -> bool {
+    if email.is_empty() {
+        log::error!("Registered email required (-m option). Please visit https://rustdesk.com/server for more infomration.");
+        return false;
+    }
+
     let machine = get_lic();
     let path = Path::new(LICENSE_FILE);
     if Path::is_file(&path) {
@@ -35,14 +44,9 @@ pub fn check_lic(email: &str) -> bool {
         }
     }
 
-    if email.is_empty() {
-        log::error!("Registered email required (-m option). Please visit https://rustdesk.com/server for more infomration.");
-        return false;
-    }
-
-    match check_email(machine, email.to_owned()) {
+    match check_email(machine, email.to_owned(), version.to_owned()) {
         Ok(v) => {
-            return v;
+            return true;
         }
         Err(err) => {
             log::error!("{}", err);
@@ -58,12 +62,13 @@ fn write_lic(lic: &str) {
     }
 }
 
-fn check_email(machine: String, email: String) -> ResultType<bool> {
+fn check_email(machine: String, email: String, version: String) -> ResultType<u32> {
     log::info!("Checking email with the server ...");
     let resp = minreq::post("http://rustdesk.com/api/check-email")
         .with_body(
             serde_json::to_string(&Post {
                 machine: machine.clone(),
+                version,
                 email,
                 ..Default::default()
             })
@@ -79,10 +84,10 @@ fn check_email(machine: String, email: String) -> ResultType<bool> {
             bail!("Verification failure");
         }
         write_lic(&p.machine);
+        Ok(p.next_check_time)
     } else {
         bail!("Server error: {}", resp.reason_phrase);
     }
-    Ok(true)
 }
 
 fn get_lic() -> String {

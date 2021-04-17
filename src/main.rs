@@ -47,7 +47,7 @@ fn main() -> ResultType<()> {
         }
         return default.to_owned();
     };
-    if !lic::check_lic(&get_arg("email", "")) {
+    if !lic::check_lic(&get_arg("email", ""), crate::VERSION) {
         return Ok(());
     }
     let port = get_arg("port", DEFAULT_PORT);

@@ -21,7 +21,7 @@ fn main() -> ResultType<()> {
         .about("RustDesk Relay Server")
         .args_from_usage(&args)
         .get_matches();
-    if !lic::check_lic(matches.value_of("email").unwrap_or("")) {
+    if !lic::check_lic(matches.value_of("email").unwrap_or(""), hbbs::VERSION) {
         return Ok(());
     }
     let stop: Arc<Mutex<bool>> = Default::default();
