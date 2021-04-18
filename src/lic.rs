@@ -31,7 +31,7 @@ const LICENSE_FILE: &'static str = ".license.txt";
 
 pub fn check_lic(email: &str, version: &str) -> bool {
     if email.is_empty() {
-        log::error!("Registered email required (-m option). Please visit https://rustdesk.com/server for more infomration.");
+        log::error!("Registered email required (-m option). Please pay and register on https://rustdesk.com/server.");
         return false;
     }
 
