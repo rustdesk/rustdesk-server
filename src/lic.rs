@@ -24,7 +24,7 @@ pub struct Post {
     #[serde(default)]
     version: String,
     #[serde(default)]
-    next_check_time: u32,
+    next_check_time: u64,
 }
 
 const LICENSE_FILE: &'static str = ".license.txt";
@@ -40,12 +40,14 @@ pub fn check_lic(email: &str, version: &str) -> bool {
     if Path::is_file(&path) {
         let contents = std::fs::read_to_string(&path).unwrap_or("".to_owned());
         if verify(&contents, &machine) {
+            async_check_email(&machine, email, version, 0);
             return true;
         }
     }
 
-    match check_email(machine, email.to_owned(), version.to_owned()) {
+    match check_email(machine.clone(), email.to_owned(), version.to_owned()) {
         Ok(v) => {
+            async_check_email(&machine, email, version, v);
             return true;
         }
         Err(err) => {
@@ -55,6 +57,30 @@ pub fn check_lic(email: &str, version: &str) -> bool {
     }
 }
 
+fn async_check_email(machine: &str, email: &str, version: &str, wait: u64) {
+    let machine = machine.to_owned();
+    let email = email.to_owned();
+    let version = version.to_owned();
+    std::thread::spawn(move || {
+        let mut wait = wait;
+        loop {
+            let machine = machine.clone();
+            let email = email.clone();
+            let version = version.clone();
+            std::thread::sleep(std::time::Duration::from_secs(wait));
+            match check_email(machine, email, version) {
+                Ok(v) => {
+                    wait = v;
+                }
+                Err(err) => {
+                    log::error!("{}", err);
+                    std::process::exit(-1);
+                }
+            }
+        }
+    });
+}
+
 fn write_lic(lic: &str) {
     if let Ok(mut f) = std::fs::File::create(LICENSE_FILE) {
         f.write_all(lic.as_bytes()).ok();
@@ -62,8 +88,8 @@ fn write_lic(lic: &str) {
     }
 }
 
-fn check_email(machine: String, email: String, version: String) -> ResultType<u32> {
-    log::info!("Checking email with the server ...");
+fn check_email(machine: String, email: String, version: String) -> ResultType<u64> {
+    log::info!("Checking email with the license server ...");
     let resp = minreq::post("http://rustdesk.com/api/check-email")
         .with_body(
             serde_json::to_string(&Post {
@@ -84,7 +110,13 @@ fn check_email(machine: String, email: String, version: String) -> ResultType<u3
             bail!("Verification failure");
         }
         write_lic(&p.machine);
-        Ok(p.next_check_time)
+        log::info!("License OK");
+        let mut wait = p.next_check_time;
+        if wait == 0 {
+            wait = 3600 * 24 * 30;
+        }
+
+        Ok(wait)
     } else {
         bail!("Server error: {}", resp.reason_phrase);
     }
