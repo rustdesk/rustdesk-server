@@ -25,6 +25,9 @@ Run hbbs/hbbr on your server (Centos or Ubuntu). We suggust you use [pm2](https:
 
 By default, hbbs listens on 21115(tcp) and 21116(tcp/udp), hbbr listens on 21117(tcp).
 
+- TCP(21115, 21116, 21117)
+- UDP(21116)
+
 Please run with "-h" option to see help if you wanna choose your own port.
 
 ### STEP-3 : Set hbbs/hbbr address on client-side
