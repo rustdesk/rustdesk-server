@@ -4,7 +4,7 @@
 
 ## STEP-1 : Download server-side software programs
 
-[Download](https://github.com/rustdesk/rustdesk-server/)
+[Download](https://github.com/rustdesk/rustdesk-server/), **Note:** You need [buy license](https://rustdesk.com/server/) When using this software
 
 Three platform versions provided:
   - Linux
