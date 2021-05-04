@@ -2,6 +2,7 @@ use hbb_common::{bail, log, ResultType};
 use serde_derive::{Deserialize, Serialize};
 use std::io::prelude::*;
 use std::path::Path;
+use rand::Rng;
 
 #[derive(Debug, PartialEq, Default, Serialize, Deserialize, Clone)]
 pub struct Machine {
@@ -25,6 +26,8 @@ pub struct Post {
     version: String,
     #[serde(default)]
     next_check_time: u64,
+    #[serde(default)]
+    nonce: String,
 }
 
 const LICENSE_FILE: &'static str = ".license.txt";
@@ -90,12 +93,16 @@ fn write_lic(lic: &str) {
 
 fn check_email(machine: String, email: String, version: String) -> ResultType<u64> {
     log::info!("Checking email with the license server ...");
+    let mut rng = rand::thread_rng();
+    let nonce: usize = rng.gen();
+    let nonce = nonce.to_string();
     let resp = minreq::post("http://rustdesk.com/api/check-email")
         .with_body(
             serde_json::to_string(&Post {
                 machine: machine.clone(),
                 version,
                 email,
+                nonce: nonce.clone(),
                 ..Default::default()
             })
             .unwrap(),
@@ -106,10 +113,15 @@ fn check_email(machine: String, email: String, version: String) -> ResultType<u6
         if !p.status.is_empty() {
             bail!("{}", p.status);
         }
-        if !verify(&p.machine, &machine) {
+        if !verify(&p.nonce, &nonce) {
             bail!("Verification failure");
         }
-        write_lic(&p.machine);
+        if !machine.is_empty() {
+            if !verify(&p.machine, &machine) {
+                bail!("Verification failure");
+            }
+            write_lic(&p.machine);
+        }
         log::info!("License OK");
         let mut wait = p.next_check_time;
         if wait == 0 {
