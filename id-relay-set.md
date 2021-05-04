@@ -4,7 +4,7 @@
 
 ## STEP-1 : Download server-side software programs
 
-[Download](https://github.com/rustdesk/rustdesk-server/), **Note:** You need [buy license](https://rustdesk.com/server/) When using this software
+[Download](https://github.com/rustdesk/rustdesk-server/) or use docker rustdesk/rustdesk-server, **Note:** You need [buy license](https://rustdesk.com/server/) When using this software
 
 Three platform versions provided:
   - Linux
@@ -29,6 +29,13 @@ By default, hbbs listens on 21115(tcp) and 21116(tcp/udp), hbbr listens on 21117
 - UDP(21116)
 
 Please run with "-h" option to see help if you wanna choose your own port.
+
+Docker example
+```
+sudo docker image pull rustdesk/rustdesk-server
+sudo docker run --name hbbr -p 21117:21117 -v `pwd`:/root -it --rm rustdesk/rustdesk-server hbbr -m <registered_email>
+sudo docker run --name hbbs -p 21115:21115 -p 21116:21116 -p 21116:21116/udp -v `pwd`:/root -it --rm rustdesk/rustdesk-server hbbs -r <relay-server-ip> -m <registered_email>
+```
 
 ### STEP-3 : Set hbbs/hbbr address on client-side
 
