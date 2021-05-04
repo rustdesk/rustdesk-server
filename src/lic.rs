@@ -38,13 +38,16 @@ pub fn check_lic(email: &str, version: &str) -> bool {
         return false;
     }
 
-    let machine = get_lic();
-    let path = Path::new(LICENSE_FILE);
-    if Path::is_file(&path) {
-        let contents = std::fs::read_to_string(&path).unwrap_or("".to_owned());
-        if verify(&contents, &machine) {
-            async_check_email(&machine, email, version, 0);
-            return true;
+    let is_docker = std::path::Path::new("/.dockerenv").exists();
+    let machine = if is_docker { "".to_owned() } else { get_lic() };
+    if !is_docker {
+        let path = Path::new(LICENSE_FILE);
+        if Path::is_file(&path) {
+            let contents = std::fs::read_to_string(&path).unwrap_or("".to_owned());
+            if verify(&contents, &machine) {
+                async_check_email(&machine, email, version, 0);
+                return true;
+            }
         }
     }
 
