@@ -113,8 +113,11 @@ fn check_email(machine: String, email: String, version: String) -> ResultType<u6
         if !p.status.is_empty() {
             bail!("{}", p.status);
         }
+        if p.nonce.is_empty() {
+            bail!("Verification failure: nonce required");
+        }
         if !verify(&p.nonce, &nonce) {
-            bail!("Verification failure");
+            bail!("Verification failure: nonce mismatch");
         }
         if !machine.is_empty() {
             if !verify(&p.machine, &machine) {
