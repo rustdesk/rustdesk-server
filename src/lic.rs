@@ -28,6 +28,8 @@ pub struct Post {
     next_check_time: u64,
     #[serde(default)]
     nonce: String,
+    #[serde(default)]
+    tip: String,
 }
 
 const LICENSE_FILE: &'static str = ".license.txt";
@@ -129,6 +131,9 @@ fn check_email(machine: String, email: String, version: String) -> ResultType<u6
             write_lic(&p.machine);
         }
         log::info!("License OK");
+        if !p.tip.is_empty() {
+            log::info!("{}", p.tip);
+        }
         let mut wait = p.next_check_time;
         if wait == 0 {
             wait = 3600 * 24 * 30;
