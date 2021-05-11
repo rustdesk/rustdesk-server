@@ -583,8 +583,13 @@ impl RendezvousServer {
             &addr
         );
         let mut msg_out = RendezvousMessage::new();
+        let pk = match self.pm.get(&la.id).await {
+            Some(peer) => peer.pk,
+            _ => Vec::new(),
+        };
         let mut p = PunchHoleResponse {
             socket_addr: la.local_addr.clone(),
+            pk,
             relay_server: la.relay_server,
             ..Default::default()
         };
