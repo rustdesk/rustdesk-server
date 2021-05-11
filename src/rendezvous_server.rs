@@ -401,7 +401,9 @@ impl RendezvousServer {
                     let id = rk.id;
                     let mut res = register_pk_response::Result::OK;
                     if let Some(peer) = self.pm.get(&id).await {
-                        if peer.uuid != rk.uuid {
+                        if peer.uuid.is_empty() {
+                            self.pm.update_pk(id, addr, rk.uuid, rk.pk);
+                        } else if peer.uuid != rk.uuid {
                             log::warn!(
                                 "Peer {} uuid mismatch: {:?} vs {:?}",
                                 id,
