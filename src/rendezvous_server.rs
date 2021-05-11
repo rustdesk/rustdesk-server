@@ -400,7 +400,9 @@ impl RendezvousServer {
                     }
                     let id = rk.id;
                     let mut res = register_pk_response::Result::OK;
-                    if let Some(peer) = self.pm.get(&id).await {
+                    if id.len() < 6 {
+                      res = register_pk_response::Result::UUID_MISMATCH;
+                    } else if let Some(peer) = self.pm.get(&id).await {
                         if peer.uuid.is_empty() {
                             self.pm.update_pk(id, addr, rk.uuid, rk.pk);
                         } else if peer.uuid != rk.uuid {
@@ -585,9 +587,13 @@ impl RendezvousServer {
             &addr
         );
         let mut msg_out = RendezvousMessage::new();
-        let pk = match self.pm.get(&la.id).await {
-            Some(peer) => peer.pk,
-            _ => Vec::new(),
+        let pk = if la.id.is_empty() {
+            Vec::new()
+        } else {
+            match self.pm.get(&la.id).await {
+                Some(peer) => peer.pk,
+                _ => Vec::new(),
+            }
         };
         let mut p = PunchHoleResponse {
             socket_addr: la.local_addr.clone(),

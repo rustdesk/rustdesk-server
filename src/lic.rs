@@ -1,8 +1,8 @@
 use hbb_common::{bail, log, ResultType};
+use rand::Rng;
 use serde_derive::{Deserialize, Serialize};
 use std::io::prelude::*;
 use std::path::Path;
-use rand::Rng;
 
 #[derive(Debug, PartialEq, Default, Serialize, Deserialize, Clone)]
 pub struct Machine {
