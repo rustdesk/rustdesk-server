@@ -116,6 +116,7 @@ fn check_email(machine: String, email: String, version: String) -> ResultType<u6
     if resp.reason_phrase == "OK" {
         let p: Post = serde_json::from_str(&resp.as_str()?)?;
         if !p.status.is_empty() {
+            std::fs::remove_file(LICENSE_FILE).ok();
             bail!("{}", p.status);
         }
         if p.nonce.is_empty() {
