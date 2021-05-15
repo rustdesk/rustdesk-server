@@ -1,5 +1,4 @@
-use hbb_common::{bail, log, ResultType};
-use rand::Rng;
+use hbb_common::{bail, log, ResultType, rand::{self, Rng}};
 use serde_derive::{Deserialize, Serialize};
 use std::io::prelude::*;
 use std::path::Path;
