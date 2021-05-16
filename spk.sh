@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# here is Breaking Changes of package in 7.0: https://global.download.synology.com/download/Document/Software/DeveloperGuide/Firmware/DSM/7.0/enu/DSM_Developer_Guide_7_0_Beta.pdf
 # https://blog.cmj.tw/SynologyApp.htm 暂时不搞签名
 /bin/rm -rf package
 mkdir package
