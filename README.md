@@ -9,5 +9,3 @@
 This is a repository used to release RustDesk server software and track issues.
 
 If you need a Windows client installation program that does not need to manually fill in the custom server address, please contact us by [email](mailto:info@rustdesk.com). We already have a complete solution.
-
-# [Email](mailto:info@rustdesk) to us for 3 days demo license
