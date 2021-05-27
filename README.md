@@ -1,4 +1,5 @@
 # RustDesk Server Program
+If you are looking for an open source implementation, please go to [rustdesk-server-demo](https://github.com/rustdesk/rustdesk-server-demo).
 
 [**DOWNLOAD**](https://github.com/rustdesk/rustdesk-server/releases)
 
