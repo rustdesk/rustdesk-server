@@ -43,7 +43,7 @@ Click on menu button on the right side of ID as below, choose "ID/Relay Server".
 
 ![image](https://user-images.githubusercontent.com/71636191/113117333-e73c8f00-9240-11eb-8653-fc0c2ae4f0bf.png)
 
-Please input hbbs host or ip address in ID server input box, and hbbr host or ip address in relay server input box.
+Please input hbbs host or ip address in ID server input box on remote and local side, and hbbr host or ip address in relay server input box on remote side.
 
 e.g.
 
