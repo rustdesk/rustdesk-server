@@ -36,6 +36,8 @@ sudo docker image pull rustdesk/rustdesk-server
 sudo docker run --name hbbr -p 21117:21117 -v `pwd`:/root -it --rm rustdesk/rustdesk-server hbbr -m <registered_email>
 sudo docker run --name hbbs -p 21115:21115 -p 21116:21116 -p 21116:21116/udp -v `pwd`:/root -it --rm rustdesk/rustdesk-server hbbs -r <relay-server-ip> -m <registered_email>
 ```
+- Note: If you wish to host the server on your own for demonstration or testing purposes, you can specificy `demo` within the `<registered_email>` flag. This will allow your server to run for 30 days.
+
 
 ### STEP-3 : Set hbbs/hbbr address on client-side
 
