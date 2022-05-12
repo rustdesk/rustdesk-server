@@ -43,3 +43,9 @@ regex = "1.4"
 tower-http = { version = "0.2", features = ["fs", "trace", "cors"] }
 http = "0.2"
 flexi_logger = { version = "0.22", features = ["async", "use_chrono_for_offset"] }
+
+[build-dependencies]
+hbb_common = { path = "libs/hbb_common" }
+
+[workspace]
+members = ["libs/hbb_common"]
