@@ -1,7 +1,0 @@
-#!/usr/bin/env bash
-cargo build --release
-strip target/release/hbbr
-strip target/release/hbbs
-sudo docker image build -t rustdesk/rustdesk-server .
-#sudo docker login
-sudo docker image push rustdesk/rustdesk-server:latest
