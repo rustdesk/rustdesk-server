@@ -92,10 +92,6 @@ impl RendezvousServer {
         let addr2 = format!("0.0.0.0:{}", port - 1);
         let addr3 = format!("0.0.0.0:{}", port + 2);
         let pm = PeerMap::new().await?;
-        #[cfg(not(debug_assertions))]
-        if !crate::lic::check_lic(&get_arg("email"), crate::version::VERSION) {
-            return Ok(());
-        }
         log::info!("serial={}", serial);
         let rendezvous_servers = get_servers(&get_arg("rendezvous-servers"), "rendezvous-servers");
         log::info!("Listening on tcp/udp {}", addr);

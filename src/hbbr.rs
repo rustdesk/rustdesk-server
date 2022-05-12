@@ -29,10 +29,6 @@ fn main() -> ResultType<()> {
             section.iter().for_each(|(k, v)| std::env::set_var(k, v));
         }
     }
-    #[cfg(not(debug_assertions))]
-    if !lic::check_lic(matches.value_of("email").unwrap_or(""), version::VERSION) {
-        return Ok(());
-    }
     start(
         matches.value_of("port").unwrap_or(&RELAY_PORT.to_string()),
         matches.value_of("key").unwrap_or(""),
