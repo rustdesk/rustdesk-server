@@ -1,9 +1,10 @@
 [package]
 name = "hbbs"
-version = "1.1.4"
-authors = ["open-trade <info@opentradesolutions.com>"]
-edition = "2018"
-build= "build.rs"
+version = "1.1.5"
+authors = ["open-trade <info@rustdesk.com>"]
+edition = "2021"
+build = "build.rs"
+default-run = "hbbs"
 
 [[bin]]
 name = "hbbr"
@@ -17,22 +18,28 @@ serde_derive = "1.0"
 serde = "1.0"
 serde_json = "1.0"
 lazy_static = "1.4"
-clap = "2.33"
-rust-ini = "0.16"
-minreq = { version = "2.3.1", features = ["punycode"] }
+clap = "2"
+rust-ini = "0.18"
+minreq = { version = "2.4", features = ["punycode"] }
 machine-uid = "0.2"
 mac_address = "1.1"
-whoami = "0.9"
+whoami = "1.2"
 base64 = "0.13"
-cryptoxide = "0.3"
-
-[build-dependencies]
-hbb_common = { path = "libs/hbb_common" }
-
-[workspace]
-members = ["libs/hbb_common"]
-
-[dependencies.rocksdb]
-default-features = false
-features = ["lz4"]
-version = "0.15"
+axum = { version = "0.5", features = ["headers"] }
+sqlx = { git = "https://github.com/open-trade/sqlx", features = [ "runtime-tokio-rustls", "sqlite", "macros", "chrono", "json" ] }
+deadpool = "0.8"
+async-trait = "0.1"
+async-speed-limit = { git = "https://github.com/open-trade/async-speed-limit" }
+uuid = { version = "0.8", features = ["v4"] }
+bcrypt = "0.12"
+chrono = "0.4"
+jsonwebtoken = "8"
+headers = "0.3"
+once_cell = "1.8"
+sodiumoxide = "0.2"
+tokio-tungstenite = "0.17"
+tungstenite = "0.17"
+regex = "1.4"
+tower-http = { version = "0.2", features = ["fs", "trace", "cors"] }
+http = "0.2"
+flexi_logger = { version = "0.22", features = ["async", "use_chrono_for_offset"] }
