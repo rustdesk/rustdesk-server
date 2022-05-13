@@ -55,11 +55,11 @@ impl Database {
         if !std::path::Path::new(url).exists() {
             std::fs::File::create(url).ok();
         }
-        let n: usize = std::env::var("MAX_CONNECTIONS")
+        let n: usize = std::env::var("MAX_DATABASE_CONNECTIONS")
             .unwrap_or("1".to_owned())
             .parse()
             .unwrap_or(1);
-        log::info!("MAX_CONNECTIONS={}", n);
+        log::debug!("MAX_DATABASE_CONNECTIONS={}", n);
         let pool = Pool::new(
             DbPool {
                 url: url.to_owned(),

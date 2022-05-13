@@ -20,7 +20,6 @@ fn main() -> ResultType<()> {
         -R, --rendezvous-servers=[HOSTS] 'Sets rendezvous servers, seperated by colon'
         -u, --software-url=[URL] 'Sets download url of RustDesk software of newest version'
         -r, --relay-servers=[HOST] 'Sets the default relay servers, seperated by colon'
-        -C, --change-id=[BOOL(default=Y)] 'Sets if support to change id'
         -M, --rmem=[NUMBER(default={})] 'Sets UDP recv buffer size, set system rmem_max first, e.g., sudo sysctl -w net.core.rmem_max=52428800. vi /etc/sysctl.conf, net.core.rmem_max=52428800, sudo sysctl –p'
         -k, --key=[KEY] 'Only allow the client with the same key'",
         RENDEZVOUS_PORT,
@@ -33,7 +32,6 @@ fn main() -> ResultType<()> {
     }
     let rmem = get_arg("rmem").parse::<usize>().unwrap_or(RMEM);
     let serial: i32 = get_arg("serial").parse().unwrap_or(0);
-    let id_change_support: bool = get_arg_or("change-id", "Y".to_owned()).to_uppercase() == "Y";
-    RendezvousServer::start(port, serial, &get_arg("key"), id_change_support, rmem)?;
+    RendezvousServer::start(port, serial, &get_arg("key"), rmem)?;
     Ok(())
 }

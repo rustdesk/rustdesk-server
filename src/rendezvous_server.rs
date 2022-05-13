@@ -85,7 +85,6 @@ impl RendezvousServer {
         port: i32,
         serial: i32,
         key: &str,
-        id_change_support: bool,
         rmem: usize,
     ) -> ResultType<()> {
         let addr = format!("0.0.0.0:{}", port);
@@ -97,7 +96,6 @@ impl RendezvousServer {
         log::info!("Listening on tcp/udp {}", addr);
         log::info!("Listening on tcp {}, extra port for NAT test", addr2);
         log::info!("Listening on websocket {}", addr3);
-        log::info!("change-id={:?}", id_change_support);
         let mut socket = FramedSocket::new_with_buf_size(&addr, rmem).await?;
         let (tx, mut rx) = mpsc::unbounded_channel::<Data>();
         let software_url = get_arg("software-url");
@@ -163,7 +161,6 @@ impl RendezvousServer {
                     &mut listener3,
                     &mut socket,
                     &key,
-                    id_change_support,
                 )
                 .await
             {
@@ -195,7 +192,6 @@ impl RendezvousServer {
         listener3: &mut TcpListener,
         socket: &mut FramedSocket,
         key: &str,
-        id_change_support: bool,
     ) -> LoopFailure {
         let mut timer_check_relay = interval(Duration::from_millis(CHECK_RELAY_TIMEOUT));
         loop {
@@ -249,7 +245,7 @@ impl RendezvousServer {
                     match res {
                         Ok((stream, addr))  => {
                             stream.set_nodelay(true).ok();
-                            self.handle_listener(stream, addr, key, id_change_support, true).await;
+                            self.handle_listener(stream, addr, key, true).await;
                         }
                         Err(err) => {
                            log::error!("listener3.accept failed: {}", err);
@@ -261,7 +257,7 @@ impl RendezvousServer {
                     match res {
                         Ok((stream, addr)) => {
                             stream.set_nodelay(true).ok();
-                            self.handle_listener(stream, addr, key, id_change_support, false).await;
+                            self.handle_listener(stream, addr, key, false).await;
                         }
                        Err(err) => {
                            log::error!("listener.accept failed: {}", err);
@@ -446,7 +442,6 @@ impl RendezvousServer {
         sink: &mut Option<Sink>,
         addr: SocketAddr,
         key: &str,
-        id_change_support: bool,
         ws: bool,
     ) -> bool {
         if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(&bytes) {
@@ -1022,7 +1017,6 @@ impl RendezvousServer {
         stream: TcpStream,
         addr: SocketAddr,
         key: &str,
-        id_change_support: bool,
         ws: bool,
     ) {
         log::debug!("Tcp connection from {:?}, ws: {}", addr, ws);
@@ -1030,7 +1024,7 @@ impl RendezvousServer {
         let key = key.to_owned();
         tokio::spawn(async move {
             allow_err!(
-                rs.handle_listener_inner(stream, addr, &key, id_change_support, ws)
+                rs.handle_listener_inner(stream, addr, &key, ws)
                     .await
             );
         });
@@ -1042,7 +1036,6 @@ impl RendezvousServer {
         stream: TcpStream,
         addr: SocketAddr,
         key: &str,
-        id_change_support: bool,
         ws: bool,
     ) -> ResultType<()> {
         let mut sink;
@@ -1054,7 +1047,7 @@ impl RendezvousServer {
                 match msg {
                     tungstenite::Message::Binary(bytes) => {
                         if !self
-                            .handle_tcp(&bytes, &mut sink, addr, key, id_change_support, ws)
+                            .handle_tcp(&bytes, &mut sink, addr, key, ws)
                             .await
                         {
                             break;
@@ -1068,7 +1061,7 @@ impl RendezvousServer {
             sink = Some(Sink::TcpStream(a));
             while let Ok(Some(Ok(bytes))) = timeout(30_000, b.next()).await {
                 if !self
-                    .handle_tcp(&bytes, &mut sink, addr, key, id_change_support, ws)
+                    .handle_tcp(&bytes, &mut sink, addr, key, ws)
                     .await
                 {
                     break;
