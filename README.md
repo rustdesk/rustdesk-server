@@ -16,4 +16,4 @@ Two executables will be generated in target/release.
   - hbbs - RustDesk ID/Rendezvous server
   - hbbr - RustDesk relay server
 
-If you wanna develop your own server, https://github.com/rustdesk/rustdesk-server-demo may be a better and simpler start for you rather than this repo.
+If you wanna develop your own server, [rustdesk-server-demo](https://github.com/rustdesk/rustdesk-server-demo) might be a better and simpler start for you rather than this repo.
