@@ -15,3 +15,5 @@ cargo build --release
 Two executables will be generated in target/release.
   - hbbs - RustDesk ID/Rendezvous server
   - hbbr - RustDesk relay server
+
+If you wanna develop your own server, https://github.com/rustdesk/rustdesk-server-demo may be a better and simpler start for you rather than this repo.
