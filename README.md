@@ -2,7 +2,9 @@
 
 [**Download**](https://github.com/rustdesk/rustdesk-server/releases)
 
-[**Manual**](https://rustdesk.com/docs/en/self-host/)  
+[**Manual**](https://rustdesk.com/docs/en/self-host/) 
+
+[**FAQ**](https://github.com/rustdesk/rustdesk/wiki/FAQ)
 
 Self-host your own RustDesk server, it is free and open source.
 
