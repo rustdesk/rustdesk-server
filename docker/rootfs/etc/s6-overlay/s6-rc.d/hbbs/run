@@ -1,0 +1,3 @@
+#!/command/execlineb -P
+posix-cd /data
+/usr/bin/hbbs -r $RELAY
