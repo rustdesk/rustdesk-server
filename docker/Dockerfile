@@ -19,10 +19,13 @@ RUN \
 COPY rootfs /
 COPY --from=builder /src/target/release/hbbr /usr/bin/hbbr
 COPY --from=builder /src/target/release/hbbs /usr/bin/hbbs
+COPY healthcheck.sh /usr/bin/healthcheck.sh
 
 ENV RELAY relay.example.com
 
 EXPOSE 21115 21116 21116/udp 21117 21118 21119
+
+HEALTHCHECK --interval=10s --timeout=5s CMD /usr/bin/healthcheck.sh
 
 WORKDIR /data
 
