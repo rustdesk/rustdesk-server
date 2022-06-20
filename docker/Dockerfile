@@ -6,7 +6,7 @@ RUN \
   cd /src && \
   cargo build -r --manifest-path /src/Cargo.toml
 
-FROM busybox
+FROM busybox:stable
 
 ARG S6_OVERLAY_VERSION=3.1.0.1
 ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz /tmp
