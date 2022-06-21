@@ -1,3 +1,5 @@
+[![build](https://github.com/rustdesk/rustdesk-server/actions/workflows/build.yaml/badge.svg)](https://github.com/rustdesk/rustdesk-server/actions/workflows/build.yaml)
+
 # RustDesk Server Program
 
 [**Download**](https://github.com/rustdesk/rustdesk-server/releases)

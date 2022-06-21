@@ -1,11 +1,3 @@
-FROM rust:alpine AS builder
-
-RUN \
-  apk -U add musl-dev git file make && \
-  git clone --depth=1 https://github.com/rustdesk/rustdesk-server.git /src && \
-  cd /src && \
-  cargo build -r --manifest-path /src/Cargo.toml
-
 FROM busybox:stable
 
 ARG S6_OVERLAY_VERSION=3.1.0.1
@@ -17,9 +9,6 @@ RUN \
   rm /tmp/s6-overlay*.tar.xz
   
 COPY rootfs /
-COPY --from=builder /src/target/release/hbbr /usr/bin/hbbr
-COPY --from=builder /src/target/release/hbbs /usr/bin/hbbs
-COPY healthcheck.sh /usr/bin/healthcheck.sh
 
 ENV RELAY relay.example.com
 
