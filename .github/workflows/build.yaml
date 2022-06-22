@@ -15,6 +15,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  LATEST_TAG: devel
 
 jobs:
 
@@ -163,7 +164,9 @@ jobs:
           context: "./docker"
           platforms: ${{ matrix.job.docker_platform }}
           push: true
-          tags: "${{ secrets.DOCKER_IMAGE }}:latest-${{ matrix.job.name }}" 
+          tags: |
+            ${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-${{ matrix.job.name }}
+            ${{ secrets.DOCKER_IMAGE }}:${{ github.ref_name }}-${{ matrix.job.name }}
           labels: ${{ steps.meta.outputs.labels }}
 
 
@@ -185,6 +188,13 @@ jobs:
       - name: Create and push manifest
         uses: Noelware/docker-manifest-action@master
         with:
-          base-image: ${{ secrets.DOCKER_IMAGE }}:latest
-          extra-images: ${{ secrets.DOCKER_IMAGE }}:latest-amd64,${{ secrets.DOCKER_IMAGE }}:latest-arm64v8,${{ secrets.DOCKER_IMAGE }}:latest-armv7,${{ secrets.DOCKER_IMAGE }}:latest-i386
+          base-image: ${{ secrets.DOCKER_IMAGE }}:${{ github.ref_name }}
+          extra-images: ${{ secrets.DOCKER_IMAGE }}:${{ github.ref_name }}-amd64,${{ secrets.DOCKER_IMAGE }}:${{ github.ref_name }}-arm64v8,${{ secrets.DOCKER_IMAGE }}:${{ github.ref_name }}-armv7,${{ secrets.DOCKER_IMAGE }}:${{ github.ref_name }}-i386
+          push: true
+
+      - name: Create and push manifest
+        uses: Noelware/docker-manifest-action@master
+        with:
+          base-image: ${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}
+          extra-images: ${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-amd64,${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-arm64v8,${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-armv7,${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-i386
           push: true
