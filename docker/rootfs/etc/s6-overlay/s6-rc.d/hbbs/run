@@ -1,3 +1,5 @@
-#!/command/execlineb -P
-posix-cd /data
-/usr/bin/hbbs -r $RELAY
+#!/command/with-contenv sh
+cd /data
+PARAMS=
+[ "${ENCRYPTED_ONLY}" = "1" ] && PARAMS="-k _"
+/usr/bin/hbbs -r $RELAY $PARAMS
