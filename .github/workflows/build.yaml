@@ -2,7 +2,8 @@ name: build
 
 # ------------- NOTE
 # please setup some secrets before running this workflow:
-# DOCKER_IMAGE should be the target image name on docker hub (e.g. "rustdesk/rustdesk-server" )
+# DOCKER_IMAGE should be the target image name on docker hub (e.g. "rustdesk/rustdesk-server-s6" )
+# DOCKER_IMAGE_CLASSIC should be the target image name on docker hub for the old build (e.g. "rustdesk/rustdesk-server" )
 # DOCKER_USERNAME is the username you normally use to login at https://hub.docker.com/
 # DOCKER_PASSWORD is a token you should create under "account settings / security" with read/write access
 
@@ -15,10 +16,11 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  LATEST_TAG: devel
-
+  LATEST_TAG: latest
+  
 jobs:
 
+  # binary build
   build:
 
     name: Build - ${{ matrix.job.name }}
@@ -64,7 +66,7 @@ jobs:
             target/${{ matrix.job.target }}/release/hbbs
           if-no-files-found: error
 
-
+  # github (draft) release with all binaries
   release:
 
     name: Github release
@@ -110,7 +112,7 @@ jobs:
             armv7/*
             i386/*
             
-
+  # docker build and push of single-arch images
   docker:
 
     name: Docker push - ${{ matrix.job.name }}
@@ -158,6 +160,14 @@ jobs:
         with:
           images: registry.hub.docker.com/${{ secrets.DOCKER_IMAGE }}
 
+      - name: Get git tag
+        id: vars
+        run: |
+          T=${GITHUB_REF#refs/*/}
+          M=${T%%.*}
+          echo "GIT_TAG=$T" >> $GITHUB_ENV
+          echo "MAJOR_TAG=$M" >> $GITHUB_ENV
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v3
         with:
@@ -166,10 +176,11 @@ jobs:
           push: true
           tags: |
             ${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-${{ matrix.job.name }}
-            ${{ secrets.DOCKER_IMAGE }}:${{ github.ref_name }}-${{ matrix.job.name }}
+            ${{ secrets.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-${{ matrix.job.name }}
+            ${{ secrets.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-${{ matrix.job.name }}
           labels: ${{ steps.meta.outputs.labels }}
 
-
+  # docker build and push of multiarch images
   docker-manifest:
 
     name: Docker manifest
@@ -185,6 +196,31 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
+      - name: Get git tag
+        id: vars
+        run: |
+          T=${GITHUB_REF#refs/*/}
+          M=${T%%.*}
+          echo "GIT_TAG=$T" >> $GITHUB_ENV
+          echo "MAJOR_TAG=$M" >> $GITHUB_ENV
+
+      # manifest for :1.2.3 tag
+      - name: Create and push manifest
+        uses: Noelware/docker-manifest-action@master
+        with:
+          base-image: ${{ secrets.DOCKER_IMAGE }}:${{ env.GIT_TAG }}
+          extra-images: ${{ secrets.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-amd64,${{ secrets.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-arm64v8,${{ secrets.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-armv7,${{ secrets.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-i386
+          push: true
+
+      # manifest for :1 tag (major release)
+      - name: Create and push manifest
+        uses: Noelware/docker-manifest-action@master
+        with:
+          base-image: ${{ secrets.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}
+          extra-images: ${{ secrets.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-amd64,${{ secrets.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-arm64v8,${{ secrets.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-armv7,${{ secrets.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-i386
+          push: true
+
+      # manifest for :latest tag
       - name: Create and push manifest
         uses: Noelware/docker-manifest-action@master
         with:
@@ -198,3 +234,61 @@ jobs:
           base-image: ${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}
           extra-images: ${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-amd64,${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-arm64v8,${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-armv7,${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-i386
           push: true
+
+
+            
+  # docker build and push of classic images
+  docker-classic:
+
+    name: Docker push classic - ${{ matrix.job.name }}
+    needs: build
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        job:
+          - { name: "amd64",   docker_platform: "linux/amd64", tag: "latest" }
+          - { name: "arm64v8", docker_platform: "linux/arm64", tag: "latest-arm64v8" }
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v3
+        
+      - name: Download binaries
+        uses: actions/download-artifact@v3
+        with:
+          name: binaries-${{ matrix.job.name }}
+          path: docker-classic/
+
+      - name: Make binaries executable
+        run: chmod -v a+x docker-classic/hbb*
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Log in to Docker Hub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+        
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v4
+        with:
+          images: registry.hub.docker.com/${{ secrets.DOCKER_IMAGE_CLASSIC }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v3
+        with:
+          context: "./docker-classic"
+          platforms: ${{ matrix.job.docker_platform }}
+          push: true
+          tags: |
+            ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ matrix.job.tag }}
+          labels: ${{ steps.meta.outputs.labels }}
