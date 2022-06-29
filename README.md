@@ -94,7 +94,7 @@ Edit line 16 to point to your relay server (the one listening on port 21117). Yo
 
 ## S6-overlay based images
 
-These images are build against `busybox:stable` with the addition of the binaries (both hbbr and hbbs) and [S6-overlay](https://github.com/just-containers/s6-overlay). They're available on [Docker hub](https://hub.docker.com/r/rustdesk/rustdesk-server-36/) with these tags:
+These images are build against `busybox:stable` with the addition of the binaries (both hbbr and hbbs) and [S6-overlay](https://github.com/just-containers/s6-overlay). They're available on [Docker hub](https://hub.docker.com/r/rustdesk/rustdesk-server-s6/) with these tags:
 
 | architecture | version | image:tag |
 | --- | --- | --- |
