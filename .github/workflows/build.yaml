@@ -122,10 +122,10 @@ jobs:
       fail-fast: false
       matrix:
         job:
-          - { name: "amd64",   docker_platform: "linux/amd64" }
-          - { name: "arm64v8", docker_platform: "linux/arm64" }
-          - { name: "armv7",   docker_platform: "linux/arm/v7" }
-          - { name: "i386",    docker_platform: "linux/386" }
+          - { name: "amd64",   docker_platform: "linux/amd64",  s6_platform: "x86_64" }
+          - { name: "arm64v8", docker_platform: "linux/arm64",  s6_platform: "aarch64" }
+          - { name: "armv7",   docker_platform: "linux/arm/v7", s6_platform: "armhf" }
+          - { name: "i386",    docker_platform: "linux/386",    s6_platform: "i686" }
 
     steps:
 
@@ -174,6 +174,8 @@ jobs:
           context: "./docker"
           platforms: ${{ matrix.job.docker_platform }}
           push: true
+          build-args: |
+            S6_ARCH=${{ matrix.job.s6_platform }}
           tags: |
             ${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-${{ matrix.job.name }}
             ${{ secrets.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-${{ matrix.job.name }}
@@ -205,7 +207,7 @@ jobs:
           echo "MAJOR_TAG=$M" >> $GITHUB_ENV
 
       # manifest for :1.2.3 tag
-      - name: Create and push manifest
+      - name: Create and push manifest (:ve.rs.ion)
         uses: Noelware/docker-manifest-action@master
         with:
           base-image: ${{ secrets.DOCKER_IMAGE }}:${{ env.GIT_TAG }}
@@ -213,7 +215,7 @@ jobs:
           push: true
 
       # manifest for :1 tag (major release)
-      - name: Create and push manifest
+      - name: Create and push manifest (:major)
         uses: Noelware/docker-manifest-action@master
         with:
           base-image: ${{ secrets.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}
@@ -221,14 +223,7 @@ jobs:
           push: true
 
       # manifest for :latest tag
-      - name: Create and push manifest
-        uses: Noelware/docker-manifest-action@master
-        with:
-          base-image: ${{ secrets.DOCKER_IMAGE }}:${{ github.ref_name }}
-          extra-images: ${{ secrets.DOCKER_IMAGE }}:${{ github.ref_name }}-amd64,${{ secrets.DOCKER_IMAGE }}:${{ github.ref_name }}-arm64v8,${{ secrets.DOCKER_IMAGE }}:${{ github.ref_name }}-armv7,${{ secrets.DOCKER_IMAGE }}:${{ github.ref_name }}-i386
-          push: true
-
-      - name: Create and push manifest
+      - name: Create and push manifest (:latest)
         uses: Noelware/docker-manifest-action@master
         with:
           base-image: ${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}
