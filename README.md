@@ -127,8 +127,6 @@ The S6-overlay acts as a supervisor and keeps both process running, so with this
 
 You can start these images directly with `docker run` with this command:
 
-or without --net=host, but P2P direct connection can not work.
-
 ```bash
 docker run --name rustdesk-server \ 
   --net=host \
@@ -136,6 +134,8 @@ docker run --name rustdesk-server \
   -e "ENCRYPTED_ONLY=1" \
   -v "$PWD/data:/data" -d rustdesk/rustdesk-server-s6:latest
 ```
+
+or without --net=host, but P2P direct connection can not work.
 
 ```bash
 docker run --name rustdesk-server \
