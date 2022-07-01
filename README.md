@@ -40,6 +40,13 @@ These images are build against `ubuntu-20.04` with the only addition of the bina
 
 You can start these images directly with `docker run` with these commands:
 
+```
+docker run --name hbbs --net=host -v "$PWD:/root" -d rustdesk/rustdesk-server:latest hbbs -r <relay-server-ip[:port]> 
+docker run --name hbbr --net=host -v "$PWD:/root" -d rustdesk/rustdesk-server:latest hbbr 
+```
+
+or without --net=host, but P2P direct connection can not work.
+
 ```bash
 docker run --name hbbs -p 21115:21115 -p 21116:21116 -p 21116:21116/udp -p 21118:21118 -v "$PWD:/root" -d rustdesk/rustdesk-server:latest hbbs -r <relay-server-ip[:port]> 
 docker run --name hbbr -p 21117:21117 -p 21119:21119 -v "$PWD:/root" -d rustdesk/rustdesk-server:latest hbbr 
@@ -119,6 +126,16 @@ You're strongly encuraged to use the `multiarch` image either with the `major ve
 The S6-overlay acts as a supervisor and keeps both process running, so with this image there's no need to have two separate running containers.
 
 You can start these images directly with `docker run` with this command:
+
+or without --net=host, but P2P direct connection can not work.
+
+```bash
+docker run --name rustdesk-server \ 
+  --net=host \
+  -e "RELAY=rustdeskrelay.example.com" \
+  -e "ENCRYPTED_ONLY=1" \
+  -v "$PWD/data:/data" -d rustdesk/rustdesk-server-s6:latest
+```
 
 ```bash
 docker run --name rustdesk-server \
