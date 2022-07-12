@@ -28,6 +28,7 @@ use hbb_common::{
     udp::FramedSocket,
     AddrMangle, ResultType,
 };
+use ipnetwork::Ipv4Network;
 use sodiumoxide::crypto::sign;
 use std::{
     collections::HashMap,
@@ -59,17 +60,24 @@ static CHECK_RELAY_TIMEOUT: u64 = 3_000;
 static mut ALWAYS_USE_RELAY: bool = false;
 
 #[derive(Clone)]
+struct Inner {
+    serial: i32,
+    version: String,
+    software_url: String,
+    mask: Option<Ipv4Network>,
+    local_ip: String,
+    sk: Option<sign::SecretKey>,
+}
+
+#[derive(Clone)]
 pub struct RendezvousServer {
     tcp_punch: Arc<Mutex<HashMap<SocketAddr, Sink>>>,
     pm: PeerMap,
     tx: Sender,
     relay_servers: Arc<RelayServers>,
     relay_servers0: Arc<RelayServers>,
-    serial: i32,
     rendezvous_servers: Arc<Vec<String>>,
-    version: String,
-    software_url: String,
-    sk: Option<sign::SecretKey>,
+    inner: Arc<Inner>,
 }
 
 enum LoopFailure {
@@ -87,6 +95,7 @@ impl RendezvousServer {
         key: &str,
         rmem: usize,
     ) -> ResultType<()> {
+        let (key, sk) = Self::get_server_sk(key);
         let addr = format!("0.0.0.0:{}", port);
         let addr2 = format!("0.0.0.0:{}", port - 1);
         let addr3 = format!("0.0.0.0:{}", port + 2);
@@ -109,13 +118,23 @@ impl RendezvousServer {
             tx: tx.clone(),
             relay_servers: Default::default(),
             relay_servers0: Default::default(),
-            serial,
             rendezvous_servers: Arc::new(rendezvous_servers),
-            version,
-            software_url,
-            sk: None,
+            inner: Arc::new(Inner {
+                serial,
+                version,
+                software_url,
+                sk,
+                mask: get_arg("mask").parse().ok(),
+                local_ip: get_arg_or(
+                    "local-ip",
+                    local_ip_address::local_ip()
+                        .map(|x| x.to_string())
+                        .unwrap_or_default(),
+                ),
+            }),
         };
-        let key = rs.get_server_sk(key);
+        log::info!("mask: {:?}", rs.inner.mask);
+        log::info!("local-ip: {:?}", rs.inner.local_ip);
         std::env::set_var("PORT_FOR_API", port.to_string());
         rs.parse_relay_servers(&get_arg("relay-servers"));
         let pm = rs.pm.clone();
@@ -284,10 +303,10 @@ impl RendezvousServer {
                     if rp.id.len() > 0 {
                         log::trace!("New peer registered: {:?} {:?}", &rp.id, &addr);
                         self.update_addr(rp.id, addr, socket).await?;
-                        if self.serial > rp.serial {
+                        if self.inner.serial > rp.serial {
                             let mut msg_out = RendezvousMessage::new();
                             msg_out.set_configure_update(ConfigUpdate {
-                                serial: self.serial,
+                                serial: self.inner.serial,
                                 rendezvous_servers: (*self.rendezvous_servers).clone(),
                                 ..Default::default()
                             });
@@ -401,8 +420,10 @@ impl RendezvousServer {
                     self.handle_local_addr(la, addr, Some(socket)).await?;
                 }
                 Some(rendezvous_message::Union::configure_update(mut cu)) => {
-                    if addr.ip() == ADDR_127 && cu.serial > self.serial {
-                        self.serial = cu.serial;
+                    if addr.ip() == ADDR_127 && cu.serial > self.inner.serial {
+                        let mut inner: Inner = (*self.inner).clone();
+                        inner.serial = cu.serial;
+                        self.inner = Arc::new(inner);
                         self.rendezvous_servers = Arc::new(
                             cu.rendezvous_servers
                                 .drain(..)
@@ -414,16 +435,16 @@ impl RendezvousServer {
                         );
                         log::info!(
                             "configure updated: serial={} rendezvous-servers={:?}",
-                            self.serial,
+                            self.inner.serial,
                             self.rendezvous_servers
                         );
                     }
                 }
                 Some(rendezvous_message::Union::software_update(su)) => {
-                    if !self.version.is_empty() && su.url != self.version {
+                    if !self.inner.version.is_empty() && su.url != self.inner.version {
                         let mut msg_out = RendezvousMessage::new();
                         msg_out.set_software_update(SoftwareUpdate {
-                            url: self.software_url.clone(),
+                            url: self.inner.software_url.clone(),
                             ..Default::default()
                         });
                         socket.send(&msg_out, addr).await?;
@@ -477,6 +498,10 @@ impl RendezvousServer {
                         rr.set_pk(pk);
                     }
                     let mut msg_out = RendezvousMessage::new();
+                    if self.is_lan(addr_b) {
+                        // https://github.com/rustdesk/rustdesk-server/issues/24
+                        rr.relay_server = self.inner.local_ip.clone();
+                    }
                     msg_out.set_relay_response(rr);
                     allow_err!(self.send_to_tcp_sync(msg_out, addr_b).await);
                 }
@@ -492,9 +517,9 @@ impl RendezvousServer {
                         port: addr.port() as _,
                         ..Default::default()
                     };
-                    if self.serial > tar.serial {
+                    if self.inner.serial > tar.serial {
                         let mut cu = ConfigUpdate::new();
-                        cu.serial = self.serial;
+                        cu.serial = self.inner.serial;
                         cu.rendezvous_servers = (*self.rendezvous_servers).clone();
                         res.cu = MessageField::from_option(Some(cu));
                     }
@@ -662,8 +687,15 @@ impl RendezvousServer {
                 return Ok((msg_out, None));
             }
             let mut msg_out = RendezvousMessage::new();
-            if unsafe { ALWAYS_USE_RELAY } {
-                let relay_server = self.get_relay_server(addr.ip(), peer_addr.ip());
+            let peer_is_lan = self.is_lan(peer_addr);
+            let is_lan = self.is_lan(addr);
+            if unsafe { ALWAYS_USE_RELAY } || (peer_is_lan ^ is_lan) {
+                let relay_server = if peer_is_lan {
+                    // https://github.com/rustdesk/rustdesk-server/issues/24
+                    self.inner.local_ip.clone()
+                } else {
+                    self.get_relay_server(addr.ip(), peer_addr.ip())
+                };
                 if !relay_server.is_empty() {
                     msg_out.set_request_relay(RequestRelay {
                         relay_server,
@@ -1077,7 +1109,7 @@ impl RendezvousServer {
 
     #[inline]
     async fn get_pk(&mut self, version: &str, id: String) -> Vec<u8> {
-        if version.is_empty() || self.sk.is_none() {
+        if version.is_empty() || self.inner.sk.is_none() {
             Vec::new()
         } else {
             match self.pm.get(&id).await {
@@ -1091,7 +1123,7 @@ impl RendezvousServer {
                         }
                         .write_to_bytes()
                         .unwrap_or_default(),
-                        &self.sk.as_ref().unwrap(),
+                        &self.inner.sk.as_ref().unwrap(),
                     )
                 }
                 _ => Vec::new(),
@@ -1100,7 +1132,8 @@ impl RendezvousServer {
     }
 
     #[inline]
-    fn get_server_sk(&mut self, key: &str) -> String {
+    fn get_server_sk(key: &str) -> (String, Option<sign::SecretKey>) {
+        let mut out_sk = None;
         let mut key = key.to_owned();
         if let Ok(sk) = base64::decode(&key) {
             if sk.len() == sign::SECRETKEYBYTES {
@@ -1108,13 +1141,13 @@ impl RendezvousServer {
                 key = base64::encode(&sk[(sign::SECRETKEYBYTES / 2)..]);
                 let mut tmp = [0u8; sign::SECRETKEYBYTES];
                 tmp[..].copy_from_slice(&sk);
-                self.sk = Some(sign::SecretKey(tmp));
+                out_sk = Some(sign::SecretKey(tmp));
             }
         }
 
         if key.is_empty() || key == "-" || key == "_" {
-            let (pk, sk) = crate::common::gen_sk();
-            self.sk = sk;
+            let (pk, sk) = crate::common::gen_sk(0);
+            out_sk = sk;
             if !key.is_empty() {
                 key = pk;
             } else {
@@ -1126,7 +1159,17 @@ impl RendezvousServer {
             log::info!("Key: {}", key);
             std::env::set_var("KEY_FOR_API", key.clone());
         }
-        key
+        (key, out_sk)
+    }
+
+    #[inline]
+    fn is_lan(&self, addr: SocketAddr) -> bool {
+        if let Some(network) = &self.inner.mask {
+            if let SocketAddr::V4(addr) = addr {
+                return network.contains(*addr.ip());
+            }
+        }
+        false
     }
 }
 

@@ -261,7 +261,7 @@ impl Config {
 
     fn file_(suffix: &str) -> PathBuf {
         let name = format!("{}{}", *APP_NAME.read().unwrap(), suffix);
-        Self::path(name).with_extension("toml")
+        Config::with_extension(Self::path(name))
     }
 
     pub fn get_home() -> PathBuf {
@@ -677,6 +677,16 @@ impl Config {
         lock.store();
         true
     }
+
+    fn with_extension(path: PathBuf) -> PathBuf {
+        let ext = path.extension();
+        if let Some(ext) = ext {
+            let ext = format!("{}.toml", ext.to_string_lossy());
+            path.with_extension(&ext)
+        } else {
+            path.with_extension("toml")
+        }
+    }
 }
 
 const PEERS: &str = "peers";
@@ -706,7 +716,7 @@ impl PeerConfig {
 
     fn path(id: &str) -> PathBuf {
         let path: PathBuf = [PEERS, id].iter().collect();
-        Config::path(path).with_extension("toml")
+        Config::with_extension(Config::path(path))
     }
 
     pub fn peers() -> Vec<(String, SystemTime, PeerConfig)> {

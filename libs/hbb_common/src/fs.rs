@@ -558,3 +558,11 @@ pub fn create_dir(dir: &str) -> ResultType<()> {
     std::fs::create_dir_all(get_path(dir))?;
     Ok(())
 }
+
+#[inline]
+pub fn transform_windows_path(entries: &mut Vec<FileEntry>) {
+    for entry in entries {
+        entry.name = entry.name.replace("\\", "/");
+    }
+}
+

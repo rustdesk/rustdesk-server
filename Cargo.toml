@@ -1,6 +1,6 @@
 [package]
 name = "hbbs"
-version = "1.1.5"
+version = "1.1.6"
 authors = ["open-trade <info@rustdesk.com>"]
 edition = "2021"
 build = "build.rs"
@@ -26,12 +26,12 @@ mac_address = "1.1"
 whoami = "1.2"
 base64 = "0.13"
 axum = { version = "0.5", features = ["headers"] }
-sqlx = { git = "https://github.com/open-trade/sqlx", features = [ "runtime-tokio-rustls", "sqlite", "macros", "chrono", "json" ] }
+sqlx = { version = "0.6", features = [ "runtime-tokio-rustls", "sqlite", "macros", "chrono", "json" ] }
 deadpool = "0.8"
 async-trait = "0.1"
 async-speed-limit = { git = "https://github.com/open-trade/async-speed-limit" }
-uuid = { version = "0.8", features = ["v4"] }
-bcrypt = "0.12"
+uuid = { version = "1.0", features = ["v4"] }
+bcrypt = "0.13"
 chrono = "0.4"
 jsonwebtoken = "8"
 headers = "0.3"
@@ -40,9 +40,11 @@ sodiumoxide = "0.2"
 tokio-tungstenite = "0.17"
 tungstenite = "0.17"
 regex = "1.4"
-tower-http = { version = "0.2", features = ["fs", "trace", "cors"] }
+tower-http = { version = "0.3", features = ["fs", "trace", "cors"] }
 http = "0.2"
 flexi_logger = { version = "0.22", features = ["async", "use_chrono_for_offset"] }
+ipnetwork = "0.20"
+local-ip-address = "0.4"
 
 [build-dependencies]
 hbb_common = { path = "libs/hbb_common" }

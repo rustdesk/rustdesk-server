@@ -566,7 +566,7 @@ fn get_server_sk(key: &str) -> String {
     }
 
     if key == "-" || key == "_" {
-        let (pk, _) = crate::common::gen_sk();
+        let (pk, _) = crate::common::gen_sk(300);
         key = pk;
     }
 

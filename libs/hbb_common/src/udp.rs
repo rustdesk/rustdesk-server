@@ -27,6 +27,8 @@ fn new_socket(addr: SocketAddr, reuse: bool, buf_size: usize) -> Result<Socket, 
         socket.set_reuse_port(true)?;
         socket.set_reuse_address(true)?;
     }
+    // only nonblocking work with tokio, https://stackoverflow.com/questions/64649405/receiver-on-tokiompscchannel-only-receives-messages-when-buffer-is-full
+    socket.set_nonblocking(true)?;
     if buf_size > 0 {
         socket.set_recv_buffer_size(buf_size).ok();
     }
@@ -47,7 +49,7 @@ impl FramedSocket {
 
     #[allow(clippy::never_loop)]
     pub async fn new_reuse<T: std::net::ToSocketAddrs>(addr: T) -> ResultType<Self> {
-        for addr in addr.to_socket_addrs()? {
+        for addr in addr.to_socket_addrs()?.filter(|x| x.is_ipv4()) {
             let socket = new_socket(addr, true, 0)?.into_udp_socket();
             return Ok(Self::Direct(UdpFramed::new(
                 UdpSocket::from_std(socket)?,
@@ -61,7 +63,7 @@ impl FramedSocket {
         addr: T,
         buf_size: usize,
     ) -> ResultType<Self> {
-        for addr in addr.to_socket_addrs()? {
+        for addr in addr.to_socket_addrs()?.filter(|x| x.is_ipv4()) {
             return Ok(Self::Direct(UdpFramed::new(
                 UdpSocket::from_std(new_socket(addr, false, buf_size)?.into_udp_socket())?,
                 BytesCodec::new(),
