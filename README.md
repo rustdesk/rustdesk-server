@@ -40,7 +40,7 @@ These images are build against `ubuntu-20.04` with the only addition of the bina
 
 You can start these images directly with `docker run` with these commands:
 
-```
+```bash
 docker run --name hbbs --net=host -v "$PWD:/root" -d rustdesk/rustdesk-server:latest hbbs -r <relay-server-ip[:port]> 
 docker run --name hbbr --net=host -v "$PWD:/root" -d rustdesk/rustdesk-server:latest hbbr 
 ```
