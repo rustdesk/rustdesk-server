@@ -176,3 +176,103 @@ We use these environment variables:
 | --- | --- | --- |
 | RELAY | no | the IP address/DNS name of the machine running this container |
 | ENCRYPTED_ONLY | yes | if set to **"1"** unencrypted connection will not be accepted |
+| DB_URL | yes | path for database file |
+| KEY_PUB | yes | public part of the key pair |
+| KEY_PRIV | yes | private part of the key pair |
+
+### Secret management in S6-overlay based images
+
+You can obviously keep the key pair in a docker volume, but the best practices tells you to not write the keys on the filesystem; so we provide a couple of options.
+
+On container startup, the presence of the keypair is checked (`/data/id_ed25519.pub` and `/data/id_ed25519`) and if one of these keys doesn't exist, it's recreated from ENV variables or docker secrets.
+
+#### Use ENV to store the key pair
+
+You can use docker environment variables to store the keys. Just follow this examples:
+
+```bash
+docker run --name rustdesk-server \ 
+  --net=host \
+  -e "RELAY=rustdeskrelay.example.com" \
+  -e "ENCRYPTED_ONLY=1" \
+  -e "DB_URL=/db/db_v2.sqlite3" \
+  -e "KEY_PRIV=FR2j78IxfwJNR+HjLluQ2Nh7eEryEeIZCwiQDPVe+PaITKyShphHAsPLn7So0OqRs92nGvSRdFJnE2MSyrKTIQ==" \
+  -e "KEY_PUB=iEyskoaYRwLDy5+0qNDqkbPdpxr0kXRSZxNjEsqykyE=" \
+  -v "$PWD/db:/db" -d rustdesk/rustdesk-server-s6:latest
+```
+
+```yaml
+version: '3'
+
+services:
+  rustdesk-server:
+    container_name: rustdesk-server
+    ports:
+      - 21115:21115
+      - 21116:21116
+      - 21116:21116/udp
+      - 21117:21117
+      - 21118:21118
+      - 21119:21119
+    image: rustdesk/rustdesk-server-s6:latest
+    environment:
+      - "RELAY=rustdesk.example.com:21117"
+      - "ENCRYPTED_ONLY=1"
+      - "DB_URL=/db/db_v2.sqlite3"
+      - "KEY_PRIV=FR2j78IxfwJNR+HjLluQ2Nh7eEryEeIZCwiQDPVe+PaITKyShphHAsPLn7So0OqRs92nGvSRdFJnE2MSyrKTIQ=="
+      - "KEY_PUB=iEyskoaYRwLDy5+0qNDqkbPdpxr0kXRSZxNjEsqykyE="
+    volumes:
+      - ./db:/db
+    restart: unless-stopped
+```
+
+#### Use Docker secrets to store the key pair
+
+You can alternatively use docker secrets to store the keys.
+This is useful if you're using **docker-compose** or **docker swarm**.
+Just follow this examples:
+
+```bash
+cat secrets/id_ed25519.pub | docker secret create key_pub -
+cat secrets/id_ed25519 | docker secret create key_priv -
+docker service create --name rustdesk-server \
+  --secret key_priv --secret key_pub \
+  --net=host \
+  -e "RELAY=rustdeskrelay.example.com" \
+  -e "ENCRYPTED_ONLY=1" \
+  -e "DB_URL=/db/db_v2.sqlite3" \
+  --mount "type=bind,source=$PWD/db,destination=/db" \
+  rustdesk/rustdesk-server-s6:latest
+```
+
+```yaml
+version: '3'
+
+services:
+  rustdesk-server:
+    container_name: rustdesk-server
+    ports:
+      - 21115:21115
+      - 21116:21116
+      - 21116:21116/udp
+      - 21117:21117
+      - 21118:21118
+      - 21119:21119
+    image: rustdesk/rustdesk-server-s6:latest
+    environment:
+      - "RELAY=rustdesk.example.com:21117"
+      - "ENCRYPTED_ONLY=1"
+      - "DB_URL=/db/db_v2.sqlite3"
+    volumes:
+      - ./db:/db
+    restart: unless-stopped
+    secrets:
+      - key_pub
+      - key_priv
+
+secrets:
+  key_pub:
+    file: secrets/id_ed25519.pub
+  key_priv:
+    file: secrets/id_ed25519      
+```
