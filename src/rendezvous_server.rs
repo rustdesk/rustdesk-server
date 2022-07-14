@@ -89,12 +89,7 @@ enum LoopFailure {
 
 impl RendezvousServer {
     #[tokio::main(flavor = "multi_thread")]
-    pub async fn start(
-        port: i32,
-        serial: i32,
-        key: &str,
-        rmem: usize,
-    ) -> ResultType<()> {
+    pub async fn start(port: i32, serial: i32, key: &str, rmem: usize) -> ResultType<()> {
         let (key, sk) = Self::get_server_sk(key);
         let addr = format!("0.0.0.0:{}", port);
         let addr2 = format!("0.0.0.0:{}", port - 1);
@@ -112,6 +107,17 @@ impl RendezvousServer {
         if !version.is_empty() {
             log::info!("software_url: {}, version: {}", software_url, version);
         }
+        let mask = get_arg("mask").parse().ok();
+        let local_ip = if mask.is_none() {
+            "".to_owned()
+        } else {
+            get_arg_or(
+                "local-ip",
+                local_ip_address::local_ip()
+                    .map(|x| x.to_string())
+                    .unwrap_or_default(),
+            )
+        };
         let mut rs = Self {
             tcp_punch: Arc::new(Mutex::new(HashMap::new())),
             pm,
@@ -124,13 +130,8 @@ impl RendezvousServer {
                 version,
                 software_url,
                 sk,
-                mask: get_arg("mask").parse().ok(),
-                local_ip: get_arg_or(
-                    "local-ip",
-                    local_ip_address::local_ip()
-                        .map(|x| x.to_string())
-                        .unwrap_or_default(),
-                ),
+                mask,
+                local_ip,
             }),
         };
         log::info!("mask: {:?}", rs.inner.mask);
@@ -498,9 +499,13 @@ impl RendezvousServer {
                         rr.set_pk(pk);
                     }
                     let mut msg_out = RendezvousMessage::new();
-                    if self.is_lan(addr_b) {
-                        // https://github.com/rustdesk/rustdesk-server/issues/24
-                        rr.relay_server = self.inner.local_ip.clone();
+                    if !rr.relay_server.is_empty() {
+                        if self.is_lan(addr_b) {
+                            // https://github.com/rustdesk/rustdesk-server/issues/24
+                            rr.relay_server = self.inner.local_ip.clone();
+                        } else if rr.relay_server == self.inner.local_ip {
+                            rr.relay_server = self.get_relay_server(addr.ip(), addr_b.ip());
+                        }
                     }
                     msg_out.set_relay_response(rr);
                     allow_err!(self.send_to_tcp_sync(msg_out, addr_b).await);
@@ -659,6 +664,7 @@ impl RendezvousServer {
         key: &str,
         ws: bool,
     ) -> ResultType<(RendezvousMessage, Option<SocketAddr>)> {
+        let mut ph = ph;
         if !key.is_empty() && ph.licence_key != key {
             let mut msg_out = RendezvousMessage::new();
             msg_out.set_punch_hole_response(PunchHoleResponse {
@@ -689,20 +695,13 @@ impl RendezvousServer {
             let mut msg_out = RendezvousMessage::new();
             let peer_is_lan = self.is_lan(peer_addr);
             let is_lan = self.is_lan(addr);
+            let mut relay_server = self.get_relay_server(addr.ip(), peer_addr.ip());
             if unsafe { ALWAYS_USE_RELAY } || (peer_is_lan ^ is_lan) {
-                let relay_server = if peer_is_lan {
+                if peer_is_lan {
                     // https://github.com/rustdesk/rustdesk-server/issues/24
-                    self.inner.local_ip.clone()
-                } else {
-                    self.get_relay_server(addr.ip(), peer_addr.ip())
-                };
-                if !relay_server.is_empty() {
-                    msg_out.set_request_relay(RequestRelay {
-                        relay_server,
-                        ..Default::default()
-                    });
-                    return Ok((msg_out, Some(peer_addr)));
+                    relay_server = self.inner.local_ip.clone()
                 }
+                ph.nat_type = NatType::SYMMETRIC.into(); // will force relay
             }
             let same_intranet = !ws
                 && match peer_addr {
@@ -716,7 +715,6 @@ impl RendezvousServer {
                     },
                 };
             let socket_addr = AddrMangle::encode(addr);
-            let relay_server = self.get_relay_server(addr.ip(), peer_addr.ip());
             if same_intranet {
                 log::debug!(
                     "Fetch local addr {:?} {:?} request from {:?}",
@@ -1044,21 +1042,12 @@ impl RendezvousServer {
         });
     }
 
-    async fn handle_listener(
-        &self,
-        stream: TcpStream,
-        addr: SocketAddr,
-        key: &str,
-        ws: bool,
-    ) {
+    async fn handle_listener(&self, stream: TcpStream, addr: SocketAddr, key: &str, ws: bool) {
         log::debug!("Tcp connection from {:?}, ws: {}", addr, ws);
         let mut rs = self.clone();
         let key = key.to_owned();
         tokio::spawn(async move {
-            allow_err!(
-                rs.handle_listener_inner(stream, addr, &key, ws)
-                    .await
-            );
+            allow_err!(rs.handle_listener_inner(stream, addr, &key, ws).await);
         });
     }
 
@@ -1078,10 +1067,7 @@ impl RendezvousServer {
             while let Ok(Some(Ok(msg))) = timeout(30_000, b.next()).await {
                 match msg {
                     tungstenite::Message::Binary(bytes) => {
-                        if !self
-                            .handle_tcp(&bytes, &mut sink, addr, key, ws)
-                            .await
-                        {
+                        if !self.handle_tcp(&bytes, &mut sink, addr, key, ws).await {
                             break;
                         }
                     }
@@ -1092,10 +1078,7 @@ impl RendezvousServer {
             let (a, mut b) = Framed::new(stream, BytesCodec::new()).split();
             sink = Some(Sink::TcpStream(a));
             while let Ok(Some(Ok(bytes))) = timeout(30_000, b.next()).await {
-                if !self
-                    .handle_tcp(&bytes, &mut sink, addr, key, ws)
-                    .await
-                {
+                if !self.handle_tcp(&bytes, &mut sink, addr, key, ws).await {
                     break;
                 }
             }
