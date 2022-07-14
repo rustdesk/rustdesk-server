@@ -66,6 +66,7 @@ jobs:
           path: |
             target/${{ matrix.job.target }}/release/hbbr
             target/${{ matrix.job.target }}/release/hbbs
+            target/${{ matrix.job.target }}/release/rustdesk-utils
           if-no-files-found: error
 
   # github (draft) release with all binaries
@@ -102,7 +103,7 @@ jobs:
           path: i386
 
       - name: Rename files
-        run: for arch in amd64 arm64v8 armv7 i386 ; do for b in hbbr hbbs ; do mv -v ${arch}/${b} ${arch}/${b}-${arch} ; done ; done 
+        run: for arch in amd64 arm64v8 armv7 i386 ; do for b in hbbr hbbs rustdesk-utils ; do mv -v ${arch}/${b} ${arch}/${b}-${arch} ; done ; done 
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
