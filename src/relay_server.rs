@@ -81,11 +81,19 @@ pub async fn start(port: &str, key: &str) -> ResultType<()> {
     log::info!("Listening on tcp {}", addr);
     let addr2 = format!("0.0.0.0:{}", port.parse::<u16>().unwrap() + 2);
     log::info!("Listening on websocket {}", addr2);
+    
+    let addr_v6 = format!("[::]:{}", port);
+    log::info!("Listening on tcp {}", addr);
+    let addr2_v6 = format!("[::]:{}", port.parse::<u16>().unwrap() + 2);
+    log::info!("Listening on websocket {}", addr2);
+    
     loop {
         log::info!("Start");
         io_loop(
             new_listener(&addr, false).await?,
             new_listener(&addr2, false).await?,
+            new_listener(&addr_v6, false).await?,
+            new_listener(&addr2_v6, false).await?,
             &key,
         )
         .await;
@@ -329,7 +337,7 @@ async fn check_cmd(cmd: &str, limiter: Limiter) -> String {
     res
 }
 
-async fn io_loop(listener: TcpListener, listener2: TcpListener, key: &str) {
+async fn io_loop(listener: TcpListener, listener2: TcpListener,listener_v6: TcpListener, listener2_v6: TcpListener,key: &str) {
     check_params();
     let limiter = <Limiter>::new(unsafe { TOTAL_BANDWIDTH as _ });
     loop {
@@ -358,6 +366,31 @@ async fn io_loop(listener: TcpListener, listener2: TcpListener, key: &str) {
                     }
                 }
             }
+            
+            res = listener_v6.accept() => {
+                match res {
+                    Ok((stream, addr_v6))  => {
+                        stream.set_nodelay(true).ok();
+                        handle_connection(stream, addr_v6, &limiter, key, false).await;
+                    }
+                    Err(err) => {
+                       log::error!("listener_v6.accept failed: {}", err);
+                       break;
+                    }
+                }
+            }
+            res = listener2_v6.accept() => {
+                match res {
+                    Ok((stream, addr_v6))  => {
+                        stream.set_nodelay(true).ok();
+                        handle_connection(stream, addr_v6, &limiter, key, true).await;
+                    }
+                    Err(err) => {
+                       log::error!("listener2_v6.accept failed: {}", err);
+                       break;
+                    }
+                }
+            }
         }
     }
 }
@@ -370,7 +403,7 @@ async fn handle_connection(
     ws: bool,
 ) {
     let ip = addr.ip().to_string();
-    if !ws && ip == "127.0.0.1" {
+    if !ws && (ip == "127.0.0.1" || ip == "::1"){
         let limiter = limiter.clone();
         tokio::spawn(async move {
             let mut stream = stream;

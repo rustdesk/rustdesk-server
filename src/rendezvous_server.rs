@@ -32,12 +32,12 @@ use ipnetwork::Ipv4Network;
 use sodiumoxide::crypto::sign;
 use std::{
     collections::HashMap,
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr,Ipv6Addr, SocketAddr},
     sync::Arc,
     time::Instant,
 };
 const ADDR_127: IpAddr = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
-
+const ADDR_001: IpAddr = IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0,0, 0, 0, 1));
 #[derive(Clone, Debug)]
 enum Data {
     Msg(RendezvousMessage, SocketAddr),
@@ -82,42 +82,52 @@ pub struct RendezvousServer {
 
 enum LoopFailure {
     UdpSocket,
+	UdpSocket_v6,
     Listener3,
     Listener2,
     Listener,
+    Listener3_v6,
+    Listener2_v6,
+    Listener_v6,
 }
 
 impl RendezvousServer {
     #[tokio::main(flavor = "multi_thread")]
-    pub async fn start(port: i32, serial: i32, key: &str, rmem: usize) -> ResultType<()> {
+    pub async fn start(
+        port: i32,
+        serial: i32,
+        key: &str,
+        rmem: usize,
+    ) -> ResultType<()> {
         let (key, sk) = Self::get_server_sk(key);
         let addr = format!("0.0.0.0:{}", port);
         let addr2 = format!("0.0.0.0:{}", port - 1);
         let addr3 = format!("0.0.0.0:{}", port + 2);
+
+        let addr_v6 = format!("[::]:{}", port);
+        let addr2_v6 = format!("[::]:{}", port - 1);
+        let addr3_v6 = format!("[::]:{}", port + 2);
+        
         let pm = PeerMap::new().await?;
         log::info!("serial={}", serial);
         let rendezvous_servers = get_servers(&get_arg("rendezvous-servers"), "rendezvous-servers");
         log::info!("Listening on tcp/udp {}", addr);
         log::info!("Listening on tcp {}, extra port for NAT test", addr2);
         log::info!("Listening on websocket {}", addr3);
+
+        log::info!("Listening on tcp/udp {}", addr_v6);
+        log::info!("Listening on tcp {}, extra port for NAT test", addr2_v6);
+        log::info!("Listening on websocket {}", addr3_v6);
+
         let mut socket = FramedSocket::new_with_buf_size(&addr, rmem).await?;
+        let mut socket_v6 = FramedSocket::new_with_buf_size(&addr_v6, rmem).await?;
+        
         let (tx, mut rx) = mpsc::unbounded_channel::<Data>();
         let software_url = get_arg("software-url");
         let version = hbb_common::get_version_from_url(&software_url);
         if !version.is_empty() {
             log::info!("software_url: {}, version: {}", software_url, version);
         }
-        let mask = get_arg("mask").parse().ok();
-        let local_ip = if mask.is_none() {
-            "".to_owned()
-        } else {
-            get_arg_or(
-                "local-ip",
-                local_ip_address::local_ip()
-                    .map(|x| x.to_string())
-                    .unwrap_or_default(),
-            )
-        };
         let mut rs = Self {
             tcp_punch: Arc::new(Mutex::new(HashMap::new())),
             pm,
@@ -130,18 +140,29 @@ impl RendezvousServer {
                 version,
                 software_url,
                 sk,
-                mask,
-                local_ip,
+                mask: get_arg("mask").parse().ok(),
+                local_ip: get_arg_or(
+                    "local-ip",
+                    local_ip_address::local_ip()
+                        .map(|x| x.to_string())
+                        .unwrap_or_default(),
+                ),
             }),
         };
         log::info!("mask: {:?}", rs.inner.mask);
         log::info!("local-ip: {:?}", rs.inner.local_ip);
         std::env::set_var("PORT_FOR_API", port.to_string());
+
         rs.parse_relay_servers(&get_arg("relay-servers"));
         let pm = rs.pm.clone();
         let mut listener = new_listener(&addr, false).await?;
         let mut listener2 = new_listener(&addr2, false).await?;
         let mut listener3 = new_listener(&addr3, false).await?;
+        
+        let mut listener_v6 = new_listener(&addr_v6, false).await?;
+        let mut listener2_v6 = new_listener(&addr2_v6, false).await?;
+        let mut listener3_v6 = new_listener(&addr3_v6, false).await?;
+
         let test_addr = std::env::var("TEST_HBBS").unwrap_or_default();
         if std::env::var("ALWAYS_USE_RELAY")
             .unwrap_or_default()
@@ -180,6 +201,10 @@ impl RendezvousServer {
                     &mut listener2,
                     &mut listener3,
                     &mut socket,
+                    &mut listener_v6,
+                    &mut listener2_v6,
+                    &mut listener3_v6,
+                    &mut socket_v6,
                     &key,
                 )
                 .await
@@ -200,6 +225,23 @@ impl RendezvousServer {
                     drop(listener3);
                     listener3 = new_listener(&addr3, false).await?;
                 }
+                
+                LoopFailure::UdpSocket_v6 => {
+                    drop(socket_v6);
+                    socket_v6 = FramedSocket::new_with_buf_size(&addr_v6, rmem).await?;
+                }
+                LoopFailure::Listener_v6 => {
+                    drop(listener_v6);
+                    listener_v6 = new_listener(&addr_v6, false).await?;
+                }
+                LoopFailure::Listener2_v6 => {
+                    drop(listener2_v6);
+                    listener2_v6 = new_listener(&addr2_v6, false).await?;
+                }
+                LoopFailure::Listener3_v6 => {
+                    drop(listener3_v6);
+                    listener3_v6 = new_listener(&addr3_v6, false).await?;
+                }
             }
         }
     }
@@ -211,6 +253,10 @@ impl RendezvousServer {
         listener2: &mut TcpListener,
         listener3: &mut TcpListener,
         socket: &mut FramedSocket,
+        listener_v6: &mut TcpListener,
+        listener2_v6: &mut TcpListener,
+        listener3_v6: &mut TcpListener,
+        socket_v6: &mut FramedSocket,
         key: &str,
     ) -> LoopFailure {
         let mut timer_check_relay = interval(Duration::from_millis(CHECK_RELAY_TIMEOUT));
@@ -285,6 +331,61 @@ impl RendezvousServer {
                        }
                     }
                 }
+                
+                res = socket_v6.next() => {
+                    match res {
+                        Some(Ok((bytes, addr_v6))) => {
+                            if let Err(err) = self.handle_udp(&bytes, addr_v6.into(), socket, key).await {
+                                log::error!("udp failure: {}", err);
+                                return LoopFailure::UdpSocket_v6;
+                            }
+                        }
+                        Some(Err(err)) => {
+                            log::error!("udp failure: {}", err);
+                            return LoopFailure::UdpSocket_v6;
+                        }
+                        None => {
+                            // unreachable!() ?
+                        }
+                    }
+                }
+                res = listener2_v6.accept() => {
+                    match res {
+                        Ok((stream, addr_v6))  => {
+                            stream.set_nodelay(true).ok();
+                            self.handle_listener2(stream, addr_v6).await;
+                        }
+                        Err(err) => {
+                           log::error!("listener2.accept failed: {}", err);
+                           return LoopFailure::Listener2_v6;
+                        }
+                    }
+                }
+                res = listener3_v6.accept() => {
+                    match res {
+                        Ok((stream, addr_v6))  => {
+                            stream.set_nodelay(true).ok();
+                            self.handle_listener(stream, addr_v6, key, true).await;
+                        }
+                        Err(err) => {
+                           log::error!("listener3.accept failed: {}", err);
+                           return LoopFailure::Listener3_v6;
+                        }
+                    }
+                }
+                res = listener_v6.accept() => {
+                    match res {
+                        Ok((stream, addr_v6)) => {
+                            stream.set_nodelay(true).ok();
+                            self.handle_listener(stream, addr_v6, key, false).await;
+                        }
+                       Err(err) => {
+                           log::error!("listener.accept failed: {}", err);
+                           return LoopFailure::Listener_v6;
+                       }
+                    }
+                }
+                
             }
         }
     }
@@ -421,7 +522,7 @@ impl RendezvousServer {
                     self.handle_local_addr(la, addr, Some(socket)).await?;
                 }
                 Some(rendezvous_message::Union::configure_update(mut cu)) => {
-                    if addr.ip() == ADDR_127 && cu.serial > self.inner.serial {
+                    if (addr.ip() == ADDR_127 || addr.ip() == ADDR_001) && cu.serial > self.inner.serial {
                         let mut inner: Inner = (*self.inner).clone();
                         inner.serial = cu.serial;
                         self.inner = Arc::new(inner);
@@ -499,13 +600,9 @@ impl RendezvousServer {
                         rr.set_pk(pk);
                     }
                     let mut msg_out = RendezvousMessage::new();
-                    if !rr.relay_server.is_empty() {
-                        if self.is_lan(addr_b) {
-                            // https://github.com/rustdesk/rustdesk-server/issues/24
-                            rr.relay_server = self.inner.local_ip.clone();
-                        } else if rr.relay_server == self.inner.local_ip {
-                            rr.relay_server = self.get_relay_server(addr.ip(), addr_b.ip());
-                        }
+                    if self.is_lan(addr_b) {
+                        // https://github.com/rustdesk/rustdesk-server/issues/24
+                        rr.relay_server = self.inner.local_ip.clone();
                     }
                     msg_out.set_relay_response(rr);
                     allow_err!(self.send_to_tcp_sync(msg_out, addr_b).await);
@@ -560,7 +657,7 @@ impl RendezvousServer {
                 ip != old.socket_addr.ip()
             } else {
                 ip.to_string() != old.info.ip
-            } && ip != ADDR_127;
+            } && (ip != ADDR_127 || ip != ADDR_001);
             let request_pk = old.pk.is_empty() || ip_change;
             if !request_pk {
                 old.socket_addr = socket_addr;
@@ -664,7 +761,6 @@ impl RendezvousServer {
         key: &str,
         ws: bool,
     ) -> ResultType<(RendezvousMessage, Option<SocketAddr>)> {
-        let mut ph = ph;
         if !key.is_empty() && ph.licence_key != key {
             let mut msg_out = RendezvousMessage::new();
             msg_out.set_punch_hole_response(PunchHoleResponse {
@@ -695,13 +791,20 @@ impl RendezvousServer {
             let mut msg_out = RendezvousMessage::new();
             let peer_is_lan = self.is_lan(peer_addr);
             let is_lan = self.is_lan(addr);
-            let mut relay_server = self.get_relay_server(addr.ip(), peer_addr.ip());
             if unsafe { ALWAYS_USE_RELAY } || (peer_is_lan ^ is_lan) {
-                if peer_is_lan {
+                let relay_server = if peer_is_lan {
                     // https://github.com/rustdesk/rustdesk-server/issues/24
-                    relay_server = self.inner.local_ip.clone()
+                    self.inner.local_ip.clone()
+                } else {
+                    self.get_relay_server(addr.ip(), peer_addr.ip())
+                };
+                if !relay_server.is_empty() {
+                    msg_out.set_request_relay(RequestRelay {
+                        relay_server,
+                        ..Default::default()
+                    });
+                    return Ok((msg_out, Some(peer_addr)));
                 }
-                ph.nat_type = NatType::SYMMETRIC.into(); // will force relay
             }
             let same_intranet = !ws
                 && match peer_addr {
@@ -715,6 +818,7 @@ impl RendezvousServer {
                     },
                 };
             let socket_addr = AddrMangle::encode(addr);
+            let relay_server = self.get_relay_server(addr.ip(), peer_addr.ip());
             if same_intranet {
                 log::debug!(
                     "Fetch local addr {:?} {:?} request from {:?}",
@@ -1042,12 +1146,21 @@ impl RendezvousServer {
         });
     }
 
-    async fn handle_listener(&self, stream: TcpStream, addr: SocketAddr, key: &str, ws: bool) {
+    async fn handle_listener(
+        &self,
+        stream: TcpStream,
+        addr: SocketAddr,
+        key: &str,
+        ws: bool,
+    ) {
         log::debug!("Tcp connection from {:?}, ws: {}", addr, ws);
         let mut rs = self.clone();
         let key = key.to_owned();
         tokio::spawn(async move {
-            allow_err!(rs.handle_listener_inner(stream, addr, &key, ws).await);
+            allow_err!(
+                rs.handle_listener_inner(stream, addr, &key, ws)
+                    .await
+            );
         });
     }
 
@@ -1067,7 +1180,10 @@ impl RendezvousServer {
             while let Ok(Some(Ok(msg))) = timeout(30_000, b.next()).await {
                 match msg {
                     tungstenite::Message::Binary(bytes) => {
-                        if !self.handle_tcp(&bytes, &mut sink, addr, key, ws).await {
+                        if !self
+                            .handle_tcp(&bytes, &mut sink, addr, key, ws)
+                            .await
+                        {
                             break;
                         }
                     }
@@ -1078,7 +1194,10 @@ impl RendezvousServer {
             let (a, mut b) = Framed::new(stream, BytesCodec::new()).split();
             sink = Some(Sink::TcpStream(a));
             while let Ok(Some(Ok(bytes))) = timeout(30_000, b.next()).await {
-                if !self.handle_tcp(&bytes, &mut sink, addr, key, ws).await {
+                if !self
+                    .handle_tcp(&bytes, &mut sink, addr, key, ws)
+                    .await
+                {
                     break;
                 }
             }
