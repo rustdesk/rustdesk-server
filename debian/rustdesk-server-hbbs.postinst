@@ -1,0 +1,24 @@
+#!/bin/sh
+set -e
+
+SERVICE=rustdesk-hbbs.service
+
+case "$1" in
+    configure|abort-upgrade|abort-deconfigure|abort-remove)
+      mkdir -p /var/lib/rustdesk-server/
+	  deb-systemd-helper unmask "${SERVICE}" >/dev/null || true
+	  if deb-systemd-helper --quiet was-enabled "${SERVICE}"; then
+	  	deb-systemd-invoke enable "${SERVICE}" >/dev/null || true
+	  else
+	  	deb-systemd-invoke update-state "${SERVICE}" >/dev/null || true
+	  fi
+	  systemctl --system daemon-reload >/dev/null || true
+	  if [ -n "$2" ]; then
+		deb-systemd-invoke restart "${SERVICE}" >/dev/null || true
+	  else
+		deb-systemd-invoke start "${SERVICE}" >/dev/null || true
+	  fi
+    ;;
+esac
+
+exit 0
