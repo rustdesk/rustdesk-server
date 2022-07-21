@@ -1,14 +1,17 @@
+use hbb_common::{bail, ResultType};
 use sodiumoxide::crypto::sign;
 use std::env;
 use std::process;
 use std::str;
 
 fn print_help() {
-    println!("Usage:");
-    println!("  rustdesk-util [command]\n");
-    println!("Available Commands:");
-    println!("  genkeypair                                   Generate a new keypair");
-    println!("  validatekeypair [public key] [secret key]    Validate an existing keypair");
+    println!(
+        "Usage:
+    rustdesk-util [command]\n
+Available Commands:
+    genkeypair                                   Generate a new keypair
+    validatekeypair [public key] [secret key]    Validate an existing keypair"
+    );
     process::exit(0x0001);
 }
 
@@ -25,65 +28,44 @@ fn gen_keypair() {
     println!("Secret Key:  {secret_key}");
 }
 
-fn validate_keypair(pk: &str, sk: &str) {
+fn validate_keypair(pk: &str, sk: &str) -> ResultType<()> {
     let sk1 = base64::decode(&sk);
-    match sk1 {
-        Ok(_) => {}
-        Err(_) => {
-            println!("Invalid secret key");
-            process::exit(0x0001);
-        }
+    if sk1.is_err() {
+        bail!("Invalid secret key");
     }
     let sk1 = sk1.unwrap();
 
     let secret_key = sign::SecretKey::from_slice(sk1.as_slice());
-    match secret_key {
-        Some(_) => {}
-        None => {
-            println!("Invalid Secret key");
-            process::exit(0x0001);
-        }
+    if secret_key.is_none() {
+        bail!("Invalid Secret key");
     }
     let secret_key = secret_key.unwrap();
 
     let pk1 = base64::decode(&pk);
-    match pk1 {
-        Ok(_) => {}
-        Err(_) => {
-            println!("Invalid public key");
-            process::exit(0x0001);
-        }
+    if pk1.is_err() {
+        bail!("Invalid public key");
     }
     let pk1 = pk1.unwrap();
 
     let public_key = sign::PublicKey::from_slice(pk1.as_slice());
-    match public_key {
-        Some(_) => {}
-        None => {
-            println!("Invalid Public key");
-            process::exit(0x0001);
-        }
+    if public_key.is_none() {
+        bail!("Invalid Public key");
     }
     let public_key = public_key.unwrap();
 
     let random_data_to_test = b"This is meh.";
     let signed_data = sign::sign(random_data_to_test, &secret_key);
     let verified_data = sign::verify(&signed_data, &public_key);
-    match verified_data {
-        Ok(_) => {}
-        Err(_) => {
-            println!("Key pair is INVALID");
-            process::exit(0x0001);
-        }
+    if verified_data.is_err() {
+        bail!("Key pair is INVALID");
     }
     let verified_data = verified_data.unwrap();
 
-    if random_data_to_test == &verified_data[..] {
-        println!("Key pair is VALID");
-    } else {
-        println!("Key pair is INVALID");
-        process::exit(0x0001);
+    if random_data_to_test != &verified_data[..] {
+        bail!("Key pair is INVALID");
     }
+
+    Ok(())
 }
 
 fn main() {
@@ -99,7 +81,12 @@ fn main() {
             if args.len() <= 3 {
                 error_then_help("You must supply both the public and the secret key");
             }
-            validate_keypair(args[2].as_str(), args[3].as_str());
+            let res = validate_keypair(args[2].as_str(), args[3].as_str());
+            if let Err(e) = res {
+                println!("{}", e);
+                process::exit(0x0001);
+            }
+            println!("Key pair is VALID");
         }
         _ => print_help(),
     }
