@@ -290,3 +290,55 @@ jobs:
           tags: |
             ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ matrix.job.tag }}
           labels: ${{ steps.meta.outputs.labels }}
+
+
+  deb-package:
+
+    name: debian package - ${{ matrix.job.name }}
+    needs: build
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        job:
+          - { name: "amd64",   debian_platform: "amd64",   crossbuild_package: "" }
+          - { name: "arm64v8", debian_platform: "arm64",   crossbuild_package: "crossbuild-essential-arm64" }
+          - { name: "armv7",   debian_platform: "armhf",   crossbuild_package: "crossbuild-essential-armhf" }
+          - { name: "i386",    debian_platform: "i386",    crossbuild_package: "crossbuild-essential-i386" }
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v3
+        
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+
+      - name: Create packaging env
+        run: |
+          sudo apt update
+          DEBIAN_FRONTEND=noninteractive sudo apt install -y devscripts build-essential debhelper pkg-config ${{ matrix.job.crossbuild_package }}
+          mkdir -p debian-build/${{ matrix.job.name }}/bin
+
+      - name: Download binaries
+        uses: actions/download-artifact@v3
+        with:
+          name: binaries-${{ matrix.job.name }}
+          path: debian-build/${{ matrix.job.name }}/bin
+
+      - name: Build package for ${{ matrix.job.name }} arch
+        run: |
+          chmod -v a+x debian-build/${{ matrix.job.name }}/bin/*
+          cp -vr debian systemd debian-build/${{ matrix.job.name }}/
+          cat debian/control.tpl | sed 's/{{ ARCH }}/${{ matrix.job.debian_platform }}/' > debian-build/${{ matrix.job.name }}/debian/control
+          cd debian-build/${{ matrix.job.name }}/
+          debuild -i -us -uc -b -a${{ matrix.job.debian_platform }}
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          draft: true
+          files: |
+            debian-build/rustdesk-server-hbbr_*_${{ matrix.job.debian_platform }}.deb
+            debian-build/rustdesk-server-hbbs_*_${{ matrix.job.debian_platform }}.deb
+#            debian-build/rustdesk-server-utils_*_${{ matrix.job.debian_platform }}.deb

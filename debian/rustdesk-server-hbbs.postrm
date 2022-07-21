@@ -1,0 +1,18 @@
+#!/bin/sh
+set -e
+
+SERVICE=rustdesk-hbbs.service
+
+systemctl --system daemon-reload >/dev/null || true
+
+if [ "$1" = "purge" ]; then
+	rm -rf /var/lib/rustdesk-server/
+	deb-systemd-helper purge "${SERVICE}" >/dev/null || true
+	deb-systemd-helper unmask "${SERVICE}" >/dev/null || true
+fi
+
+if [ "$1" = "remove" ]; then
+	deb-systemd-helper mask "${SERVICE}" >/dev/null || true
+fi
+
+exit 0
