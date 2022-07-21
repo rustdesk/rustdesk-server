@@ -4,6 +4,7 @@ use hbb_common::{
     log,
     rendezvous_proto::*,
     tokio::sync::{Mutex, RwLock},
+    bytes::Bytes,
     ResultType,
 };
 use serde_derive::{Deserialize, Serialize};
@@ -25,13 +26,12 @@ pub(crate) struct PeerInfo {
     pub(crate) ip: String,
 }
 
-#[derive(Clone, Debug)]
 pub(crate) struct Peer {
     pub(crate) socket_addr: SocketAddr,
     pub(crate) last_reg_time: Instant,
     pub(crate) guid: Vec<u8>,
-    pub(crate) uuid: Vec<u8>,
-    pub(crate) pk: Vec<u8>,
+    pub(crate) uuid: Bytes,
+    pub(crate) pk: Bytes,
     pub(crate) user: Option<Vec<u8>>,
     pub(crate) info: PeerInfo,
     pub(crate) disabled: bool,
@@ -44,8 +44,8 @@ impl Default for Peer {
             socket_addr: "0.0.0.0:0".parse().unwrap(),
             last_reg_time: get_expired_time(),
             guid: Vec::new(),
-            uuid: Vec::new(),
-            pk: Vec::new(),
+            uuid: Bytes::new(),
+            pk: Bytes::new(),
             info: Default::default(),
             user: None,
             disabled: false,
@@ -93,8 +93,8 @@ impl PeerMap {
         id: String,
         peer: LockPeer,
         addr: SocketAddr,
-        uuid: Vec<u8>,
-        pk: Vec<u8>,
+        uuid: Bytes,
+        pk: Bytes,
         ip: String,
     ) -> register_pk_response::Result {
         log::info!("update_pk {} {:?} {:?} {:?}", id, addr, uuid, pk);
@@ -139,8 +139,8 @@ impl PeerMap {
             if let Ok(Some(v)) = self.db.get_peer(id).await {
                 let peer = Peer {
                     guid: v.guid,
-                    uuid: v.uuid,
-                    pk: v.pk,
+                    uuid: v.uuid.into(),
+                    pk: v.pk.into(),
                     user: v.user,
                     info: serde_json::from_str::<PeerInfo>(&v.info).unwrap_or_default(),
                     disabled: v.status == Some(0),
@@ -176,10 +176,5 @@ impl PeerMap {
     #[inline]
     pub(crate) async fn is_in_memory(&self, id: &str) -> bool {
         self.map.read().await.contains_key(id)
-    }
-
-    #[inline]
-    pub(crate) async fn remove(&self, id: &str) {
-        self.map.write().await.remove(id);
     }
 }

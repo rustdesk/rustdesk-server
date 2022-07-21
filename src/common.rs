@@ -3,10 +3,9 @@ use hbb_common::{anyhow::Context, log, ResultType};
 use ini::Ini;
 use sodiumoxide::crypto::sign;
 use std::{
-    collections::HashMap,
     io::prelude::*,
     io::Read,
-    net::{IpAddr, SocketAddr},
+    net::SocketAddr,
     time::{Instant, SystemTime},
 };
 

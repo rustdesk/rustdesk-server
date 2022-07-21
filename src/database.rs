@@ -8,9 +8,7 @@ use std::{ops::DerefMut, str::FromStr};
 //use sqlx::postgres::PgPoolOptions;
 //use sqlx::mysql::MySqlPoolOptions;
 
-pub(crate) type DB = sqlx::Sqlite;
 pub(crate) type MapValue = serde_json::map::Map<String, Value>;
-pub(crate) type MapStr = std::collections::HashMap<String, String>;
 type Pool = deadpool::managed::Pool<DbPool>;
 
 pub struct DbPool {
@@ -107,13 +105,6 @@ impl Database {
         .await?)
     }
 
-    pub async fn get_peer_id(&self, guid: &[u8]) -> ResultType<Option<String>> {
-        Ok(sqlx::query!("select id from peer where guid = ?", guid)
-            .fetch_optional(self.pool.get().await?.deref_mut())
-            .await?
-            .map(|x| x.id))
-    }
-
     #[inline]
     pub async fn get_conn(&self) -> ResultType<deadpool::managed::Object<DbPool>> {
         Ok(self.pool.get().await?)
@@ -135,8 +126,8 @@ impl Database {
     pub async fn insert_peer(
         &self,
         id: &str,
-        uuid: &Vec<u8>,
-        pk: &Vec<u8>,
+        uuid: &[u8],
+        pk: &[u8],
         info: &str,
     ) -> ResultType<Vec<u8>> {
         let guid = uuid::Uuid::new_v4().as_bytes().to_vec();
@@ -157,7 +148,7 @@ impl Database {
         &self,
         guid: &Vec<u8>,
         id: &str,
-        pk: &Vec<u8>,
+        pk: &[u8],
         info: &str,
     ) -> ResultType<()> {
         sqlx::query!(
@@ -207,13 +198,6 @@ mod tests {
         }
         hbb_common::futures::future::join_all(jobs).await;
     }
-}
-
-#[inline]
-pub fn guid2str(guid: &Vec<u8>) -> String {
-    let mut bytes = [0u8; 16];
-    bytes[..].copy_from_slice(&guid);
-    uuid::Uuid::from_bytes(bytes).to_string()
 }
 
 pub(crate) fn get_str(v: &Value) -> Option<&str> {
