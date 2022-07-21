@@ -19,9 +19,9 @@ Description: RustDesk server
  Self-host your own RustDesk server, it is free and open source.
  This package contains the RustDesk relay server.
 
-# Package: rustdesk-server-utils
-# Architecture: {{ ARCH }}
-# Depends: ${misc:Depends}
-# Description: RustDesk server
-#  Self-host your own RustDesk server, it is free and open source.
-#  This package contains the rustdesk-utils binary.
+Package: rustdesk-server-utils
+Architecture: {{ ARCH }}
+Depends: ${misc:Depends}
+Description: RustDesk server
+ Self-host your own RustDesk server, it is free and open source.
+ This package contains the rustdesk-utils binary.
