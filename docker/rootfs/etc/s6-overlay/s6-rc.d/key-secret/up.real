@@ -1,0 +1,35 @@
+#!/command/with-contenv sh
+
+if [ ! -d /data ] ; then
+  mkdir /data
+fi
+
+# normal docker secrets
+if [ ! -f /data/id_ed25519.pub ] && [ -r /run/secrets/key_pub ] ; then
+  cp /run/secrets/key_pub /data/id_ed25519.pub
+  echo "Public key created from secret"
+fi
+
+if [ ! -f /data/id_ed25519 ] && [ -r /run/secrets/key_priv ] ; then
+  cp /run/secrets/key_priv /data/id_ed25519
+  echo "Private key created from secret"
+fi
+
+# ENV variables
+if [ ! -f /data/id_ed25519.pub ] && [ ! "$KEY_PUB" = "" ] ; then
+  echo -n "$KEY_PUB" > /data/id_ed25519.pub
+  echo "Public key created from ENV variable"
+fi
+
+if [ ! -f /data/id_ed25519 ] && [ ! "$KEY_PRIV" = "" ] ; then
+  echo -n "$KEY_PRIV" > /data/id_ed25519
+  echo "Private key created from ENV variable"
+fi
+
+# fix perms
+if [ -f /data/id_ed25519.pub ] ; then
+  chmod 600 /data/id_ed25519.pub 
+fi
+if [ -f /data/id_ed25519 ] ; then
+  chmod 600 /data/id_ed25519
+fi
