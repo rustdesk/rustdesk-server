@@ -276,3 +276,14 @@ secrets:
   key_priv:
     file: secrets/id_ed25519      
 ```
+
+## .deb packages
+
+.deb packages are available for each binary, you can find them in the [releases](https://github.com/rustdesk/rustdesk-server/releases).
+These packages are meant for the following distributions:
+
+- Ubuntu 22.04 LTS
+- Ubuntu 20.04 LTS
+- Ubuntu 18.04 LTS
+
+Debian is currently not supported.
