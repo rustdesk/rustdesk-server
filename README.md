@@ -185,6 +185,8 @@ We use these environment variables:
 You can obviously keep the key pair in a docker volume, but the best practices tells you to not write the keys on the filesystem; so we provide a couple of options.
 
 On container startup, the presence of the keypair is checked (`/data/id_ed25519.pub` and `/data/id_ed25519`) and if one of these keys doesn't exist, it's recreated from ENV variables or docker secrets.
+Then the validity of the keypair is checked: if public and private keys doesn't match, the container will stop.
+If you provide no keys, `hbbs` will generate one for you, and it'll place it in the default location.
 
 #### Use ENV to store the key pair
 
