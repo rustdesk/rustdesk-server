@@ -26,10 +26,33 @@ if [ ! -f /data/id_ed25519 ] && [ ! "$KEY_PRIV" = "" ] ; then
   echo "Private key created from ENV variable"
 fi
 
-# fix perms
-if [ -f /data/id_ed25519.pub ] ; then
-  chmod 600 /data/id_ed25519.pub 
+# check if both keys provided
+if [ -f /data/id_ed25519.pub ] && [ ! -f /data/id_ed25519 ] ; then
+  echo "Private key missing."
+  echo "You must provide BOTH the private and the public key."
+  /run/s6/basedir/bin/halt
+  exit 1
 fi
-if [ -f /data/id_ed25519 ] ; then
-  chmod 600 /data/id_ed25519
+
+if [ ! -f /data/id_ed25519.pub ] && [ -f /data/id_ed25519 ] ; then
+  echo "Public key missing."
+  echo "You must provide BOTH the private and the public key."
+  /run/s6/basedir/bin/halt
+  exit 1
 fi
+
+# here we have either no keys or both
+
+# if we have both keys, we fix permissions and ownership
+# and check for keypair validation
+if [ -f /data/id_ed25519.pub ] && [ -f /data/id_ed25519 ] ; then
+  chmod 0600 /data/id_ed25519.pub /data/id_ed25519
+  chown root:root /data/id_ed25519.pub /data/id_ed25519
+  /usr/bin/rustdesk-utils validatekeypair "$(cat /data/id_ed25519.pub)" "$(cat /data/id_ed25519)" || {
+    echo "Key pair not valid"
+    /run/s6/basedir/bin/halt
+    exit 1
+  }
+fi
+
+# if we have no keypair, hbbs will generate one
