@@ -287,5 +287,5 @@ These packages are meant for the following distributions:
 - Ubuntu 22.04 LTS
 - Ubuntu 20.04 LTS
 - Ubuntu 18.04 LTS
-
-Debian is currently not supported.
+- Debian 11 bullseye
+- Debian 10 buster
