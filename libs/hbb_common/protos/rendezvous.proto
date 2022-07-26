@@ -154,8 +154,7 @@ message OnlineRequest {
 }
 
 message OnlineResponse {
-  repeated string onlines = 1;
-  repeated string offlines = 2;
+  bytes states = 1;
 }
 
 message RendezvousMessage {
