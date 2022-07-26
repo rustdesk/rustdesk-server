@@ -757,6 +757,40 @@ impl RendezvousServer {
     }
 
     #[inline]
+    async fn handle_online_request(
+        &mut self,
+        stream: &mut FramedStream,
+        peers: Vec<String>,
+    ) -> ResultType<()> {
+        let mut onlines = Vec::new();
+        for peer_id in &peers {
+            if let Some(peer) = self.pm.get_in_memory(&peer_id).await {
+                let (elapsed, _) = {
+                    let r = peer.read().await;
+                    (r.last_reg_time.elapsed().as_millis() as i32, r.socket_addr)
+                };
+                if elapsed < REG_TIMEOUT {
+                    onlines.push(peer_id.clone());
+                }
+            }
+        }
+        let offlines = peers
+            .into_iter()
+            .filter(|p| onlines.iter().position(|r| r == p).is_none())
+            .collect::<Vec<_>>();
+
+        let mut msg_out = RendezvousMessage::new();
+        msg_out.set_online_response(OnlineResponse {
+            onlines,
+            offlines,
+            ..Default::default()
+        });
+        stream.send(&msg_out).await?;
+
+        Ok(())
+    }
+
+    #[inline]
     async fn send_to_tcp(&mut self, msg: RendezvousMessage, addr: SocketAddr) {
         let mut tcp = self.tcp_punch.lock().await.remove(&addr);
         tokio::spawn(async move {
@@ -1014,8 +1048,8 @@ impl RendezvousServer {
     }
 
     async fn handle_listener2(&self, stream: TcpStream, addr: SocketAddr) {
+        let mut rs = self.clone();
         if addr.ip().to_string() == "127.0.0.1" {
-            let rs = self.clone();
             tokio::spawn(async move {
                 let mut stream = stream;
                 let mut buffer = [0; 64];
@@ -1033,13 +1067,20 @@ impl RendezvousServer {
             let mut stream = stream;
             if let Some(Ok(bytes)) = stream.next_timeout(30_000).await {
                 if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(&bytes) {
-                    if let Some(rendezvous_message::Union::TestNatRequest(_)) = msg_in.union {
-                        let mut msg_out = RendezvousMessage::new();
-                        msg_out.set_test_nat_response(TestNatResponse {
-                            port: addr.port() as _,
-                            ..Default::default()
-                        });
-                        stream.send(&msg_out).await.ok();
+                    match msg_in.union {
+                        Some(rendezvous_message::Union::TestNatRequest(_)) => {
+                            let mut msg_out = RendezvousMessage::new();
+                            msg_out.set_test_nat_response(TestNatResponse {
+                                port: addr.port() as _,
+                                ..Default::default()
+                            });
+                            stream.send(&msg_out).await.ok();
+                        }
+                        Some(rendezvous_message::Union::OnlineRequest(or)) => {
+                            allow_err!(rs.handle_online_request(&mut stream, or.peers).await);
+                        }
+                        _ => {
+                        }
                     }
                 }
             }

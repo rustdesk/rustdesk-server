@@ -5,3 +5,4 @@ debian-build
 debian/.debhelper
 debian/debhelper-build-stamp
 .DS_Store
+.vscode
