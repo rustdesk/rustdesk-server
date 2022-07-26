@@ -21,3 +21,5 @@ Add any other context about the feature request here.
 
 **Notes**
  - Please write in english only. If you provide some images in different languages, you're required to write a translation in english.
+ - In any case, **NEVER** put here the content if your `id_ed25519` file
+ 
