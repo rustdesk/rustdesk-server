@@ -16,10 +16,11 @@ Self-host your own RustDesk server, it is free and open source.
 cargo build --release
 ```
 
-Two executables will be generated in target/release.
+Three executables will be generated in target/release.
 
 - hbbs - RustDesk ID/Rendezvous server
 - hbbr - RustDesk relay server
+- rustdesk-utils - RustDesk CLI utilities
 
 You can find updated binaries on the [releases](https://github.com/rustdesk/rustdesk-server/releases) page.
 
@@ -31,7 +32,7 @@ Docker images are automatically generated and published on every github release.
 
 ### Classic image
 
-These images are build against `ubuntu-20.04` with the only addition of the binaries (both hbbr and hbbs). They're available on [Docker hub](https://hub.docker.com/r/rustdesk/rustdesk-server/) with these tags:
+These images are build against `ubuntu-20.04` with the only addition of the main binaries (`hbbr` and `hbbs`). They're available on [Docker hub](https://hub.docker.com/r/rustdesk/rustdesk-server/) with these tags:
 
 | architecture | image:tag |
 | --- | --- |
@@ -41,15 +42,15 @@ These images are build against `ubuntu-20.04` with the only addition of the bina
 You can start these images directly with `docker run` with these commands:
 
 ```bash
-docker run --name hbbs --net=host -v "$PWD:/root" -d rustdesk/rustdesk-server:latest hbbs -r <relay-server-ip[:port]> 
-docker run --name hbbr --net=host -v "$PWD:/root" -d rustdesk/rustdesk-server:latest hbbr 
+docker run --name hbbs --net=host -v "$PWD/data:/root" -d rustdesk/rustdesk-server:latest hbbs -r <relay-server-ip[:port]> 
+docker run --name hbbr --net=host -v "$PWD/data:/root" -d rustdesk/rustdesk-server:latest hbbr 
 ```
 
 or without --net=host, but P2P direct connection can not work.
 
 ```bash
-docker run --name hbbs -p 21115:21115 -p 21116:21116 -p 21116:21116/udp -p 21118:21118 -v "$PWD:/root" -d rustdesk/rustdesk-server:latest hbbs -r <relay-server-ip[:port]> 
-docker run --name hbbr -p 21117:21117 -p 21119:21119 -v "$PWD:/root" -d rustdesk/rustdesk-server:latest hbbr 
+docker run --name hbbs -p 21115:21115 -p 21116:21116 -p 21116:21116/udp -p 21118:21118 -v "$PWD/data:/root" -d rustdesk/rustdesk-server:latest hbbs -r <relay-server-ip[:port]> 
+docker run --name hbbr -p 21117:21117 -p 21119:21119 -v "$PWD/data:/root" -d rustdesk/rustdesk-server:latest hbbr 
 ```
 
 The `relay-server-ip` parameter is the IP address (or dns name) of the server running these containers. The **optional** `port` parameter has to be used if you use a port different than **21117** for `hbbr`.
@@ -74,7 +75,7 @@ services:
     image: rustdesk/rustdesk-server:latest
     command: hbbs -r rustdesk.example.com:21117
     volumes:
-      - ./hbbs:/root
+      - ./data:/root
     networks:
       - rustdesk-net
     depends_on:
@@ -89,7 +90,7 @@ services:
     image: rustdesk/rustdesk-server:latest
     command: hbbr
     volumes:
-      - ./hbbr:/root
+      - ./data:/root
     networks:
       - rustdesk-net
     restart: unless-stopped
@@ -279,9 +280,32 @@ secrets:
     file: secrets/id_ed25519      
 ```
 
+## How to create a keypair
+
+A keypair is needed for encryption; you can provide it, as explained before, but you need a way to create one.
+
+You can use this command to generate a keypair:
+
+```bash
+/usr/bin/rustdesk-utils genkeypair
+```
+
+If you don't have (or don't want) the `rustdesk-utils` package installed on your system, you can invoke the same command with docker:
+
+```bash
+docker run --rm --entrypoint /usr/bin/rustdesk-utils  rustdesk/rustdesk-server-s6:latest genkeypair
+```
+
+The output will be something like this:
+
+```text
+Public Key:  8BLLhtzUBU/XKAH4mep3p+IX4DSApe7qbAwNH9nv4yA=
+Secret Key:  egAVd44u33ZEUIDTtksGcHeVeAwywarEdHmf99KM5ajwEsuG3NQFT9coAfiZ6nen4hfgNICl7upsDA0f2e/jIA==
+```
+
 ## .deb packages
 
-.deb packages are available for each binary, you can find them in the [releases](https://github.com/rustdesk/rustdesk-server/releases).
+Separate .deb packages are available for each binary, you can find them in the [releases](https://github.com/rustdesk/rustdesk-server/releases).
 These packages are meant for the following distributions:
 
 - Ubuntu 22.04 LTS
