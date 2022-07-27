@@ -75,45 +75,34 @@ jobs:
     name: Github release
     needs: build
     runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        job:
+          - { name: "amd64" }
+          - { name: "arm64v8" }
+          - { name: "armv7" }
+          - { name: "i386" }
 
     steps:
 
-      - name: Download binaries (amd64)
+      - name: Download binaries (${{ matrix.job.name }})
         uses: actions/download-artifact@v3
         with:
-          name: binaries-amd64
-          path: amd64
+          name: binaries-${{ matrix.job.name }}
+          path: ${{ matrix.job.name }}
 
-      - name: Download binaries (arm64v8)
-        uses: actions/download-artifact@v3
-        with:
-          name: binaries-arm64v8
-          path: arm64v8
+      - name: Pack files (${{ matrix.job.name }})
+        run: |
+          sudo apt update
+          DEBIAN_FRONTEND=noninteractive sudo apt install -y zip
+          zip ${{ matrix.job.name }}/rustdesk-server-linux-${{ matrix.job.name }}.zip ${{ matrix.job.name }}/hbbr ${{ matrix.job.name }}/hbbs ${{ matrix.job.name }}/rustdesk-utils
 
-      - name: Download binaries (armv7)
-        uses: actions/download-artifact@v3
-        with:
-          name: binaries-armv7
-          path: armv7
-
-      - name: Download binaries (i386)
-        uses: actions/download-artifact@v3
-        with:
-          name: binaries-i386
-          path: i386
-
-      - name: Rename files
-        run: for arch in amd64 arm64v8 armv7 i386 ; do for b in hbbr hbbs rustdesk-utils ; do mv -v ${arch}/${b} ${arch}/${b}-${arch} ; done ; done 
-
-      - name: Create Release
+      - name: Create Release (${{ matrix.job.name }})
         uses: softprops/action-gh-release@v1
         with:
           draft: true
-          files: |
-            amd64/*
-            arm64v8/*
-            armv7/*
-            i386/*
+          files: ${{ matrix.job.name }}/rustdesk-server-linux-${{ matrix.job.name }}.zip
             
   # docker build and push of single-arch images
   docker:
