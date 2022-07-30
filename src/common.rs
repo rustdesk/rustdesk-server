@@ -118,7 +118,7 @@ pub fn gen_sk(wait: u64) -> (String, Option<sign::SecretKey>) {
         };
         let (mut pk, mut sk) = gen_func();
         for _ in 0..300 {
-            if !pk.contains("/") {
+            if !pk.contains("/") && !pk.contains(":") {
                 break;
             }
             (pk, sk) = gen_func();
