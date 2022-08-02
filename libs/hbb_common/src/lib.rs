@@ -128,22 +128,20 @@ impl AddrMangle {
     }
 
     pub fn decode(bytes: &[u8]) -> SocketAddr {
+        use std::convert::TryInto;
+
         if bytes.len() > 16 {
             if bytes.len() != 18 {
                 return Config::get_any_listen_addr(false);
             }
-            #[allow(invalid_value)]
-            let mut tmp: [u8; 2] = unsafe { std::mem::MaybeUninit::uninit().assume_init() };
-            tmp.copy_from_slice(&bytes[16..]);
+            let tmp: [u8; 2] = bytes[16..].try_into().unwrap();
             let port = u16::from_le_bytes(tmp);
-            #[allow(invalid_value)]
-            let mut tmp: [u8; 16] = unsafe { std::mem::MaybeUninit::uninit().assume_init() };
-            tmp.copy_from_slice(&bytes[..16]);
+            let tmp: [u8; 16] = bytes[..16].try_into().unwrap();
             let ip = std::net::Ipv6Addr::from(tmp);
             return SocketAddr::new(IpAddr::V6(ip), port);
         }
         let mut padded = [0u8; 16];
-        padded[..bytes.len()].copy_from_slice(&bytes);
+        padded[..bytes.len()].copy_from_slice(bytes);
         let number = u128::from_le_bytes(padded);
         let tm = (number >> 17) & (u32::max_value() as u128);
         let ip = (((number >> 49) - tm) as u32).to_le_bytes();
@@ -157,21 +155,9 @@ impl AddrMangle {
 
 pub fn get_version_from_url(url: &str) -> String {
     let n = url.chars().count();
-    let a = url
-        .chars()
-        .rev()
-        .enumerate()
-        .filter(|(_, x)| x == &'-')
-        .next()
-        .map(|(i, _)| i);
+    let a = url.chars().rev().position(|x| x == '-');
     if let Some(a) = a {
-        let b = url
-            .chars()
-            .rev()
-            .enumerate()
-            .filter(|(_, x)| x == &'.')
-            .next()
-            .map(|(i, _)| i);
+        let b = url.chars().rev().position(|x| x == '.');
         if let Some(b) = b {
             if a > b {
                 if url
@@ -196,20 +182,24 @@ pub fn get_version_from_url(url: &str) -> String {
 pub fn gen_version() {
     use std::io::prelude::*;
     let mut file = File::create("./src/version.rs").unwrap();
-    for line in read_lines("Cargo.toml").unwrap() {
-        if let Ok(line) = line {
-            let ab: Vec<&str> = line.split("=").map(|x| x.trim()).collect();
-            if ab.len() == 2 && ab[0] == "version" {
-                file.write_all(format!("pub const VERSION: &str = {};\n", ab[1]).as_bytes())
-                    .ok();
-                break;
-            }
+    for line in read_lines("Cargo.toml").unwrap().flatten() {
+        let ab: Vec<&str> = line.split('=').map(|x| x.trim()).collect();
+        if ab.len() == 2 && ab[0] == "version" {
+            file.write_all(format!("pub const VERSION: &str = {};\n", ab[1]).as_bytes())
+                .ok();
+            break;
         }
     }
     // generate build date
     let build_date = format!("{}", chrono::Local::now().format("%Y-%m-%d %H:%M"));
-    file.write_all(format!("pub const BUILD_DATE: &str = \"{}\";", build_date).as_bytes())
-        .ok();
+    file.write_all(
+        format!(
+            "#[allow(dead_code)]\npub const BUILD_DATE: &str = \"{}\";",
+            build_date
+        )
+        .as_bytes(),
+    )
+    .ok();
     file.sync_all().ok();
 }
 
@@ -229,20 +219,20 @@ pub fn is_valid_custom_id(id: &str) -> bool {
 
 pub fn get_version_number(v: &str) -> i64 {
     let mut n = 0;
-    for x in v.split(".") {
+    for x in v.split('.') {
         n = n * 1000 + x.parse::<i64>().unwrap_or(0);
     }
     n
 }
 
 pub fn get_modified_time(path: &std::path::Path) -> SystemTime {
-    std::fs::metadata(&path)
+    std::fs::metadata(path)
         .map(|m| m.modified().unwrap_or(UNIX_EPOCH))
         .unwrap_or(UNIX_EPOCH)
 }
 
 pub fn get_created_time(path: &std::path::Path) -> SystemTime {
-    std::fs::metadata(&path)
+    std::fs::metadata(path)
         .map(|m| m.created().unwrap_or(UNIX_EPOCH))
         .unwrap_or(UNIX_EPOCH)
 }

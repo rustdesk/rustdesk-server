@@ -3,7 +3,7 @@ fn main() {
     protobuf_codegen::Codegen::new()
         .pure()
         .out_dir("src/protos")
-        .inputs(&["protos/rendezvous.proto", "protos/message.proto"])
+        .inputs(["protos/rendezvous.proto", "protos/message.proto"])
         .include("protos")
         .customize(protobuf_codegen::Customize::default().tokio_bytes(true))
         .run()

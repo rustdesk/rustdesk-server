@@ -11,7 +11,7 @@ use tokio_socks::{IntoTargetAddr, TargetAddr};
 
 pub fn test_if_valid_server(host: &str) -> String {
     let mut host = host.to_owned();
-    if !host.contains(":") {
+    if !host.contains(':') {
         host = format!("{}:{}", host, 0);
     }
 
@@ -34,7 +34,7 @@ pub trait IsResolvedSocketAddr {
 
 impl IsResolvedSocketAddr for SocketAddr {
     fn resolve(&self) -> Option<&SocketAddr> {
-        Some(&self)
+        Some(self)
     }
 }
 
@@ -83,12 +83,12 @@ pub async fn connect_tcp_local<
     if let Some(target) = target.resolve() {
         if let Some(local) = local {
             if local.is_ipv6() && target.is_ipv4() {
-                let target = query_nip_io(&target).await?;
-                return Ok(FramedStream::new(target, Some(local), ms_timeout).await?);
+                let target = query_nip_io(target).await?;
+                return FramedStream::new(target, Some(local), ms_timeout).await;
             }
         }
     }
-    Ok(FramedStream::new(target, local, ms_timeout).await?)
+    FramedStream::new(target, local, ms_timeout).await
 }
 
 #[inline]
@@ -103,15 +103,14 @@ pub fn is_ipv4(target: &TargetAddr<'_>) -> bool {
 pub async fn query_nip_io(addr: &SocketAddr) -> ResultType<SocketAddr> {
     tokio::net::lookup_host(format!("{}.nip.io:{}", addr.ip(), addr.port()))
         .await?
-        .filter(|x| x.is_ipv6())
-        .next()
+        .find(|x| x.is_ipv6())
         .context("Failed to get ipv6 from nip.io")
 }
 
 #[inline]
 pub fn ipv4_to_ipv6(addr: String, ipv4: bool) -> String {
     if !ipv4 && crate::is_ipv4_str(&addr) {
-        if let Some(ip) = addr.split(":").next() {
+        if let Some(ip) = addr.split(':').next() {
             return addr.replace(ip, &format!("{}.nip.io", ip));
         }
     }

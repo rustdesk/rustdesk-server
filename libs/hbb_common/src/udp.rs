@@ -1,5 +1,5 @@
-use crate::{bail, ResultType};
-use anyhow::anyhow;
+use crate::ResultType;
+use anyhow::{anyhow, Context};
 use bytes::{Bytes, BytesMut};
 use futures::{SinkExt, StreamExt};
 use protobuf::Message;
@@ -47,29 +47,30 @@ impl FramedSocket {
         Ok(Self::Direct(UdpFramed::new(socket, BytesCodec::new())))
     }
 
-    #[allow(clippy::never_loop)]
     pub async fn new_reuse<T: std::net::ToSocketAddrs>(addr: T) -> ResultType<Self> {
-        for addr in addr.to_socket_addrs()? {
-            let socket = new_socket(addr, true, 0)?.into_udp_socket();
-            return Ok(Self::Direct(UdpFramed::new(
-                UdpSocket::from_std(socket)?,
-                BytesCodec::new(),
-            )));
-        }
-        bail!("could not resolve to any address");
+        let addr = addr
+            .to_socket_addrs()?
+            .next()
+            .context("could not resolve to any address")?;
+        let socket = new_socket(addr, true, 0)?.into_udp_socket();
+        Ok(Self::Direct(UdpFramed::new(
+            UdpSocket::from_std(socket)?,
+            BytesCodec::new(),
+        )))
     }
 
     pub async fn new_with_buf_size<T: std::net::ToSocketAddrs>(
         addr: T,
         buf_size: usize,
     ) -> ResultType<Self> {
-        for addr in addr.to_socket_addrs()? {
-            return Ok(Self::Direct(UdpFramed::new(
-                UdpSocket::from_std(new_socket(addr, false, buf_size)?.into_udp_socket())?,
-                BytesCodec::new(),
-            )));
-        }
-        bail!("could not resolve to any address");
+        let addr = addr
+            .to_socket_addrs()?
+            .next()
+            .context("could not resolve to any address")?;
+        Ok(Self::Direct(UdpFramed::new(
+            UdpSocket::from_std(new_socket(addr, false, buf_size)?.into_udp_socket())?,
+            BytesCodec::new(),
+        )))
     }
 
     pub async fn new_proxy<'a, 't, P: ToProxyAddrs, T: ToSocketAddrs>(
@@ -104,11 +105,12 @@ impl FramedSocket {
     ) -> ResultType<()> {
         let addr = addr.into_target_addr()?.to_owned();
         let send_data = Bytes::from(msg.write_to_bytes()?);
-        let _ = match self {
-            Self::Direct(f) => match addr {
-                TargetAddr::Ip(addr) => f.send((send_data, addr)).await?,
-                _ => {}
-            },
+        match self {
+            Self::Direct(f) => {
+                if let TargetAddr::Ip(addr) = addr {
+                    f.send((send_data, addr)).await?
+                }
+            }
             Self::ProxySocks(f) => f.send((send_data, addr)).await?,
         };
         Ok(())
@@ -123,11 +125,12 @@ impl FramedSocket {
     ) -> ResultType<()> {
         let addr = addr.into_target_addr()?.to_owned();
 
-        let _ = match self {
-            Self::Direct(f) => match addr {
-                TargetAddr::Ip(addr) => f.send((Bytes::from(msg), addr)).await?,
-                _ => {}
-            },
+        match self {
+            Self::Direct(f) => {
+                if let TargetAddr::Ip(addr) = addr {
+                    f.send((Bytes::from(msg), addr)).await?
+                }
+            }
             Self::ProxySocks(f) => f.send((Bytes::from(msg), addr)).await?,
         };
         Ok(())
