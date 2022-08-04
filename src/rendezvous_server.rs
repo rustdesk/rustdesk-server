@@ -170,37 +170,44 @@ impl RendezvousServer {
                 allow_err!(test_hbbs(test_addr).await);
             });
         };
-        loop {
-            log::info!("Start");
-            match rs
-                .io_loop(
-                    &mut rx,
-                    &mut listener,
-                    &mut listener2,
-                    &mut listener3,
-                    &mut socket,
-                    &key,
-                )
-                .await
-            {
-                LoopFailure::UdpSocket => {
-                    drop(socket);
-                    socket = FramedSocket::new_with_buf_size(&addr, rmem).await?;
-                }
-                LoopFailure::Listener => {
-                    drop(listener);
-                    listener = new_listener(&addr, false).await?;
-                }
-                LoopFailure::Listener2 => {
-                    drop(listener2);
-                    listener2 = new_listener(&addr2, false).await?;
-                }
-                LoopFailure::Listener3 => {
-                    drop(listener3);
-                    listener3 = new_listener(&addr3, false).await?;
+        let main_task = async move {
+            loop {
+                log::info!("Start");
+                match rs
+                    .io_loop(
+                        &mut rx,
+                        &mut listener,
+                        &mut listener2,
+                        &mut listener3,
+                        &mut socket,
+                        &key,
+                    )
+                    .await
+                {
+                    LoopFailure::UdpSocket => {
+                        drop(socket);
+                        socket = FramedSocket::new_with_buf_size(&addr, rmem).await?;
+                    }
+                    LoopFailure::Listener => {
+                        drop(listener);
+                        listener = new_listener(&addr, false).await?;
+                    }
+                    LoopFailure::Listener2 => {
+                        drop(listener2);
+                        listener2 = new_listener(&addr2, false).await?;
+                    }
+                    LoopFailure::Listener3 => {
+                        drop(listener3);
+                        listener3 = new_listener(&addr3, false).await?;
+                    }
                 }
             }
-        }
+        };
+        let listen_signal = listen_signal();
+        tokio::select!(
+            res = main_task => res,
+            res = listen_signal => res,
+        )
     }
 
     async fn io_loop(

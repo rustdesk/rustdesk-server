@@ -565,4 +565,3 @@ pub fn transform_windows_path(entries: &mut Vec<FileEntry>) {
         entry.name = entry.name.replace("\\", "/");
     }
 }
-

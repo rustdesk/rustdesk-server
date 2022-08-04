@@ -1,10 +1,10 @@
 use crate::common::*;
 use crate::database;
 use hbb_common::{
+    bytes::Bytes,
     log,
     rendezvous_proto::*,
     tokio::sync::{Mutex, RwLock},
-    bytes::Bytes,
     ResultType,
 };
 use serde_derive::{Deserialize, Serialize};
