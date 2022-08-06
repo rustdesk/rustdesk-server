@@ -1,8 +1,11 @@
+use dns_lookup::{lookup_addr, lookup_host};
 use hbb_common::{bail, ResultType};
 use sodiumoxide::crypto::sign;
-use std::env;
-use std::process;
-use std::str;
+use std::{
+    env,
+    net::{IpAddr, TcpStream},
+    process, str,
+};
 
 fn print_help() {
     println!(
@@ -10,7 +13,8 @@ fn print_help() {
     rustdesk-util [command]\n
 Available Commands:
     genkeypair                                   Generate a new keypair
-    validatekeypair [public key] [secret key]    Validate an existing keypair"
+    validatekeypair [public key] [secret key]    Validate an existing keypair
+    doctor [rustdesk-server]                     Check for server connection problems"
     );
     process::exit(0x0001);
 }
@@ -68,6 +72,79 @@ fn validate_keypair(pk: &str, sk: &str) -> ResultType<()> {
     Ok(())
 }
 
+fn doctor_tcp(address: std::net::IpAddr, port: &str, desc: &str) {
+    let start = std::time::Instant::now();
+    let conn = format!("{}:{}", address, port);
+    if let Ok(_stream) = TcpStream::connect(conn.as_str()) {
+        let elapsed = std::time::Instant::now().duration_since(start);
+        println!(
+            "TCP Port {} ({}): OK in {} ms",
+            port,
+            desc,
+            elapsed.as_millis()
+        );
+    } else {
+        println!("TCP Port {} ({}): ERROR", port, desc);
+    }
+}
+
+fn doctor_ip(server_ip_address: std::net::IpAddr, server_address: Option<&str>) {
+    println!("\nChecking IP address: {}", server_ip_address);
+    println!("Is IPV4: {}", server_ip_address.is_ipv4());
+    println!("Is IPV6: {}", server_ip_address.is_ipv6());
+
+    // reverse dns lookup
+    // TODO: (check) doesn't seem to do reverse lookup on OSX...
+    let reverse = lookup_addr(&server_ip_address).unwrap();
+    if server_address.is_some() {
+        if reverse == server_address.unwrap() {
+            println!("Reverse DNS lookup: '{}' MATCHES server address", reverse);
+        } else {
+            println!(
+                "Reverse DNS lookup: '{}' DOESN'T MATCH server address '{}'",
+                reverse,
+                server_address.unwrap()
+            );
+        }
+    }
+
+    // TODO: ICMP ping?
+
+    // port check TCP (UDP is hard to check)
+    doctor_tcp(server_ip_address, "21114", "API");
+    doctor_tcp(server_ip_address, "21115", "hbbs extra port for nat test");
+    doctor_tcp(server_ip_address, "21116", "hbbs");
+    doctor_tcp(server_ip_address, "21117", "hbbr tcp");
+    doctor_tcp(server_ip_address, "21118", "hbbs websocket");
+    doctor_tcp(server_ip_address, "21119", "hbbr websocket");
+
+    // TODO: key check
+}
+
+fn doctor(server_address_unclean: &str) {
+    let server_address3 = server_address_unclean.trim();
+    let server_address2 = server_address3.to_lowercase();
+    let server_address = server_address2.as_str();
+    println!("Checking server:  {}\n", server_address);
+    let server_ipaddr = server_address.parse::<IpAddr>();
+    if server_ipaddr.is_err() {
+        // the passed string is not an ip address
+        let ips: Vec<std::net::IpAddr> = lookup_host(server_address).unwrap();
+        println!("Found {} IP addresses: ", ips.iter().count());
+
+        for ip in ips.iter() {
+            println!(" - {}", ip);
+        }
+
+        for ip in ips.iter() {
+            doctor_ip(*ip, Some(server_address));
+        }
+    } else {
+        // user requested an ip address
+        doctor_ip(server_ipaddr.unwrap(), None);
+    }
+}
+
 fn main() {
     let args: Vec<_> = env::args().collect();
     if args.len() <= 1 {
@@ -87,6 +164,12 @@ fn main() {
                 process::exit(0x0001);
             }
             println!("Key pair is VALID");
+        }
+        "doctor" => {
+            if args.len() <= 2 {
+                error_then_help("You must supply the rustdesk-server address");
+            }
+            doctor(args[2].as_str());
         }
         _ => print_help(),
     }
