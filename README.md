@@ -180,6 +180,7 @@ We use these environment variables:
 | DB_URL | yes | path for database file |
 | KEY_PUB | yes | public part of the key pair |
 | KEY_PRIV | yes | private part of the key pair |
+| RUST_LOG | yes | set debug level (error|warn|info|debug|trace) |
 
 ### Secret management in S6-overlay based images
 
