@@ -132,13 +132,10 @@ fn doctor(server_address_unclean: &str) {
         let ips: Vec<std::net::IpAddr> = lookup_host(server_address).unwrap();
         println!("Found {} IP addresses: ", ips.iter().count());
 
-        for ip in ips.iter() {
-            println!(" - {}", ip);
-        }
+        ips.iter().for_each(|ip| println!(" - {ip}"));
 
-        for ip in ips.iter() {
-            doctor_ip(*ip, Some(server_address));
-        }
+        ips.iter().for_each(|ip| doctor_ip(*ip, Some(server_address)));
+
     } else {
         // user requested an ip address
         doctor_ip(server_ipaddr.unwrap(), None);
