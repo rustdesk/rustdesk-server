@@ -59,6 +59,9 @@ jobs:
       # - name: Run tests
       #   run: cargo test --verbose
 
+      - name: Exec chmod
+        run: chmod -v a+x target/${{ matrix.job.target }}/release/*
+
       - name: Publish Artifacts
         uses: actions/upload-artifact@v3
         with:
@@ -91,6 +94,9 @@ jobs:
         with:
           name: binaries-${{ matrix.job.name }}
           path: ${{ matrix.job.name }}
+
+      - name: Exec chmod
+        run: chmod -v a+x ${{ matrix.job.name }}/*
 
       - name: Pack files (${{ matrix.job.name }})
         run: |
