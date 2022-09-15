@@ -28,15 +28,14 @@ use hbb_common::{
     udp::FramedSocket,
     AddrMangle, ResultType,
 };
-use ipnetwork::Ipv4Network;
+use ipnetwork::IpNetwork;
 use sodiumoxide::crypto::sign;
 use std::{
     collections::HashMap,
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     sync::Arc,
     time::Instant,
 };
-const ADDR_127: IpAddr = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
 
 #[derive(Clone, Debug)]
 enum Data {
@@ -64,7 +63,7 @@ struct Inner {
     serial: i32,
     version: String,
     software_url: String,
-    mask: Option<Ipv4Network>,
+    mask: Option<IpNetwork>,
     local_ip: String,
     sk: Option<sign::SecretKey>,
 }
@@ -82,66 +81,109 @@ pub struct RendezvousServer {
 
 enum LoopFailure {
     UdpSocket,
-    Listener3,
-    Listener2,
-    Listener,
+    ListenerGeneral,
+    ListenerNAT,
+    ListenerWS,
+}
+
+#[derive(Clone)]
+struct CommonServeParams {
+    rendezvous_servers: Vec<String>,
+    version: String,
+    software_url: String,
+    sk: Option<sign::SecretKey>,
+    mask: Option<IpNetwork>,
+    local_ip: String,
 }
 
 impl RendezvousServer {
-    #[tokio::main(flavor = "multi_thread")]
-    pub async fn start(port: i32, serial: i32, key: &str, rmem: usize) -> ResultType<()> {
-        let (key, sk) = Self::get_server_sk(key);
-        let addr = format!("0.0.0.0:{}", port);
-        let addr2 = format!("0.0.0.0:{}", port - 1);
-        let addr3 = format!("0.0.0.0:{}", port + 2);
+    async fn start_serve(
+        serv_ip: IpAddr,
+        port: i32,
+        serial: i32,
+        key: &str,
+        rmem: usize,
+        params: CommonServeParams,
+    ) -> ResultType<()> {
         let pm = PeerMap::new().await?;
-        log::info!("serial={}", serial);
-        let rendezvous_servers = get_servers(&get_arg("rendezvous-servers"), "rendezvous-servers");
-        log::info!("Listening on tcp/udp {}", addr);
-        log::info!("Listening on tcp {}, extra port for NAT test", addr2);
-        log::info!("Listening on websocket {}", addr3);
-        let mut socket = FramedSocket::new_with_buf_size(&addr, rmem).await?;
         let (tx, mut rx) = mpsc::unbounded_channel::<Data>();
-        let software_url = get_arg("software-url");
-        let version = hbb_common::get_version_from_url(&software_url);
-        if !version.is_empty() {
-            log::info!("software_url: {}, version: {}", software_url, version);
-        }
-        let mask = get_arg("mask").parse().ok();
-        let local_ip = if mask.is_none() {
-            "".to_owned()
-        } else {
-            get_arg_or(
-                "local-ip",
-                local_ip_address::local_ip()
-                    .map(|x| x.to_string())
-                    .unwrap_or_default(),
-            )
-        };
         let mut rs = Self {
             tcp_punch: Arc::new(Mutex::new(HashMap::new())),
             pm,
             tx: tx.clone(),
             relay_servers: Default::default(),
             relay_servers0: Default::default(),
-            rendezvous_servers: Arc::new(rendezvous_servers),
+            rendezvous_servers: Arc::new(params.rendezvous_servers),
             inner: Arc::new(Inner {
                 serial,
-                version,
-                software_url,
-                sk,
-                mask,
-                local_ip,
+                version: params.version,
+                software_url: params.software_url,
+                sk: params.sk,
+                mask: params.mask,
+                local_ip: params.local_ip,
             }),
         };
-        log::info!("mask: {:?}", rs.inner.mask);
-        log::info!("local-ip: {:?}", rs.inner.local_ip);
-        std::env::set_var("PORT_FOR_API", port.to_string());
         rs.parse_relay_servers(&get_arg("relay-servers"));
-        let mut listener = new_listener(&addr, false).await?;
-        let mut listener2 = new_listener(&addr2, false).await?;
-        let mut listener3 = new_listener(&addr3, false).await?;
-        let test_addr = std::env::var("TEST_HBBS").unwrap_or_default();
+
+        let mut server_infra = ServerInfra::new(serv_ip.clone(), port, rmem).await?;
+        Self::parse_test_hbbs(&serv_ip, port).await?;
+        loop {
+            log::info!("Start {:?}", &serv_ip);
+            let failure = rs.io_loop(&mut rx, &mut server_infra, &key).await;
+            server_infra = ServerInfra::on_failure_recreate(server_infra, failure).await?;
+        }
+    }
+
+    #[tokio::main(flavor = "multi_thread")]
+    pub async fn start(port: i32, serial: i32, key: &str, rmem: usize) -> ResultType<()> {
+        let (key, sk) = Self::get_server_sk(key);
+        log::info!("serial={}", serial);
+        let rendezvous_servers = get_servers(&get_arg("rendezvous-servers"), "rendezvous-servers");
+        let software_url = get_arg("software-url");
+        let version = hbb_common::get_version_from_url(&software_url);
+        if !version.is_empty() {
+            log::info!("software_url: {}, version: {}", software_url, version);
+        }
+        let mask_v4 = get_arg("mask-v4").parse().ok();
+        log::info!("mask-v4: {:?}", &mask_v4);
+        let mask_v6 = get_arg("mask-v6").parse().ok();
+        log::info!("mask-v6: {:?}", &mask_v6);
+
+        let default_interface = default_net::get_default_interface();
+        if let Err(e) = &default_interface {
+            log::warn!("failed to get default interface {e}");
+        }
+
+        // TODO: Find out what local_ip means...
+        let local_ip_v4 = if mask_v4.is_none() {
+            "".to_owned()
+        } else {
+            get_arg_or(
+                "local-ip-v4",
+                default_interface
+                    .clone()
+                    .map(|x| x.ipv4)
+                    .map(|x| x[0].addr.to_string())
+                    .unwrap_or_default(),
+            )
+        };
+        log::info!("local-ip-v4: {:?}", &local_ip_v4);
+
+        let local_ip_v6 = if mask_v6.is_none() {
+            "".to_owned()
+        } else {
+            get_arg_or(
+                "local-ip-v6",
+                default_interface
+                    .map(|x| x.ipv6)
+                    .map(|x| x[0].addr.to_string())
+                    .unwrap_or_default(),
+            )
+        };
+        log::info!("local-ip-v6: {:?}", &local_ip_v6);
+
+        std::env::set_var("PORT_FOR_API", port.to_string());
+
         if std::env::var("ALWAYS_USE_RELAY")
             .unwrap_or_default()
             .to_uppercase()
@@ -159,57 +201,55 @@ impl RendezvousServer {
                 "N"
             }
         );
-        if test_addr.to_lowercase() != "no" {
-            let test_addr = (if test_addr.is_empty() {
-                addr.replace("0.0.0.0", "127.0.0.1")
-            } else {
-                test_addr
-            })
-            .parse::<SocketAddr>()?;
-            tokio::spawn(async move {
-                allow_err!(test_hbbs(test_addr).await);
-            });
+
+        let params_v4 = CommonServeParams {
+            rendezvous_servers: rendezvous_servers.clone(),
+            version: version.clone(),
+            software_url: software_url.clone(),
+            sk: sk.clone(),
+            mask: mask_v4,
+            local_ip: local_ip_v4,
         };
-        loop {
-            log::info!("Start");
-            match rs
-                .io_loop(
-                    &mut rx,
-                    &mut listener,
-                    &mut listener2,
-                    &mut listener3,
-                    &mut socket,
-                    &key,
-                )
-                .await
-            {
-                LoopFailure::UdpSocket => {
-                    drop(socket);
-                    socket = FramedSocket::new_with_buf_size(&addr, rmem).await?;
-                }
-                LoopFailure::Listener => {
-                    drop(listener);
-                    listener = new_listener(&addr, false).await?;
-                }
-                LoopFailure::Listener2 => {
-                    drop(listener2);
-                    listener2 = new_listener(&addr2, false).await?;
-                }
-                LoopFailure::Listener3 => {
-                    drop(listener3);
-                    listener3 = new_listener(&addr3, false).await?;
-                }
-            }
+        let params_v6 = CommonServeParams {
+            rendezvous_servers,
+            version,
+            software_url,
+            sk,
+            mask: mask_v6,
+            local_ip: local_ip_v6,
+        };
+
+        tokio::select! {
+            r = Self::start_serve(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port, serial, &key, rmem, params_v4) => return r,
+            r = Self::start_serve(IpAddr::V6(Ipv6Addr::UNSPECIFIED), port, serial, &key, rmem, params_v6) => return r,
         }
+    }
+
+    async fn parse_test_hbbs(serv_ip: &IpAddr, port: i32) -> ResultType<()> {
+        let test_addr = std::env::var("TEST_HBBS").unwrap_or_default();
+        if test_addr.to_lowercase() == "no" {
+            return Ok(());
+        }
+
+        let test_addr = if test_addr.is_empty() {
+            match serv_ip {
+                IpAddr::V4(_) => SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port as _),
+                IpAddr::V6(_) => SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), port as _),
+            }
+        } else {
+            test_addr.parse::<SocketAddr>()?
+        };
+        tokio::spawn(async move {
+            allow_err!(test_hbbs(test_addr).await);
+        });
+
+        Ok(())
     }
 
     async fn io_loop(
         &mut self,
         rx: &mut Receiver,
-        listener: &mut TcpListener,
-        listener2: &mut TcpListener,
-        listener3: &mut TcpListener,
-        socket: &mut FramedSocket,
+        server_infra: &mut ServerInfra,
         key: &str,
     ) -> LoopFailure {
         let mut timer_check_relay = interval(Duration::from_millis(CHECK_RELAY_TIMEOUT));
@@ -219,22 +259,24 @@ impl RendezvousServer {
                     if self.relay_servers0.len() > 1 {
                         let rs = self.relay_servers0.clone();
                         let tx = self.tx.clone();
+                        let local_ip = server_infra.addr_general.ip();
                         tokio::spawn(async move {
-                            check_relay_servers(rs, tx).await;
+                            check_relay_servers(local_ip, rs, tx).await;
                         });
                     }
                 }
                 Some(data) = rx.recv() => {
                     match data {
-                        Data::Msg(msg, addr) => { allow_err!(socket.send(&msg, addr).await); }
+                        Data::Msg(msg, addr) => { allow_err!(server_infra.socket.send(&msg, addr).await); }
                         Data::RelayServers0(rs) => { self.parse_relay_servers(&rs); }
                         Data::RelayServers(rs) => { self.relay_servers = Arc::new(rs); }
                     }
                 }
-                res = socket.next() => {
+                res = server_infra.socket.next() => {
+                    log::info!("udp received {:?} ", &server_infra.addr_general);
                     match res {
                         Some(Ok((bytes, addr))) => {
-                            if let Err(err) = self.handle_udp(&bytes, addr.into(), socket, key).await {
+                            if let Err(err) = self.handle_udp(&bytes, addr.into(), &mut server_infra.socket, key).await {
                                 log::error!("udp failure: {}", err);
                                 return LoopFailure::UdpSocket;
                             }
@@ -248,31 +290,31 @@ impl RendezvousServer {
                         }
                     }
                 }
-                res = listener2.accept() => {
+                res = server_infra.listener_nat.accept() => {
                     match res {
                         Ok((stream, addr))  => {
                             stream.set_nodelay(true).ok();
-                            self.handle_listener2(stream, addr).await;
+                            self.handle_listener_nat(stream, addr).await;
                         }
                         Err(err) => {
-                           log::error!("listener2.accept failed: {}", err);
-                           return LoopFailure::Listener2;
+                           log::error!("listener_nat.accept failed: {}", err);
+                           return LoopFailure::ListenerNAT;
                         }
                     }
                 }
-                res = listener3.accept() => {
+                res = server_infra.listener_ws.accept() => {
                     match res {
                         Ok((stream, addr))  => {
                             stream.set_nodelay(true).ok();
                             self.handle_listener(stream, addr, key, true).await;
                         }
                         Err(err) => {
-                           log::error!("listener3.accept failed: {}", err);
-                           return LoopFailure::Listener3;
+                           log::error!("listener_ws.accept failed: {}", err);
+                           return LoopFailure::ListenerWS;
                         }
                     }
                 }
-                res = listener.accept() => {
+                res = server_infra.listener_general.accept() => {
                     match res {
                         Ok((stream, addr)) => {
                             stream.set_nodelay(true).ok();
@@ -280,7 +322,7 @@ impl RendezvousServer {
                         }
                        Err(err) => {
                            log::error!("listener.accept failed: {}", err);
-                           return LoopFailure::Listener;
+                           return LoopFailure::ListenerGeneral;
                        }
                     }
                 }
@@ -420,7 +462,8 @@ impl RendezvousServer {
                     self.handle_local_addr(la, addr, Some(socket)).await?;
                 }
                 Some(rendezvous_message::Union::ConfigureUpdate(mut cu)) => {
-                    if addr.ip() == ADDR_127 && cu.serial > self.inner.serial {
+                    if addr.ip().is_loopback() && cu.serial > self.inner.serial
+                    {
                         let mut inner: Inner = (*self.inner).clone();
                         inner.serial = cu.serial;
                         self.inner = Arc::new(inner);
@@ -559,7 +602,7 @@ impl RendezvousServer {
                 ip != old.socket_addr.ip()
             } else {
                 ip.to_string() != old.info.ip
-            } && ip != ADDR_127;
+            } && !ip.is_loopback();
             let request_pk = old.pk.is_empty() || ip_change;
             if !request_pk {
                 old.socket_addr = socket_addr;
@@ -702,17 +745,10 @@ impl RendezvousServer {
                 }
                 ph.nat_type = NatType::SYMMETRIC.into(); // will force relay
             }
+            // TODO: Findout the right way to finger out same same_intranet for both ipv6
             let same_intranet = !ws
-                && match peer_addr {
-                    SocketAddr::V4(a) => match addr {
-                        SocketAddr::V4(b) => a.ip() == b.ip(),
-                        _ => false,
-                    },
-                    SocketAddr::V6(a) => match addr {
-                        SocketAddr::V6(b) => a.ip() == b.ip(),
-                        _ => false,
-                    },
-                };
+                && (peer_addr.ip().is_ipv6() && peer_addr.ip().is_ipv6()
+                    || peer_addr.ip() == addr.ip());
             let socket_addr = AddrMangle::encode(addr).into();
             if same_intranet {
                 log::debug!(
@@ -1041,9 +1077,9 @@ impl RendezvousServer {
         res
     }
 
-    async fn handle_listener2(&self, stream: TcpStream, addr: SocketAddr) {
+    async fn handle_listener_nat(&self, stream: TcpStream, addr: SocketAddr) {
         let mut rs = self.clone();
-        if addr.ip().to_string() == "127.0.0.1" {
+        if addr.ip().is_loopback() {
             tokio::spawn(async move {
                 let mut stream = stream;
                 let mut buffer = [0; 64];
@@ -1187,15 +1223,13 @@ impl RendezvousServer {
     #[inline]
     fn is_lan(&self, addr: SocketAddr) -> bool {
         if let Some(network) = &self.inner.mask {
-            if let SocketAddr::V4(addr) = addr {
-                return network.contains(*addr.ip());
-            }
+            return network.contains(addr.ip());
         }
         false
     }
 }
 
-async fn check_relay_servers(rs0: Arc<RelayServers>, tx: Sender) {
+async fn check_relay_servers(local_ip: IpAddr, rs0: Arc<RelayServers>, tx: Sender) {
     let mut futs = Vec::new();
     let rs = Arc::new(Mutex::new(Vec::new()));
     for x in rs0.iter() {
@@ -1206,7 +1240,7 @@ async fn check_relay_servers(rs0: Arc<RelayServers>, tx: Sender) {
         let rs = rs.clone();
         let x = x.clone();
         futs.push(tokio::spawn(async move {
-            if FramedStream::new(&host, "0.0.0.0:0", CHECK_RELAY_TIMEOUT)
+            if FramedStream::new(&host, SocketAddr::new(local_ip, 0), CHECK_RELAY_TIMEOUT)
                 .await
                 .is_ok()
             {
@@ -1224,7 +1258,20 @@ async fn check_relay_servers(rs0: Arc<RelayServers>, tx: Sender) {
 
 // temp solution to solve udp socket failure
 async fn test_hbbs(addr: SocketAddr) -> ResultType<()> {
-    let mut socket = FramedSocket::new("0.0.0.0:0").await?;
+    let mut socket = match &addr {
+        SocketAddr::V4(_) => {
+            FramedSocket::new(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))).await?
+        }
+        SocketAddr::V6(_) => {
+            FramedSocket::new(SocketAddr::V6(SocketAddrV6::new(
+                Ipv6Addr::UNSPECIFIED,
+                0,
+                0,
+                0,
+            )))
+            .await?
+        }
+    };
     let mut msg_out = RendezvousMessage::new();
     msg_out.set_register_peer(RegisterPeer {
         id: "(:test_hbbs:)".to_owned(),
@@ -1264,4 +1311,75 @@ async fn send_rk_res(
         ..Default::default()
     });
     socket.send(&msg_out, addr).await
+}
+
+struct ServerInfra {
+    rmem: usize,
+    addr_general: SocketAddr,
+    addr_nat: SocketAddr,
+    addr_ws: SocketAddr,
+    listener_general: TcpListener,
+    listener_nat: TcpListener,
+    listener_ws: TcpListener,
+    socket: FramedSocket,
+}
+
+impl ServerInfra {
+    fn get_port_general(port: i32) -> i32 {
+        port
+    }
+    fn get_port_nat(port: i32) -> i32 {
+        port - 1
+    }
+    fn get_port_ws(port: i32) -> i32 {
+        port + 2
+    }
+
+    async fn new(listen_ip: IpAddr, port: i32, rmem: usize) -> ResultType<Self> {
+        let addr_general = SocketAddr::new(listen_ip, ServerInfra::get_port_general(port) as _);
+        log::info!("Listening on tcp/udp {}", addr_general);
+        let addr_nat = SocketAddr::new(listen_ip, ServerInfra::get_port_nat(port) as _);
+        log::info!("Listening on tcp {}, extra port for NAT test", addr_nat);
+        let addr_ws = SocketAddr::new(listen_ip, ServerInfra::get_port_ws(port) as _);
+        log::info!("Listening on websocket {}", addr_ws);
+        let socket = FramedSocket::new_with_buf_size(addr_general, rmem).await?;
+
+        let listener_general = new_listener(&addr_general, false).await?;
+        let listener_nat = new_listener(&addr_nat, false).await?;
+        let listener_ws = new_listener(&addr_ws, false).await?;
+
+        Ok(Self {
+            rmem,
+            addr_general,
+            addr_nat,
+            addr_ws,
+            listener_general,
+            listener_nat,
+            listener_ws,
+            socket,
+        })
+    }
+
+    async fn on_failure_recreate(mut self, failure: LoopFailure) -> ResultType<Self> {
+        match failure {
+            LoopFailure::UdpSocket => {
+                drop(self.socket);
+                self.socket =
+                    FramedSocket::new_with_buf_size(&self.addr_general, self.rmem).await?;
+            }
+            LoopFailure::ListenerGeneral => {
+                drop(self.listener_general);
+                self.listener_general = new_listener(&self.addr_general, false).await?;
+            }
+            LoopFailure::ListenerNAT => {
+                drop(self.listener_nat);
+                self.listener_nat = new_listener(&self.addr_nat, false).await?;
+            }
+            LoopFailure::ListenerWS => {
+                drop(self.listener_ws);
+                self.listener_ws = new_listener(&self.addr_ws, false).await?;
+            }
+        }
+        Ok(self)
+    }
 }
