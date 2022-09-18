@@ -12,7 +12,7 @@ use tokio_socks::{IntoTargetAddr, TargetAddr};
 fn to_socket_addr(host: &str) -> ResultType<SocketAddr> {
     use std::net::ToSocketAddrs;
     host.to_socket_addrs()?
-        .filter(|x| x.is_ipv4())
+        .filter(|x| (x.is_ipv4() || x.is_ipv6()))
         .next()
         .context("Failed to solve")
 }
@@ -63,7 +63,7 @@ pub async fn connect_tcp<'t, T: IntoTargetAddr<'t>>(
         .await
     } else {
         let addr = std::net::ToSocketAddrs::to_socket_addrs(&target_addr)?
-            .filter(|x| x.is_ipv4())
+            .filter(|x| (x.is_ipv4() || x.is_ipv6()))
             .next()
             .context("Invalid target addr, no valid ipv4 address can be resolved.")?;
         Ok(FramedStream::new(addr, local, ms_timeout).await?)
