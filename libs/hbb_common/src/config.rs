@@ -660,7 +660,7 @@ impl Config {
     pub fn get_network_type() -> NetworkType {
         match &CONFIG2.read().unwrap().socks {
             None => NetworkType::Direct,
-            Some(_) => NetworkType::ProxySocks,
+            Some(..) => NetworkType::ProxySocks,
         }
     }
 

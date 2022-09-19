@@ -11,10 +11,7 @@ use tokio_socks::{IntoTargetAddr, TargetAddr};
 
 fn to_socket_addr(host: &str) -> ResultType<SocketAddr> {
     use std::net::ToSocketAddrs;
-    host.to_socket_addrs()?
-        .filter(|x| x.is_ipv4())
-        .next()
-        .context("Failed to solve")
+    host.to_socket_addrs()?.next().context("Failed to solve")
 }
 
 pub fn get_target_addr(host: &str) -> ResultType<TargetAddr<'static>> {
@@ -35,11 +32,11 @@ pub fn test_if_valid_server(host: &str) -> String {
     match Config::get_network_type() {
         NetworkType::Direct => match to_socket_addr(&host) {
             Err(err) => err.to_string(),
-            Ok(_) => "".to_owned(),
+            Ok(..) => "".to_owned(),
         },
         NetworkType::ProxySocks => match &host.into_target_addr() {
             Err(err) => err.to_string(),
-            Ok(_) => "".to_owned(),
+            Ok(..) => "".to_owned(),
         },
     }
 }
