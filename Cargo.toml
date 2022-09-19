@@ -49,6 +49,8 @@ http = "0.2"
 flexi_logger = { version = "0.22", features = ["async", "use_chrono_for_offset"] }
 ipnetwork = "0.20"
 local-ip-address = "0.4"
+dns-lookup = "1.0.8"
+ping = "0.4.0"
 
 [build-dependencies]
 hbb_common = { path = "libs/hbb_common" }
