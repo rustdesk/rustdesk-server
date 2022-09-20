@@ -24,7 +24,7 @@ use std::{
     collections::{HashMap, HashSet},
     io::prelude::*,
     io::Error,
-    net::SocketAddr,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
 };
 
 type Usage = (usize, usize, usize, usize);
@@ -77,19 +77,26 @@ pub async fn start(port: &str, key: &str) -> ResultType<()> {
         BLOCKLIST_FILE,
         BLOCKLIST.read().await.len()
     );
-    let addr = format!("0.0.0.0:{}", port);
-    log::info!("Listening on tcp {}", addr);
-    let addr2 = format!("0.0.0.0:{}", port.parse::<u16>().unwrap() + 2);
-    log::info!("Listening on websocket {}", addr2);
+
+    let port = port.parse::<i32>()?;
+
+    let key_ipv6 = key.clone();
+    tokio::spawn(async move {
+        log::info!("Start ipv6");
+        loop {
+            allow_err!(loop_start_serv(IpAddr::V6(Ipv6Addr::UNSPECIFIED), port, &key_ipv6).await);
+        }
+    });
+
+    log::info!("Start ipv4");
     loop {
-        log::info!("Start");
-        io_loop(
-            new_listener(&addr, false).await?,
-            new_listener(&addr2, false).await?,
-            &key,
-        )
-        .await;
+        allow_err!(loop_start_serv(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port, &key).await);
     }
+}
+
+async fn loop_start_serv(listen_ip: IpAddr, port: i32, key: &str) -> ResultType<()> {
+    io_loop(ServerInfra::new(listen_ip, port).await?, key).await;
+    Ok(())
 }
 
 fn check_params() {
@@ -329,12 +336,12 @@ async fn check_cmd(cmd: &str, limiter: Limiter) -> String {
     res
 }
 
-async fn io_loop(listener: TcpListener, listener2: TcpListener, key: &str) {
+async fn io_loop(server_infra: ServerInfra, key: &str) {
     check_params();
     let limiter = <Limiter>::new(unsafe { TOTAL_BANDWIDTH as _ });
     loop {
         tokio::select! {
-            res = listener.accept() => {
+            res = server_infra.listener_relay.accept() => {
                 match res {
                     Ok((stream, addr))  => {
                         stream.set_nodelay(true).ok();
@@ -346,7 +353,7 @@ async fn io_loop(listener: TcpListener, listener2: TcpListener, key: &str) {
                     }
                 }
             }
-            res = listener2.accept() => {
+            res = server_infra.listener_ws.accept() => {
                 match res {
                     Ok((stream, addr))  => {
                         stream.set_nodelay(true).ok();
@@ -370,7 +377,7 @@ async fn handle_connection(
     ws: bool,
 ) {
     let ip = addr.ip().to_string();
-    if !ws && ip == "127.0.0.1" {
+    if !ws && addr.ip().is_loopback() {
         let limiter = limiter.clone();
         tokio::spawn(async move {
             let mut stream = stream;
@@ -635,4 +642,33 @@ impl StreamTrait for tokio_tungstenite::WebSocketStream<TcpStream> {
     }
 
     fn set_raw(&mut self) {}
+}
+
+struct ServerInfra {
+    listener_relay: TcpListener,
+    listener_ws: TcpListener,
+}
+
+impl ServerInfra {
+    fn get_port_relay(port: i32) -> i32 {
+        port
+    }
+    fn get_port_ws(port: i32) -> i32 {
+        port + 2
+    }
+
+    async fn new(listen_ip: IpAddr, port: i32) -> ResultType<Self> {
+        let addr_relay = SocketAddr::new(listen_ip, Self::get_port_relay(port) as _);
+        let addr_ws = SocketAddr::new(listen_ip, Self::get_port_ws(port) as _);
+
+        let listener_relay = new_listener(&addr_relay, false).await?;
+        log::info!("Listening on tcp {}", addr_relay);
+        let listener_ws = new_listener(&addr_ws, false).await?;
+        log::info!("Listening on websocket {}", addr_ws);
+
+        Ok(Self {
+            listener_relay,
+            listener_ws,
+        })
+    }
 }

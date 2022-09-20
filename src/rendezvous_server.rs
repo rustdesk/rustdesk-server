@@ -1419,10 +1419,14 @@ impl ServerInfra {
 
     async fn new(listen_ip: IpAddr, port: i32, rmem: usize) -> ResultType<Self> {
         let addr_general = SocketAddr::new(listen_ip, Self::get_port_general(port) as _);
-        log::info!("Listening on tcp/udp {}", addr_general);
         let addr_nat = SocketAddr::new(listen_ip, Self::get_port_nat(port) as _);
-        log::info!("Listening on tcp {}, extra port for NAT test", addr_nat);
         let addr_ws = SocketAddr::new(listen_ip, Self::get_port_ws(port) as _);
+
+        let listener_general = new_listener(&addr_general, false).await?;
+        log::info!("Listening on tcp/udp {}", addr_general);
+        let listener_nat = new_listener(&addr_nat, false).await?;
+        log::info!("Listening on tcp {}, extra port for NAT test", addr_nat);
+        let listener_ws = new_listener(&addr_ws, false).await?;
         log::info!("Listening on websocket {}", addr_ws);
 
         let (udp_addr_v4, udp_addr_v6) = if listen_ip.is_ipv4() {
@@ -1444,10 +1448,7 @@ impl ServerInfra {
         };
         let socket_ipv4 = FramedSocket::new_with_buf_size(udp_addr_v4, rmem).await?;
         let socket_ipv6 = FramedSocket::new_with_buf_size(udp_addr_v6, rmem).await?;
-
-        let listener_general = new_listener(&addr_general, false).await?;
-        let listener_nat = new_listener(&addr_nat, false).await?;
-        let listener_ws = new_listener(&addr_ws, false).await?;
+        log::info!("Listening on udp {}, {}", udp_addr_v4, udp_addr_v6);
 
         Ok(Self {
             rmem,
