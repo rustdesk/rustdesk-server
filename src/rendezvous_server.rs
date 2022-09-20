@@ -96,6 +96,7 @@ struct CommonServeParams {
     mask: Option<IpNetwork>,
     local_ip: String,
     pm: PeerMap,
+    tcp_punch: Arc<Mutex<HashMap<SocketAddr, Sink>>>,
 }
 
 impl RendezvousServer {
@@ -109,7 +110,7 @@ impl RendezvousServer {
     ) -> ResultType<()> {
         let (tx, mut rx) = mpsc::unbounded_channel::<Data>();
         let mut rs = Self {
-            tcp_punch: Arc::new(Mutex::new(HashMap::new())),
+            tcp_punch: params.tcp_punch.clone(),
             pm: params.pm.clone(),
             tx: tx.clone(),
             relay_servers: Default::default(),
@@ -216,6 +217,7 @@ impl RendezvousServer {
         );
 
         let pm = PeerMap::new().await?;
+        let tcp_punch = Arc::new(Mutex::new(HashMap::new()));
         let params_v4 = CommonServeParams {
             rendezvous_servers: rendezvous_servers.clone(),
             version: version.clone(),
@@ -224,6 +226,7 @@ impl RendezvousServer {
             mask: mask_ipv4,
             local_ip: local_ipv4,
             pm: pm.clone(),
+            tcp_punch: tcp_punch.clone(),
         };
         let params_v6 = CommonServeParams {
             rendezvous_servers,
@@ -233,6 +236,7 @@ impl RendezvousServer {
             mask: mask_ipv6,
             local_ip: local_ipv6,
             pm,
+            tcp_punch,
         };
 
         tokio::select! {
