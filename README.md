@@ -71,6 +71,7 @@ services:
     container_name: hbbs
     ports:
       - 21115:21115
+      - 21115:21115/udp
       - 21116:21116
       - 21116:21116/udp
       - 21118:21118
@@ -142,7 +143,7 @@ or without --net=host, but P2P direct connection can not work.
 
 ```bash
 docker run --name rustdesk-server \
-  -p 21115:21115 -p 21116:21116 -p 21116:21116/udp \
+  -p 21115:21115 -p21115:21115/udp -p 21116:21116 -p 21116:21116/udp \
   -p 21117:21117 -p 21118:21118 -p 21119:21119 \
   -e "RELAY=rustdeskrelay.example.com" \
   -e "ENCRYPTED_ONLY=1" \
@@ -159,6 +160,7 @@ services:
     container_name: rustdesk-server
     ports:
       - 21115:21115
+      - 21115:21115/udp
       - 21116:21116
       - 21116:21116/udp
       - 21117:21117
@@ -215,6 +217,7 @@ services:
     container_name: rustdesk-server
     ports:
       - 21115:21115
+      - 21115:21115/udp
       - 21116:21116
       - 21116:21116/udp
       - 21117:21117
@@ -259,6 +262,7 @@ services:
     container_name: rustdesk-server
     ports:
       - 21115:21115
+      - 21115:21115/udp
       - 21116:21116
       - 21116:21116/udp
       - 21117:21117
