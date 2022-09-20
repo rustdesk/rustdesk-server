@@ -95,6 +95,7 @@ struct CommonServeParams {
     sk: Option<sign::SecretKey>,
     mask: Option<IpNetwork>,
     local_ip: String,
+    pm: PeerMap,
 }
 
 impl RendezvousServer {
@@ -106,11 +107,10 @@ impl RendezvousServer {
         rmem: usize,
         params: CommonServeParams,
     ) -> ResultType<()> {
-        let pm = PeerMap::new().await?;
         let (tx, mut rx) = mpsc::unbounded_channel::<Data>();
         let mut rs = Self {
             tcp_punch: Arc::new(Mutex::new(HashMap::new())),
-            pm,
+            pm: params.pm.clone(),
             tx: tx.clone(),
             relay_servers: Default::default(),
             relay_servers0: Default::default(),
@@ -215,6 +215,7 @@ impl RendezvousServer {
             }
         );
 
+        let pm = PeerMap::new().await?;
         let params_v4 = CommonServeParams {
             rendezvous_servers: rendezvous_servers.clone(),
             version: version.clone(),
@@ -222,6 +223,7 @@ impl RendezvousServer {
             sk: sk.clone(),
             mask: mask_ipv4,
             local_ip: local_ipv4,
+            pm: pm.clone(),
         };
         let params_v6 = CommonServeParams {
             rendezvous_servers,
@@ -230,6 +232,7 @@ impl RendezvousServer {
             sk,
             mask: mask_ipv6,
             local_ip: local_ipv6,
+            pm,
         };
 
         tokio::select! {
@@ -280,7 +283,6 @@ impl RendezvousServer {
                 }
                 Some(data) = rx.recv() => {
                     match data {
-                        // FIXME: If self socket is ipv6 while addr is ipv4
                         Data::Msg(msg, addr) => match &addr {
                             SocketAddr::V4(..) => { allow_err!(server_infra.socket_ipv4.send(&msg, addr).await); }
                             SocketAddr::V6(..) => { allow_err!(server_infra.socket_ipv6.send(&msg, addr).await); }
@@ -794,14 +796,15 @@ impl RendezvousServer {
                     // addr and peer addr must be global ipv6 here, usually with 64 bits prefix.
                     // https://en.wikipedia.org/wiki/IPv6_address#:~:text=special%20addressing%20features.-,Unicast%20and%20anycast%20address%20format,-%5Bedit%5D
                     let prefix_len_ipv6 = 64;
-                    if let IpAddr::V6(peer_addr_ipv6) = peer_addr.ip() {
-                        if let IpAddr::V6(addr_ipv6) = addr.ip() {
+                    match (peer_addr.ip(), addr.ip()) {
+                        (IpAddr::V6(peer_addr_ipv6), IpAddr::V6(addr_ipv6)) => {
                             if u128::from(peer_addr_ipv6) >> prefix_len_ipv6
                                 == u128::from(addr_ipv6) >> prefix_len_ipv6
                             {
                                 same_intranet = true;
                             }
                         }
+                        _ => {}
                     }
                 }
             }
@@ -1328,11 +1331,14 @@ async fn check_relay_servers(local_ip: IpAddr, rs0: Arc<RelayServers>, tx: Sende
 
 // temp solution to solve udp socket failure
 async fn test_hbbs(addr: SocketAddr) -> ResultType<()> {
+    let server_socket_type;
     let mut socket = match &addr {
         SocketAddr::V4(..) => {
+            server_socket_type = "ipv4";
             FramedSocket::new(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))).await?
         }
         SocketAddr::V6(..) => {
+            server_socket_type = "ipv6";
             FramedSocket::new(SocketAddr::V6(SocketAddrV6::new(
                 Ipv6Addr::UNSPECIFIED,
                 0,
@@ -1354,14 +1360,14 @@ async fn test_hbbs(addr: SocketAddr) -> ResultType<()> {
         tokio::select! {
           _ = timer.tick() => {
               if last_time_recv.elapsed().as_secs() > 12 {
-                 log::error!("Timeout of test_hbbs");
+                 log::error!("Timeout of test_hbbs {}", server_socket_type);
                  std::process::exit(1);
               }
               socket.send(&msg_out, addr).await?;
           }
           Some(Ok((bytes, _))) = socket.next() => {
               if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(&bytes) {
-                 log::trace!("Recv {:?} of test_hbbs", msg_in);
+                 log::trace!("Recv {:?} of test_hbbs {}", msg_in, server_socket_type);
                  last_time_recv = Instant::now();
               }
           }
@@ -1407,24 +1413,37 @@ impl ServerInfra {
     fn get_port_ws(port: i32) -> i32 {
         port + 2
     }
+    fn get_port_udp_2(port: i32) -> i32 {
+        port - 1
+    }
 
     async fn new(listen_ip: IpAddr, port: i32, rmem: usize) -> ResultType<Self> {
-        let addr_general = SocketAddr::new(listen_ip, ServerInfra::get_port_general(port) as _);
+        let addr_general = SocketAddr::new(listen_ip, Self::get_port_general(port) as _);
         log::info!("Listening on tcp/udp {}", addr_general);
-        let addr_nat = SocketAddr::new(listen_ip, ServerInfra::get_port_nat(port) as _);
+        let addr_nat = SocketAddr::new(listen_ip, Self::get_port_nat(port) as _);
         log::info!("Listening on tcp {}, extra port for NAT test", addr_nat);
-        let addr_ws = SocketAddr::new(listen_ip, ServerInfra::get_port_ws(port) as _);
+        let addr_ws = SocketAddr::new(listen_ip, Self::get_port_ws(port) as _);
         log::info!("Listening on websocket {}", addr_ws);
-        let socket_ipv4 = FramedSocket::new_with_buf_size(
-            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
-            rmem,
-        )
-        .await?;
-        let socket_ipv6 = FramedSocket::new_with_buf_size(
-            SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),
-            rmem,
-        )
-        .await?;
+
+        let (udp_addr_v4, udp_addr_v6) = if listen_ip.is_ipv4() {
+            (
+                addr_general,
+                SocketAddr::new(
+                    IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+                    Self::get_port_udp_2(port) as _,
+                ),
+            )
+        } else {
+            (
+                SocketAddr::new(
+                    IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                    Self::get_port_udp_2(port) as _,
+                ),
+                addr_general,
+            )
+        };
+        let socket_ipv4 = FramedSocket::new_with_buf_size(udp_addr_v4, rmem).await?;
+        let socket_ipv6 = FramedSocket::new_with_buf_size(udp_addr_v6, rmem).await?;
 
         let listener_general = new_listener(&addr_general, false).await?;
         let listener_nat = new_listener(&addr_nat, false).await?;

@@ -9,7 +9,7 @@ pub use protobuf;
 use std::{
     fs::File,
     io::{self, BufRead},
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     path::Path,
     time::{self, SystemTime, UNIX_EPOCH},
 };
@@ -292,6 +292,20 @@ pub fn is_unique_local(ip: &Ipv6Addr) -> bool {
 pub fn is_link_local(ip: &Ipv6Addr) -> bool {
     // ip.is_unicast_link_local()
     (ip.segments()[0] & 0xffc0) == 0xfe80
+}
+
+pub fn try_set_port(host: &str, port: u16) -> String {
+    if host.parse::<SocketAddr>().is_ok() {
+        return host.to_string();
+    }
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return SocketAddr::new(ip, port).to_string();
+    }
+    if !host.contains(":") {
+        format!("{}:{}", host, port)
+    } else {
+        host.to_string()
+    }
 }
 
 #[cfg(test)]

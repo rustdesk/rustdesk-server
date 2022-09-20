@@ -374,10 +374,7 @@ impl Config {
                 .next()
                 .unwrap_or("".to_owned());
         }
-        if !rendezvous_server.contains(":") {
-            rendezvous_server = format!("{}:{}", rendezvous_server, RENDEZVOUS_PORT);
-        }
-        rendezvous_server
+        crate::try_set_port(&rendezvous_server, RENDEZVOUS_PORT as _)
     }
 
     pub fn get_rendezvous_servers() -> Vec<String> {
