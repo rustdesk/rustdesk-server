@@ -9,7 +9,6 @@ services:
     container_name: hbbs
     ports:
       - 21115:21115
-      - 21115:21115/udp
       - 21116:21116
       - 21116:21116/udp
       - 21118:21118

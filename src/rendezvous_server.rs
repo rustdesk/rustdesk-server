@@ -73,6 +73,10 @@ pub struct RendezvousServer {
     tcp_punch: Arc<Mutex<HashMap<SocketAddr, Sink>>>,
     pm: PeerMap,
     tx: Sender,
+    // for FramedSocket send
+    tx_ipv4: Sender,
+    // for FramedSocket send
+    tx_ipv6: Sender,
     relay_servers: Arc<RelayServers>,
     relay_servers0: Arc<RelayServers>,
     rendezvous_servers: Arc<Vec<String>>,
@@ -80,8 +84,7 @@ pub struct RendezvousServer {
 }
 
 enum LoopFailure {
-    UdpSocketIpv4,
-    UdpSocketIpv6,
+    UdpSocketIp,
     ListenerGeneral,
     ListenerNAT,
     ListenerWS,
@@ -97,6 +100,9 @@ struct CommonServeParams {
     local_ip: String,
     pm: PeerMap,
     tcp_punch: Arc<Mutex<HashMap<SocketAddr, Sink>>>,
+    tx: Sender,
+    tx_ipv4: Sender,
+    tx_ipv6: Sender,
 }
 
 impl RendezvousServer {
@@ -106,13 +112,15 @@ impl RendezvousServer {
         serial: i32,
         key: &str,
         rmem: usize,
+        mut rx: Receiver,
         params: CommonServeParams,
     ) -> ResultType<()> {
-        let (tx, mut rx) = mpsc::unbounded_channel::<Data>();
         let mut rs = Self {
-            tcp_punch: params.tcp_punch.clone(),
-            pm: params.pm.clone(),
-            tx: tx.clone(),
+            tcp_punch: params.tcp_punch,
+            pm: params.pm,
+            tx: params.tx,
+            tx_ipv4: params.tx_ipv4,
+            tx_ipv6: params.tx_ipv6,
             relay_servers: Default::default(),
             relay_servers0: Default::default(),
             rendezvous_servers: Arc::new(params.rendezvous_servers),
@@ -216,6 +224,9 @@ impl RendezvousServer {
             }
         );
 
+        let (tx_ipv4, rx_ipv4) = mpsc::unbounded_channel::<Data>();
+        let (tx_ipv6, rx_ipv6) = mpsc::unbounded_channel::<Data>();
+
         let pm = PeerMap::new().await?;
         let tcp_punch = Arc::new(Mutex::new(HashMap::new()));
         let params_v4 = CommonServeParams {
@@ -227,6 +238,9 @@ impl RendezvousServer {
             local_ip: local_ipv4,
             pm: pm.clone(),
             tcp_punch: tcp_punch.clone(),
+            tx: tx_ipv4.clone(),
+            tx_ipv4: tx_ipv4.clone(),
+            tx_ipv6: tx_ipv6.clone(),
         };
         let params_v6 = CommonServeParams {
             rendezvous_servers,
@@ -237,11 +251,14 @@ impl RendezvousServer {
             local_ip: local_ipv6,
             pm,
             tcp_punch,
+            tx: tx_ipv6.clone(),
+            tx_ipv4,
+            tx_ipv6,
         };
 
         tokio::select! {
-            r = Self::start_serve(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port, serial, &key, rmem, params_v4) => return r,
-            r = Self::start_serve(IpAddr::V6(Ipv6Addr::UNSPECIFIED), port, serial, &key, rmem, params_v6) => return r,
+            r = Self::start_serve(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port, serial, &key, rmem, rx_ipv4, params_v4) => return r,
+            r = Self::start_serve(IpAddr::V6(Ipv6Addr::UNSPECIFIED), port, serial, &key, rmem, rx_ipv6, params_v6) => return r,
         }
     }
 
@@ -287,42 +304,22 @@ impl RendezvousServer {
                 }
                 Some(data) = rx.recv() => {
                     match data {
-                        Data::Msg(msg, addr) => match &addr {
-                            SocketAddr::V4(..) => { allow_err!(server_infra.socket_ipv4.send(&msg, addr).await); }
-                            SocketAddr::V6(..) => { allow_err!(server_infra.socket_ipv6.send(&msg, addr).await); }
-                        },
+                        Data::Msg(msg, addr) =>allow_err!(server_infra.socket.send(&msg, addr).await),
                         Data::RelayServers0(rs) => { self.parse_relay_servers(&rs); }
                         Data::RelayServers(rs) => { self.relay_servers = Arc::new(rs); }
                     }
                 }
-                res = server_infra.socket_ipv4.next() => {
+                res = server_infra.socket.next() => {
                     match res {
                         Some(Ok((bytes, addr))) => {
-                            if let Err(err) = self.handle_udp(&bytes, addr.into(), &mut server_infra.socket_ipv4, key).await {
+                            if let Err(err) = self.handle_udp(&bytes, addr.into(), &mut server_infra.socket, key).await {
                                 log::error!("udp failure: {}", err);
-                                return LoopFailure::UdpSocketIpv4;
+                                return LoopFailure::UdpSocketIp;
                             }
                         }
                         Some(Err(err)) => {
                             log::error!("udp failure: {}", err);
-                            return LoopFailure::UdpSocketIpv4;
-                        }
-                        None => {
-                            // unreachable!() ?
-                        }
-                    }
-                }
-                res = server_infra.socket_ipv6.next() => {
-                    match res {
-                        Some(Ok((bytes, addr))) => {
-                            if let Err(err) = self.handle_udp(&bytes, addr.into(), &mut server_infra.socket_ipv6, key).await {
-                                log::error!("udp failure: {}", err);
-                                return LoopFailure::UdpSocketIpv6;
-                            }
-                        }
-                        Some(Err(err)) => {
-                            log::error!("udp failure: {}", err);
-                            return LoopFailure::UdpSocketIpv6;
+                            return LoopFailure::UdpSocketIp;
                         }
                         None => {
                             // unreachable!() ?
@@ -928,7 +925,11 @@ impl RendezvousServer {
     ) -> ResultType<()> {
         let (msg, to_addr) = self.handle_punch_hole_request(addr, ph, key, ws).await?;
         if let Some(addr) = to_addr {
-            self.tx.send(Data::Msg(msg, addr))?;
+            if addr.is_ipv4() {
+                self.tx_ipv4.send(Data::Msg(msg, addr))?;
+            } else {
+                self.tx_ipv6.send(Data::Msg(msg, addr))?;
+            }
         } else {
             self.send_to_tcp_sync(msg, addr).await?;
         }
@@ -943,13 +944,15 @@ impl RendezvousServer {
         key: &str,
     ) -> ResultType<()> {
         let (msg, to_addr) = self.handle_punch_hole_request(addr, ph, key, false).await?;
-        self.tx.send(Data::Msg(
-            msg,
-            match to_addr {
-                Some(addr) => addr,
-                None => addr,
-            },
-        ))?;
+        if let Some(addr) = to_addr {
+            if addr.is_ipv4() {
+                self.tx_ipv4.send(Data::Msg(msg, addr))?;
+            } else {
+                self.tx_ipv6.send(Data::Msg(msg, addr))?;
+            }
+        } else {
+            self.send_to_tcp_sync(msg, addr).await?;
+        }
         Ok(())
     }
 
@@ -1401,10 +1404,7 @@ struct ServerInfra {
     listener_general: TcpListener,
     listener_nat: TcpListener,
     listener_ws: TcpListener,
-    // Both ipv4 and ipv6 is provided.
-    // Because rust server may actively send udp data to rustdesk client.
-    socket_ipv4: FramedSocket,
-    socket_ipv6: FramedSocket,
+    socket: FramedSocket,
 }
 
 impl ServerInfra {
@@ -1416,9 +1416,6 @@ impl ServerInfra {
     }
     fn get_port_ws(port: i32) -> i32 {
         port + 2
-    }
-    fn get_port_udp_2(port: i32) -> i32 {
-        port - 1
     }
 
     async fn new(listen_ip: IpAddr, port: i32, rmem: usize) -> ResultType<Self> {
@@ -1433,26 +1430,8 @@ impl ServerInfra {
         let listener_ws = new_listener(&addr_ws, false).await?;
         log::info!("Listening on websocket {}", addr_ws);
 
-        let (udp_addr_v4, udp_addr_v6) = if listen_ip.is_ipv4() {
-            (
-                addr_general,
-                SocketAddr::new(
-                    IpAddr::V6(Ipv6Addr::UNSPECIFIED),
-                    Self::get_port_udp_2(port) as _,
-                ),
-            )
-        } else {
-            (
-                SocketAddr::new(
-                    IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-                    Self::get_port_udp_2(port) as _,
-                ),
-                addr_general,
-            )
-        };
-        let socket_ipv4 = FramedSocket::new_with_buf_size(udp_addr_v4, rmem).await?;
-        let socket_ipv6 = FramedSocket::new_with_buf_size(udp_addr_v6, rmem).await?;
-        log::info!("Listening on udp {}, {}", udp_addr_v4, udp_addr_v6);
+        let socket = FramedSocket::new_with_buf_size(addr_general, rmem).await?;
+        log::info!("Listening on udp {}", addr_general);
 
         Ok(Self {
             rmem,
@@ -1462,25 +1441,16 @@ impl ServerInfra {
             listener_general,
             listener_nat,
             listener_ws,
-            socket_ipv4,
-            socket_ipv6,
+            socket,
         })
     }
 
     async fn on_failure_recreate(mut self, failure: LoopFailure) -> ResultType<Self> {
         match failure {
-            LoopFailure::UdpSocketIpv4 => {
-                drop(self.socket_ipv4);
-                self.socket_ipv4 = FramedSocket::new_with_buf_size(
+            LoopFailure::UdpSocketIp => {
+                drop(self.socket);
+                self.socket = FramedSocket::new_with_buf_size(
                     SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
-                    self.rmem,
-                )
-                .await?;
-            }
-            LoopFailure::UdpSocketIpv6 => {
-                drop(self.socket_ipv6);
-                self.socket_ipv6 = FramedSocket::new_with_buf_size(
-                    SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),
                     self.rmem,
                 )
                 .await?;
