@@ -759,15 +759,11 @@ impl RendezvousServer {
     ) -> ResultType<()> {
         let mut states = BytesMut::zeroed((peers.len() + 7) / 8);
         for i in 0..peers.len() {
-            let peer_id = &peers[i];
-            // bytes index from left to right
-            let states_idx = i / 8;
-            let bit_idx = 7 - i % 8;
-            if let Some(peer) = self.pm.get_in_memory(&peer_id).await {
-                let (elapsed, _) = {
-                    let r = peer.read().await;
-                    (r.last_reg_time.elapsed().as_millis() as i32, r.socket_addr)
-                };
+            if let Some(peer) = self.pm.get_in_memory(&peers[i]).await {
+                let elapsed = peer.read().await.last_reg_time.elapsed().as_millis() as i32;
+                // bytes index from left to right
+                let states_idx = i / 8;
+                let bit_idx = 7 - i % 8;
                 if elapsed < REG_TIMEOUT {
                     states[states_idx] |= 0x01 << bit_idx;
                 }
