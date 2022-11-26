@@ -44,9 +44,11 @@ jobs:
       - name: Install toolchain
         uses: actions-rs/toolchain@v1
         with:
-          toolchain: nightly
+          toolchain: "1.62"
           override: true
           default: true
+          components: rustfmt
+          profile: minimal
           target: ${{ matrix.job.target }}
 
       - name: Build
@@ -56,59 +58,95 @@ jobs:
           args: --release --all-features --target=${{ matrix.job.target }}
           use-cross: true  
 
-      # - name: Run tests
-      #   run: cargo test --verbose
-
       - name: Exec chmod
         run: chmod -v a+x target/${{ matrix.job.target }}/release/*
 
       - name: Publish Artifacts
         uses: actions/upload-artifact@v3
         with:
-          name: binaries-${{ matrix.job.name }}
+          name: binaries-linux-${{ matrix.job.name }}
           path: |
             target/${{ matrix.job.target }}/release/hbbr
             target/${{ matrix.job.target }}/release/hbbs
             target/${{ matrix.job.target }}/release/rustdesk-utils
           if-no-files-found: error
 
+  build-win:
+    name: Build - windows
+    runs-on: windows-2019
+
+    steps:
+      
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Install toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: "1.62"
+          override: true
+          default: true
+          components: rustfmt
+          profile: minimal
+          target: x86_64-pc-windows-msvc
+
+      - name: Build
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release --all-features --target=x86_64-pc-windows-msvc
+          use-cross: true  
+
+      - name: Publish Artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: binaries-windows-x86_64
+          path: |
+            target\x86_64-pc-windows-msvc\release\hbbr.exe
+            target\x86_64-pc-windows-msvc\release\hbbs.exe
+            target\x86_64-pc-windows-msvc\release\rustdesk-utils.exe 
+          if-no-files-found: error
+
   # github (draft) release with all binaries
   release:
 
     name: Github release
-    needs: build
+    needs: 
+      - build
+      - build-win
     runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
         job:
-          - { name: "amd64" }
-          - { name: "arm64v8" }
-          - { name: "armv7" }
-          - { name: "i386" }
+          - { os: "linux", name: "amd64" }
+          - { os: "linux", name: "arm64v8" }
+          - { os: "linux", name: "armv7" }
+          - { os: "linux", name: "i386" }
+          - { os: "windows", name: "x86_64" }
 
     steps:
 
-      - name: Download binaries (${{ matrix.job.name }})
+      - name: Download binaries (${{ matrix.job.os }} - ${{ matrix.job.name }})
         uses: actions/download-artifact@v3
         with:
-          name: binaries-${{ matrix.job.name }}
+          name: binaries-${{ matrix.job.os }}-${{ matrix.job.name }}
           path: ${{ matrix.job.name }}
 
       - name: Exec chmod
         run: chmod -v a+x ${{ matrix.job.name }}/*
 
-      - name: Pack files (${{ matrix.job.name }})
+      - name: Pack files (${{ matrix.job.os }} - ${{ matrix.job.name }})
         run: |
           sudo apt update
           DEBIAN_FRONTEND=noninteractive sudo apt install -y zip
-          zip ${{ matrix.job.name }}/rustdesk-server-linux-${{ matrix.job.name }}.zip ${{ matrix.job.name }}/hbbr ${{ matrix.job.name }}/hbbs ${{ matrix.job.name }}/rustdesk-utils
+          zip ${{ matrix.job.name }}/rustdesk-server-${{ matrix.job.os }}-${{ matrix.job.name }}.zip ${{ matrix.job.name }}/*
 
-      - name: Create Release (${{ matrix.job.name }})
+      - name: Create Release (${{ matrix.job.os }} - (${{ matrix.job.name }})
         uses: softprops/action-gh-release@v1
         with:
           draft: true
-          files: ${{ matrix.job.name }}/rustdesk-server-linux-${{ matrix.job.name }}.zip
+          files: ${{ matrix.job.name }}/rustdesk-server-${{ matrix.job.os }}-${{ matrix.job.name }}.zip
             
   # docker build and push of single-arch images
   docker:
@@ -133,7 +171,7 @@ jobs:
       - name: Download binaries
         uses: actions/download-artifact@v3
         with:
-          name: binaries-${{ matrix.job.name }}
+          name: binaries-linux-${{ matrix.job.name }}
           path: docker/rootfs/usr/bin
 
       - name: Make binaries executable
@@ -253,7 +291,7 @@ jobs:
       - name: Download binaries
         uses: actions/download-artifact@v3
         with:
-          name: binaries-${{ matrix.job.name }}
+          name: binaries-linux-${{ matrix.job.name }}
           path: docker-classic/
 
       - name: Make binaries executable
@@ -320,7 +358,7 @@ jobs:
       - name: Download binaries
         uses: actions/download-artifact@v3
         with:
-          name: binaries-${{ matrix.job.name }}
+          name: binaries-linux-${{ matrix.job.name }}
           path: debian-build/${{ matrix.job.name }}/bin
 
       - name: Build package for ${{ matrix.job.name }} arch
