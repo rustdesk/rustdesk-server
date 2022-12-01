@@ -482,7 +482,7 @@ impl RendezvousServer {
                     }
                     if let Some(peer) = self.pm.get_in_memory(&rf.id).await {
                         let mut msg_out = RendezvousMessage::new();
-                        rf.socket_addr = AddrMangle::encode(addr).into();
+                        rf.socket_addr = AddrMangle::encode(1, addr).into();
                         msg_out.set_request_relay(rf);
                         let peer_addr = peer.read().await.socket_addr;
                         self.tx.send(Data::Msg(msg_out, peer_addr)).ok();
@@ -606,7 +606,7 @@ impl RendezvousServer {
         );
         let mut msg_out = RendezvousMessage::new();
         let mut p = PunchHoleResponse {
-            socket_addr: AddrMangle::encode(addr).into(),
+            socket_addr: AddrMangle::encode(1, addr).into(),
             pk: self.get_pk(&phs.version, phs.id).await,
             relay_server: phs.relay_server.clone(),
             ..Default::default()
@@ -713,7 +713,7 @@ impl RendezvousServer {
                         _ => false,
                     },
                 };
-            let socket_addr = AddrMangle::encode(addr).into();
+            let socket_addr = AddrMangle::encode(1, addr).into();
             if same_intranet {
                 log::debug!(
                     "Fetch local addr {:?} {:?} request from {:?}",
