@@ -1202,7 +1202,7 @@ async fn check_relay_servers(rs0: Arc<RelayServers>, tx: Sender) {
         let rs = rs.clone();
         let x = x.clone();
         futs.push(tokio::spawn(async move {
-            if FramedStream::new(&host, "0.0.0.0:0", CHECK_RELAY_TIMEOUT)
+            if FramedStream::new(&host, None, CHECK_RELAY_TIMEOUT)
                 .await
                 .is_ok()
             {
