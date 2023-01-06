@@ -81,15 +81,22 @@ pub async fn start(port: &str, key: &str) -> ResultType<()> {
     log::info!("Listening on tcp {}", addr);
     let addr2 = format!("0.0.0.0:{}", port.parse::<u16>().unwrap() + 2);
     log::info!("Listening on websocket {}", addr2);
-    loop {
-        log::info!("Start");
-        io_loop(
-            new_listener(&addr, false).await?,
-            new_listener(&addr2, false).await?,
-            &key,
-        )
-        .await;
-    }
+    let main_task = async move {
+        loop {
+            log::info!("Start");
+            io_loop(
+                new_listener(&addr, false).await?,
+                new_listener(&addr2, false).await?,
+                &key,
+            )
+            .await;
+        }
+    };
+    let listen_signal = crate::common::listen_signal();
+    tokio::select!(
+        res = main_task => res,
+        res = listen_signal => res,
+    )
 }
 
 fn check_params() {

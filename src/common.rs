@@ -1,5 +1,8 @@
 use clap::App;
-use hbb_common::{anyhow::Context, log, ResultType};
+use hbb_common::{
+    anyhow::{Context, Result},
+    log, ResultType,
+};
 use ini::Ini;
 use sodiumoxide::crypto::sign;
 use std::{
@@ -137,4 +140,44 @@ pub fn gen_sk(wait: u64) -> (String, Option<sign::SecretKey>) {
         }
     }
     ("".to_owned(), None)
+}
+
+#[cfg(unix)]
+pub async fn listen_signal() -> Result<()> {
+    use hbb_common::tokio;
+    use hbb_common::tokio::signal::unix::{signal, SignalKind};
+
+    tokio::spawn(async {
+        let mut s = signal(SignalKind::hangup())?;
+        let hangup = s.recv();
+        let mut s = signal(SignalKind::terminate())?;
+        let terminate = s.recv();
+        let mut s = signal(SignalKind::interrupt())?;
+        let interrupt = s.recv();
+        let mut s = signal(SignalKind::quit())?;
+        let quit = s.recv();
+
+        tokio::select! {
+            _ = hangup => {
+                log::info!("signal hangup");
+            }
+            _ = terminate => {
+                log::info!("signal terminate");
+            }
+            _ = interrupt => {
+                log::info!("signal interrupt");
+            }
+            _ = quit => {
+                log::info!("signal quit");
+            }
+        }
+        Ok(())
+    })
+    .await?
+}
+
+#[cfg(not(unix))]
+pub async fn listen_signal() -> Result<()> {
+    let () = std::future::pending().await;
+    unreachable!();
 }
