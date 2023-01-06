@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use hbb_common::{log, ResultType};
-use serde_json::value::Value;
 use sqlx::{
     sqlite::SqliteConnectOptions, ConnectOptions, Connection, Error as SqlxError, SqliteConnection,
 };
@@ -8,7 +7,6 @@ use std::{ops::DerefMut, str::FromStr};
 //use sqlx::postgres::PgPoolOptions;
 //use sqlx::mysql::MySqlPoolOptions;
 
-pub(crate) type MapValue = serde_json::map::Map<String, Value>;
 type Pool = deadpool::managed::Pool<DbPool>;
 
 pub struct DbPool {
@@ -54,7 +52,7 @@ impl Database {
             std::fs::File::create(url).ok();
         }
         let n: usize = std::env::var("MAX_DATABASE_CONNECTIONS")
-            .unwrap_or("1".to_owned())
+            .unwrap_or_else(|_| "1".to_owned())
             .parse()
             .unwrap_or(1);
         log::debug!("MAX_DATABASE_CONNECTIONS={}", n);
@@ -103,24 +101,6 @@ impl Database {
         )
         .fetch_optional(self.pool.get().await?.deref_mut())
         .await?)
-    }
-
-    #[inline]
-    pub async fn get_conn(&self) -> ResultType<deadpool::managed::Object<DbPool>> {
-        Ok(self.pool.get().await?)
-    }
-
-    pub async fn update_peer(&self, payload: MapValue, guid: &[u8]) -> ResultType<()> {
-        let mut conn = self.get_conn().await?;
-        let mut tx = conn.begin().await?;
-        if let Some(v) = payload.get("note") {
-            let v = get_str(v);
-            sqlx::query!("update peer set note = ? where guid = ?", v, guid)
-                .execute(&mut tx)
-                .await?;
-        }
-        tx.commit().await?;
-        Ok(())
     }
 
     pub async fn insert_peer(
@@ -197,19 +177,5 @@ mod tests {
             jobs.push(a);
         }
         hbb_common::futures::future::join_all(jobs).await;
-    }
-}
-
-pub(crate) fn get_str(v: &Value) -> Option<&str> {
-    match v {
-        Value::String(v) => {
-            let v = v.trim();
-            if v.is_empty() {
-                None
-            } else {
-                Some(v)
-            }
-        }
-        _ => None,
     }
 }
