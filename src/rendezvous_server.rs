@@ -1277,7 +1277,7 @@ async fn create_udp_listener(port: i32, rmem: usize) -> ResultType<FramedSocket>
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port as _);
     let s = FramedSocket::new_reuse(&addr, false, rmem).await?;
     log::debug!("listen on udp {:?}", s.local_addr());
-    return Ok(s);
+    Ok(s)
 }
 
 #[inline]
