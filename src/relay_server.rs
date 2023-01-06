@@ -8,7 +8,7 @@ use hbb_common::{
     protobuf::Message as _,
     rendezvous_proto::*,
     sleep,
-    tcp::{new_listener, FramedStream},
+    tcp::{listen_any, FramedStream},
     timeout,
     tokio::{
         self,
@@ -77,19 +77,14 @@ pub async fn start(port: &str, key: &str) -> ResultType<()> {
         BLOCKLIST_FILE,
         BLOCKLIST.read().await.len()
     );
-    let addr = format!("0.0.0.0:{}", port);
-    log::info!("Listening on tcp {}", addr);
-    let addr2 = format!("0.0.0.0:{}", port.parse::<u16>().unwrap() + 2);
-    log::info!("Listening on websocket {}", addr2);
+    let port: u16 = port.parse()?;
+    log::info!("Listening on tcp :{}", port);
+    let port2 = port + 2;
+    log::info!("Listening on websocket :{}", port2);
     let main_task = async move {
         loop {
             log::info!("Start");
-            io_loop(
-                new_listener(&addr, false).await?,
-                new_listener(&addr2, false).await?,
-                &key,
-            )
-            .await;
+            io_loop(listen_any(port).await?, listen_any(port2).await?, &key).await;
         }
     };
     let listen_signal = crate::common::listen_signal();
