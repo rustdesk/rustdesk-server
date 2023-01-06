@@ -1,15 +1,16 @@
 pub mod compress;
-#[path = "./protos/message.rs"]
-pub mod message_proto;
-#[path = "./protos/rendezvous.rs"]
-pub mod rendezvous_proto;
+pub mod platform;
+pub mod protos;
 pub use bytes;
+use config::Config;
 pub use futures;
 pub use protobuf;
+pub use protos::message as message_proto;
+pub use protos::rendezvous as rendezvous_proto;
 use std::{
     fs::File,
     io::{self, BufRead},
-    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+    net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4},
     path::Path,
     time::{self, SystemTime, UNIX_EPOCH},
 };
@@ -27,6 +28,7 @@ pub use anyhow::{self, bail};
 pub use futures_util;
 pub mod config;
 pub mod fs;
+pub use lazy_static;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub use mac_address;
 pub use rand;
@@ -35,6 +37,9 @@ pub use sodiumoxide;
 pub use tokio_socks;
 pub use tokio_socks::IntoTargetAddr;
 pub use tokio_socks::TargetAddr;
+pub mod password_security;
+pub use chrono;
+pub use directories_next;
 
 #[cfg(feature = "quic")]
 pub type Stream = quic::Connection;
@@ -53,6 +58,21 @@ macro_rules! allow_err {
             log::debug!(
                 "{:?}, {}:{}:{}:{}",
                 err,
+                module_path!(),
+                file!(),
+                line!(),
+                column!()
+            );
+        } else {
+        }
+    };
+
+    ($e:expr, $($arg:tt)*) => {
+        if let Err(err) = $e {
+            log::debug!(
+                "{:?}, {}, {}:{}:{}:{}",
+                err,
+                format_args!($($arg)*),
                 module_path!(),
                 file!(),
                 line!(),
@@ -97,13 +117,31 @@ impl AddrMangle {
                 }
                 bytes[..(16 - n_padding)].to_vec()
             }
-            _ => {
-                panic!("Only support ipv4");
+            SocketAddr::V6(addr_v6) => {
+                let mut x = addr_v6.ip().octets().to_vec();
+                let port: [u8; 2] = addr_v6.port().to_le_bytes();
+                x.push(port[0]);
+                x.push(port[1]);
+                x
             }
         }
     }
 
     pub fn decode(bytes: &[u8]) -> SocketAddr {
+        if bytes.len() > 16 {
+            if bytes.len() != 18 {
+                return Config::get_any_listen_addr(false);
+            }
+            #[allow(invalid_value)]
+            let mut tmp: [u8; 2] = unsafe { std::mem::MaybeUninit::uninit().assume_init() };
+            tmp.copy_from_slice(&bytes[16..]);
+            let port = u16::from_le_bytes(tmp);
+            #[allow(invalid_value)]
+            let mut tmp: [u8; 16] = unsafe { std::mem::MaybeUninit::uninit().assume_init() };
+            tmp.copy_from_slice(&bytes[..16]);
+            let ip = std::net::Ipv6Addr::from(tmp);
+            return SocketAddr::new(IpAddr::V6(ip), port);
+        }
         let mut padded = [0u8; 16];
         padded[..bytes.len()].copy_from_slice(&bytes);
         let number = u128::from_le_bytes(padded);
@@ -156,19 +194,23 @@ pub fn get_version_from_url(url: &str) -> String {
 }
 
 pub fn gen_version() {
+    use std::io::prelude::*;
     let mut file = File::create("./src/version.rs").unwrap();
     for line in read_lines("Cargo.toml").unwrap() {
         if let Ok(line) = line {
             let ab: Vec<&str> = line.split("=").map(|x| x.trim()).collect();
             if ab.len() == 2 && ab[0] == "version" {
-                use std::io::prelude::*;
-                file.write_all(format!("pub const VERSION: &str = {};", ab[1]).as_bytes())
+                file.write_all(format!("pub const VERSION: &str = {};\n", ab[1]).as_bytes())
                     .ok();
-                file.sync_all().ok();
                 break;
             }
         }
     }
+    // generate build date
+    let build_date = format!("{}", chrono::Local::now().format("%Y-%m-%d %H:%M"));
+    file.write_all(format!("pub const BUILD_DATE: &str = \"{}\";", build_date).as_bytes())
+        .ok();
+    file.sync_all().ok();
 }
 
 fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
@@ -199,6 +241,40 @@ pub fn get_modified_time(path: &std::path::Path) -> SystemTime {
         .unwrap_or(UNIX_EPOCH)
 }
 
+pub fn get_created_time(path: &std::path::Path) -> SystemTime {
+    std::fs::metadata(&path)
+        .map(|m| m.created().unwrap_or(UNIX_EPOCH))
+        .unwrap_or(UNIX_EPOCH)
+}
+
+pub fn get_exe_time() -> SystemTime {
+    std::env::current_exe().map_or(UNIX_EPOCH, |path| {
+        let m = get_modified_time(&path);
+        let c = get_created_time(&path);
+        if m > c {
+            m
+        } else {
+            c
+        }
+    })
+}
+
+pub fn get_uuid() -> Vec<u8> {
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    if let Ok(id) = machine_uid::get() {
+        return id.into();
+    }
+    Config::get_key_pair().1
+}
+
+#[inline]
+pub fn get_time() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0) as _
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -206,5 +282,61 @@ mod tests {
     fn test_mangle() {
         let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(192, 168, 16, 32), 21116));
         assert_eq!(addr, AddrMangle::decode(&AddrMangle::encode(addr)));
+
+        let addr = "[2001:db8::1]:8080".parse::<SocketAddr>().unwrap();
+        assert_eq!(addr, AddrMangle::decode(&AddrMangle::encode(addr)));
+
+        let addr = "[2001:db8:ff::1111]:80".parse::<SocketAddr>().unwrap();
+        assert_eq!(addr, AddrMangle::decode(&AddrMangle::encode(addr)));
+    }
+
+    #[test]
+    fn test_allow_err() {
+        allow_err!(Err("test err") as Result<(), &str>);
+        allow_err!(
+            Err("test err with msg") as Result<(), &str>,
+            "prompt {}",
+            "failed"
+        );
+    }
+}
+
+#[inline]
+pub fn is_ipv4_str(id: &str) -> bool {
+    regex::Regex::new(r"^\d+\.\d+\.\d+\.\d+(:\d+)?$")
+        .unwrap()
+        .is_match(id)
+}
+
+#[inline]
+pub fn is_ipv6_str(id: &str) -> bool {
+    regex::Regex::new(r"^((([a-fA-F0-9]{1,4}:{1,2})+[a-fA-F0-9]{1,4})|(\[([a-fA-F0-9]{1,4}:{1,2})+[a-fA-F0-9]{1,4}\]:\d+))$")
+        .unwrap()
+        .is_match(id)
+}
+
+#[inline]
+pub fn is_ip_str(id: &str) -> bool {
+    is_ipv4_str(id) || is_ipv6_str(id)
+}
+
+#[cfg(test)]
+mod test_lib {
+    use super::*;
+
+    #[test]
+    fn test_ipv6() {
+        assert_eq!(is_ipv6_str("1:2:3"), true);
+        assert_eq!(is_ipv6_str("[ab:2:3]:12"), true);
+        assert_eq!(is_ipv6_str("[ABEF:2a:3]:12"), true);
+        assert_eq!(is_ipv6_str("[ABEG:2a:3]:12"), false);
+        assert_eq!(is_ipv6_str("1[ab:2:3]:12"), false);
+        assert_eq!(is_ipv6_str("1.1.1.1"), false);
+        assert_eq!(is_ip_str("1.1.1.1"), true);
+        assert_eq!(is_ipv6_str("1:2:"), false);
+        assert_eq!(is_ipv6_str("1:2::0"), true);
+        assert_eq!(is_ipv6_str("[1:2::0]:1"), true);
+        assert_eq!(is_ipv6_str("[1:2::0]:"), false);
+        assert_eq!(is_ipv6_str("1:2::0]:1"), false);
     }
 }

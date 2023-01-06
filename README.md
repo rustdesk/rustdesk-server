@@ -48,6 +48,8 @@ docker run --name hbbr --net=host -v "$PWD/data:/root" -d rustdesk/rustdesk-serv
 
 or without --net=host, but P2P direct connection can not work.
 
+For systems using SELinux, replacing `/root` by `/root:z` is required for the containers to run correctly. Alternatively, SELinux container separation can be disabled completely adding the option `--security-opt label=disable`.
+
 ```bash
 docker run --name hbbs -p 21115:21115 -p 21116:21116 -p 21116:21116/udp -p 21118:21118 -v "$PWD/data:/root" -d rustdesk/rustdesk-server:latest hbbs -r <relay-server-ip[:port]> 
 docker run --name hbbr -p 21117:21117 -p 21119:21119 -v "$PWD/data:/root" -d rustdesk/rustdesk-server:latest hbbr 
@@ -171,13 +173,12 @@ services:
     restart: unless-stopped
 ```
 
-We use these environment variables:
+For this container image, you can use these environment variables, **in addition** to the ones specified in the following **ENV variables** section:
 
 | variable | optional | description |
 | --- | --- | --- |
 | RELAY | no | the IP address/DNS name of the machine running this container |
 | ENCRYPTED_ONLY | yes | if set to **"1"** unencrypted connection will not be accepted |
-| DB_URL | yes | path for database file |
 | KEY_PUB | yes | public part of the key pair |
 | KEY_PRIV | yes | private part of the key pair |
 
@@ -313,3 +314,28 @@ These packages are meant for the following distributions:
 - Ubuntu 18.04 LTS
 - Debian 11 bullseye
 - Debian 10 buster
+
+## ENV variables
+
+hbbs and hbbr can be configured using these ENV variables.
+You can specify the variables as usual or use an `.env` file.
+
+| variable | binary | description |
+| --- | --- | --- |
+| ALWAYS_USE_RELAY | hbbs | if set to **"Y"** disallows direct peer connection |
+| DB_URL | hbbs | path for database file |
+| DOWNGRADE_START_CHECK | hbbr | delay (in seconds) before downgrade check |
+| DOWNGRADE_THRESHOLD | hbbr | threshold of downgrade check (bit/ms) |
+| KEY | hbbs/hbbr | if set force the use of a specific key, if set to **"_"** force the use of any key |
+| LIMIT_SPEED | hbbr | speed limit (in Mb/s) |
+| LOCAL_IP | hbbs | hbbs local IP address used together with MASK for solving relay failure between LAN and WAN |
+| MASK | hbbs | network+mask of LAN IPs |
+| PORT | hbbs/hbbr | listening port (21116 for hbbs - 21117 for hbbr) |
+| RELAY_SERVERS | hbbs | IP address/DNS name of the machines running hbbr (separated by comma) |
+| RENDEZVOUS_SERVERS | hbbs | IP address/DNS name of the machines running hbbs (separated by comma) |
+| RMEM | hbbs | UDP recv buffer size |
+| RUST_LOG | all | set debug level (error|warn|info|debug|trace) |
+| SINGLE_BANDWIDTH | hbbr | max bandwidth for a single connection (in Mb/s) |
+| SOFTWARE_URL hbbs | hbbs | download url of RustDesk newest version |
+| TEST_HBBS | hbbs | IP address of hbbs for avoiding udp socket failure error |
+| TOTAL_BANDWIDTH | hbbr | max total bandwidth (in Mb/s) |
