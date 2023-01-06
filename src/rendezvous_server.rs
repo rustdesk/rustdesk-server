@@ -15,7 +15,7 @@ use hbb_common::{
         register_pk_response::Result::{TOO_FREQUENT, UUID_MISMATCH},
         *,
     },
-    tcp::{new_listener, FramedStream},
+    tcp::{listen_any, FramedStream},
     timeout,
     tokio::{
         self,
@@ -32,7 +32,7 @@ use ipnetwork::Ipv4Network;
 use sodiumoxide::crypto::sign;
 use std::{
     collections::HashMap,
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::Arc,
     time::Instant,
 };
@@ -92,15 +92,15 @@ impl RendezvousServer {
     pub async fn start(port: i32, serial: i32, key: &str, rmem: usize) -> ResultType<()> {
         let (key, sk) = Self::get_server_sk(key);
         let addr = format!("0.0.0.0:{}", port);
-        let addr2 = format!("0.0.0.0:{}", port - 1);
-        let addr3 = format!("0.0.0.0:{}", port + 2);
+        let nat_port = port - 1;
+        let ws_port = port + 2;
         let pm = PeerMap::new().await?;
         log::info!("serial={}", serial);
         let rendezvous_servers = get_servers(&get_arg("rendezvous-servers"), "rendezvous-servers");
-        log::info!("Listening on tcp/udp {}", addr);
-        log::info!("Listening on tcp {}, extra port for NAT test", addr2);
-        log::info!("Listening on websocket {}", addr3);
-        let mut socket = FramedSocket::new_with_buf_size(&addr, rmem).await?;
+        log::info!("Listening on tcp/udp :{}", port);
+        log::info!("Listening on tcp :{}, extra port for NAT test", nat_port);
+        log::info!("Listening on websocket :{}", ws_port);
+        let mut socket = create_udp_listener(port, rmem).await?;
         let (tx, mut rx) = mpsc::unbounded_channel::<Data>();
         let software_url = get_arg("software-url");
         let version = hbb_common::get_version_from_url(&software_url);
@@ -138,9 +138,9 @@ impl RendezvousServer {
         log::info!("local-ip: {:?}", rs.inner.local_ip);
         std::env::set_var("PORT_FOR_API", port.to_string());
         rs.parse_relay_servers(&get_arg("relay-servers"));
-        let mut listener = new_listener(&addr, false).await?;
-        let mut listener2 = new_listener(&addr2, false).await?;
-        let mut listener3 = new_listener(&addr3, false).await?;
+        let mut listener = create_tcp_listener(port).await?;
+        let mut listener2 = create_tcp_listener(nat_port).await?;
+        let mut listener3 = create_tcp_listener(ws_port).await?;
         let test_addr = std::env::var("TEST_HBBS").unwrap_or_default();
         if std::env::var("ALWAYS_USE_RELAY")
             .unwrap_or_default()
@@ -186,19 +186,19 @@ impl RendezvousServer {
                 {
                     LoopFailure::UdpSocket => {
                         drop(socket);
-                        socket = FramedSocket::new_with_buf_size(&addr, rmem).await?;
+                        socket = create_udp_listener(port, rmem).await?;
                     }
                     LoopFailure::Listener => {
                         drop(listener);
-                        listener = new_listener(&addr, false).await?;
+                        listener = create_tcp_listener(port).await?;
                     }
                     LoopFailure::Listener2 => {
                         drop(listener2);
-                        listener2 = new_listener(&addr2, false).await?;
+                        listener2 = create_tcp_listener(nat_port).await?;
                     }
                     LoopFailure::Listener3 => {
                         drop(listener3);
-                        listener3 = new_listener(&addr3, false).await?;
+                        listener3 = create_tcp_listener(ws_port).await?;
                     }
                 }
             }
@@ -1267,4 +1267,23 @@ async fn send_rk_res(
         ..Default::default()
     });
     socket.send(&msg_out, addr).await
+}
+
+async fn create_udp_listener(port: i32, rmem: usize) -> ResultType<FramedSocket> {
+    let addr = SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), port as _);
+    if let Ok(s) = FramedSocket::new_reuse(&addr, false, rmem).await {
+        log::debug!("listen on udp {:?}", s.local_addr());
+        return Ok(s);
+    }
+    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port as _);
+    let s = FramedSocket::new_reuse(&addr, false, rmem).await?;
+    log::debug!("listen on udp {:?}", s.local_addr());
+    return Ok(s);
+}
+
+#[inline]
+async fn create_tcp_listener(port: i32) -> ResultType<TcpListener> {
+    let s = listen_any(port as _).await?;
+    log::debug!("listen on tcp {:?}", s.local_addr());
+    Ok(s)
 }

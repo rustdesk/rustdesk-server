@@ -5,7 +5,7 @@ use futures::{SinkExt, StreamExt};
 use protobuf::Message;
 use socket2::{Domain, Socket, Type};
 use std::net::SocketAddr;
-use tokio::net::{ToSocketAddrs, UdpSocket};
+use tokio::net::{lookup_host, ToSocketAddrs, UdpSocket};
 use tokio_socks::{udp::Socks5UdpFramed, IntoTargetAddr, TargetAddr, ToProxyAddrs};
 use tokio_util::{codec::BytesCodec, udp::UdpFramed};
 
@@ -37,35 +37,28 @@ fn new_socket(addr: SocketAddr, reuse: bool, buf_size: usize) -> Result<Socket, 
         addr,
         socket.recv_buffer_size()
     );
+    if addr.is_ipv6() && addr.ip().is_unspecified() && addr.port() > 0 {
+        socket.set_only_v6(false).ok();
+    }
     socket.bind(&addr.into())?;
     Ok(socket)
 }
 
 impl FramedSocket {
     pub async fn new<T: ToSocketAddrs>(addr: T) -> ResultType<Self> {
-        let socket = UdpSocket::bind(addr).await?;
-        Ok(Self::Direct(UdpFramed::new(socket, BytesCodec::new())))
+        Self::new_reuse(addr, false, 0).await
     }
 
     #[allow(clippy::never_loop)]
-    pub async fn new_reuse<T: std::net::ToSocketAddrs>(addr: T) -> ResultType<Self> {
-        for addr in addr.to_socket_addrs()? {
-            let socket = new_socket(addr, true, 0)?.into_udp_socket();
-            return Ok(Self::Direct(UdpFramed::new(
-                UdpSocket::from_std(socket)?,
-                BytesCodec::new(),
-            )));
-        }
-        bail!("could not resolve to any address");
-    }
-
-    pub async fn new_with_buf_size<T: std::net::ToSocketAddrs>(
+    pub async fn new_reuse<T: ToSocketAddrs>(
         addr: T,
+        reuse: bool,
         buf_size: usize,
     ) -> ResultType<Self> {
-        for addr in addr.to_socket_addrs()? {
+        for addr in lookup_host(&addr).await? {
+            let socket = new_socket(addr, reuse, buf_size)?.into_udp_socket();
             return Ok(Self::Direct(UdpFramed::new(
-                UdpSocket::from_std(new_socket(addr, false, buf_size)?.into_udp_socket())?,
+                UdpSocket::from_std(socket)?,
                 BytesCodec::new(),
             )));
         }
@@ -165,12 +158,12 @@ impl FramedSocket {
         }
     }
 
-    pub fn is_ipv4(&self) -> bool {
+    pub fn local_addr(&self) -> Option<SocketAddr> {
         if let FramedSocket::Direct(x) = self {
             if let Ok(v) = x.get_ref().local_addr() {
-                return v.is_ipv4();
+                return Some(v);
             }
         }
-        true
+        None
     }
 }
