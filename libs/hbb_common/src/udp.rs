@@ -54,7 +54,8 @@ impl FramedSocket {
         reuse: bool,
         buf_size: usize,
     ) -> ResultType<Self> {
-        let addr = lookup_host(&addr).await?
+        let addr = lookup_host(&addr)
+            .await?
             .next()
             .context("could not resolve to any address")?;
         Ok(Self::Direct(UdpFramed::new(
