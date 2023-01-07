@@ -433,7 +433,7 @@ impl Config {
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         {
             #[cfg(not(target_os = "macos"))]
-            let org = "";
+            let org = "".to_owned();
             #[cfg(target_os = "macos")]
             let org = ORG.read().unwrap().clone();
             // /var/root for root
