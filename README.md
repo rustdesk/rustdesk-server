@@ -328,14 +328,9 @@ You can specify the variables as usual or use an `.env` file.
 | DOWNGRADE_THRESHOLD | hbbr | threshold of downgrade check (bit/ms) |
 | KEY | hbbs/hbbr | if set force the use of a specific key, if set to **"_"** force the use of any key |
 | LIMIT_SPEED | hbbr | speed limit (in Mb/s) |
-| LOCAL_IP | hbbs | hbbs local IP address used together with MASK for solving relay failure between LAN and WAN |
-| MASK | hbbs | network+mask of LAN IPs |
 | PORT | hbbs/hbbr | listening port (21116 for hbbs - 21117 for hbbr) |
 | RELAY_SERVERS | hbbs | IP address/DNS name of the machines running hbbr (separated by comma) |
-| RENDEZVOUS_SERVERS | hbbs | IP address/DNS name of the machines running hbbs (separated by comma) |
 | RMEM | hbbs | UDP recv buffer size |
 | RUST_LOG | all | set debug level (error|warn|info|debug|trace) |
 | SINGLE_BANDWIDTH | hbbr | max bandwidth for a single connection (in Mb/s) |
-| SOFTWARE_URL hbbs | hbbs | download url of RustDesk newest version |
-| TEST_HBBS | hbbs | IP address of hbbs for avoiding udp socket failure error |
 | TOTAL_BANDWIDTH | hbbr | max total bandwidth (in Mb/s) |
