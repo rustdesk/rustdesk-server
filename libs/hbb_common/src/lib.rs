@@ -97,6 +97,17 @@ pub struct AddrMangle();
 
 impl AddrMangle {
     pub fn encode(addr: SocketAddr) -> Vec<u8> {
+        // not work with [:1]:<port>
+        let addr = match addr {
+            SocketAddr::V6(v6) => {
+                if let Some(v4) = v6.ip().to_ipv4() {
+                    SocketAddr::new(IpAddr::V4(v4), addr.port())
+                } else {
+                    addr
+                }
+            }
+            _ => addr,
+        };
         match addr {
             SocketAddr::V4(addr_v4) => {
                 let tm = (SystemTime::now()
@@ -269,9 +280,29 @@ pub fn get_time() -> i64 {
         .unwrap_or(0) as _
 }
 
+#[inline]
+pub fn is_ipv4_str(id: &str) -> bool {
+    regex::Regex::new(r"^\d+\.\d+\.\d+\.\d+(:\d+)?$")
+        .unwrap()
+        .is_match(id)
+}
+
+#[inline]
+pub fn is_ipv6_str(id: &str) -> bool {
+    regex::Regex::new(r"^((([a-fA-F0-9]{1,4}:{1,2})+[a-fA-F0-9]{1,4})|(\[([a-fA-F0-9]{1,4}:{1,2})+[a-fA-F0-9]{1,4}\]:\d+))$")
+        .unwrap()
+        .is_match(id)
+}
+
+#[inline]
+pub fn is_ip_str(id: &str) -> bool {
+    is_ipv4_str(id) || is_ipv6_str(id)
+}
+
 #[cfg(test)]
-mod tests {
+mod test {
     use super::*;
+
     #[test]
     fn test_mangle() {
         let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(192, 168, 16, 32), 21116));
@@ -293,30 +324,6 @@ mod tests {
             "failed"
         );
     }
-}
-
-#[inline]
-pub fn is_ipv4_str(id: &str) -> bool {
-    regex::Regex::new(r"^\d+\.\d+\.\d+\.\d+(:\d+)?$")
-        .unwrap()
-        .is_match(id)
-}
-
-#[inline]
-pub fn is_ipv6_str(id: &str) -> bool {
-    regex::Regex::new(r"^((([a-fA-F0-9]{1,4}:{1,2})+[a-fA-F0-9]{1,4})|(\[([a-fA-F0-9]{1,4}:{1,2})+[a-fA-F0-9]{1,4}\]:\d+))$")
-        .unwrap()
-        .is_match(id)
-}
-
-#[inline]
-pub fn is_ip_str(id: &str) -> bool {
-    is_ipv4_str(id) || is_ipv6_str(id)
-}
-
-#[cfg(test)]
-mod test_lib {
-    use super::*;
 
     #[test]
     fn test_ipv6() {
@@ -332,5 +339,19 @@ mod test_lib {
         assert_eq!(is_ipv6_str("[1:2::0]:1"), true);
         assert_eq!(is_ipv6_str("[1:2::0]:"), false);
         assert_eq!(is_ipv6_str("1:2::0]:1"), false);
+    }
+
+    #[test]
+    fn test_mangle2() {
+        let addr = "[::ffff:127.0.0.1]:8080".parse().unwrap();
+        let addr_v4 = "127.0.0.1:8080".parse().unwrap();
+        assert_eq!(AddrMangle::decode(&AddrMangle::encode(addr)), addr_v4);
+        assert_eq!(
+            AddrMangle::decode(&AddrMangle::encode("[::127.0.0.1]:8080".parse().unwrap())),
+            addr_v4
+        );
+        assert_eq!(AddrMangle::decode(&AddrMangle::encode(addr_v4)), addr_v4);
+        let addr_v6 = "[ef::fe]:8080".parse().unwrap();
+        assert_eq!(AddrMangle::decode(&AddrMangle::encode(addr_v6)), addr_v6);
     }
 }
