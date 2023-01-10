@@ -26,7 +26,7 @@ jobs:
   build:
 
     name: Build - ${{ matrix.job.name }}
-    runs-on: ubuntu-22.04
+    runs-on: centos:7
     strategy:
       fail-fast: false
       matrix:
@@ -114,7 +114,7 @@ jobs:
     needs: 
       - build
       - build-win
-    runs-on: ubuntu-22.04
+    runs-on: centos:7
     strategy:
       fail-fast: false
       matrix:
@@ -153,7 +153,7 @@ jobs:
 
     name: Docker push - ${{ matrix.job.name }}
     needs: build
-    runs-on: ubuntu-22.04
+    runs-on: centos:7
     strategy:
       fail-fast: false
       matrix:
@@ -223,7 +223,7 @@ jobs:
 
     name: Docker manifest
     needs: docker
-    runs-on: ubuntu-22.04
+    runs-on: centos:7
 
     steps:
 
@@ -275,7 +275,7 @@ jobs:
 
     name: Docker push classic - ${{ matrix.job.name }}
     needs: build
-    runs-on: ubuntu-22.04
+    runs-on: centos:7
     strategy:
       fail-fast: false
       matrix:
@@ -331,7 +331,7 @@ jobs:
 
     name: debian package - ${{ matrix.job.name }}
     needs: build
-    runs-on: ubuntu-22.04
+    runs-on: centos:7
     strategy:
       fail-fast: false
       matrix:
