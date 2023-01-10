@@ -331,7 +331,7 @@ jobs:
 
     name: debian package - ${{ matrix.job.name }}
     needs: build
-    runs-on: ubuntu-18.04
+    runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
