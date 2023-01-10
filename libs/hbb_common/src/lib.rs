@@ -95,19 +95,24 @@ pub type ResultType<F, E = anyhow::Error> = anyhow::Result<F, E>;
 
 pub struct AddrMangle();
 
+#[inline]
+pub fn try_into_v4(addr: SocketAddr) -> SocketAddr {
+    match addr {
+        SocketAddr::V6(v6) if !addr.ip().is_loopback() => {
+            if let Some(v4) = v6.ip().to_ipv4() {
+                SocketAddr::new(IpAddr::V4(v4), addr.port())
+            } else {
+                addr
+            }
+        }
+        _ => addr,
+    }
+}
+
 impl AddrMangle {
     pub fn encode(addr: SocketAddr) -> Vec<u8> {
         // not work with [:1]:<port>
-        let addr = match addr {
-            SocketAddr::V6(v6) => {
-                if let Some(v4) = v6.ip().to_ipv4() {
-                    SocketAddr::new(IpAddr::V4(v4), addr.port())
-                } else {
-                    addr
-                }
-            }
-            _ => addr,
-        };
+        let addr = try_into_v4(addr);
         match addr {
             SocketAddr::V4(addr_v4) => {
                 let tm = (SystemTime::now()
@@ -352,6 +357,8 @@ mod test {
         );
         assert_eq!(AddrMangle::decode(&AddrMangle::encode(addr_v4)), addr_v4);
         let addr_v6 = "[ef::fe]:8080".parse().unwrap();
+        assert_eq!(AddrMangle::decode(&AddrMangle::encode(addr_v6)), addr_v6);
+        let addr_v6 = "[::1]:8080".parse().unwrap();
         assert_eq!(AddrMangle::decode(&AddrMangle::encode(addr_v6)), addr_v6);
     }
 }

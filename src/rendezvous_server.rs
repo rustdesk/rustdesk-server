@@ -4,6 +4,7 @@ use hbb_common::{
     allow_err,
     bytes::{Bytes, BytesMut},
     bytes_codec::BytesCodec,
+    config,
     futures::future::join_all,
     futures_util::{
         sink::SinkExt,
@@ -25,6 +26,7 @@ use hbb_common::{
         time::{interval, Duration},
     },
     tokio_util::codec::Framed,
+    try_into_v4,
     udp::FramedSocket,
     AddrMangle, ResultType,
 };
@@ -475,7 +477,7 @@ impl RendezvousServer {
                 Some(rendezvous_message::Union::PunchHoleRequest(ph)) => {
                     // there maybe several attempt, so sink can be none
                     if let Some(sink) = sink.take() {
-                        self.tcp_punch.lock().await.insert(addr, sink);
+                        self.tcp_punch.lock().await.insert(try_into_v4(addr), sink);
                     }
                     allow_err!(self.handle_tcp_punch_hole_request(addr, ph, key, ws).await);
                     return true;
@@ -483,7 +485,7 @@ impl RendezvousServer {
                 Some(rendezvous_message::Union::RequestRelay(mut rf)) => {
                     // there maybe several attempt, so sink can be none
                     if let Some(sink) = sink.take() {
-                        self.tcp_punch.lock().await.insert(addr, sink);
+                        self.tcp_punch.lock().await.insert(try_into_v4(addr), sink);
                     }
                     if let Some(peer) = self.pm.get_in_memory(&rf.id).await {
                         let mut msg_out = RendezvousMessage::new();
@@ -1048,7 +1050,7 @@ impl RendezvousServer {
 
     async fn handle_listener2(&self, stream: TcpStream, addr: SocketAddr) {
         let mut rs = self.clone();
-        if addr.ip().to_string() == "127.0.0.1" {
+        if addr.ip().is_loopback() {
             tokio::spawn(async move {
                 let mut stream = stream;
                 let mut buffer = [0; 64];
@@ -1203,7 +1205,7 @@ async fn check_relay_servers(rs0: Arc<RelayServers>, tx: Sender) {
     for x in rs0.iter() {
         let mut host = x.to_owned();
         if !host.contains(':') {
-            host = format!("{}:{}", host, hbb_common::config::RELAY_PORT);
+            host = format!("{}:{}", host, config::RELAY_PORT);
         }
         let rs = rs.clone();
         let x = x.clone();
@@ -1226,7 +1228,7 @@ async fn check_relay_servers(rs0: Arc<RelayServers>, tx: Sender) {
 
 // temp solution to solve udp socket failure
 async fn test_hbbs(addr: SocketAddr) -> ResultType<()> {
-    let mut socket = FramedSocket::new("0.0.0.0:0").await?;
+    let mut socket = FramedSocket::new(config::Config::get_any_listen_addr(addr.is_ipv4())).await?;
     let mut msg_out = RendezvousMessage::new();
     msg_out.set_register_peer(RegisterPeer {
         id: "(:test_hbbs:)".to_owned(),
