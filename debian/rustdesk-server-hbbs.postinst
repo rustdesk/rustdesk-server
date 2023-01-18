@@ -3,6 +3,10 @@ set -e
 
 SERVICE=rustdesk-hbbs.service
 
+if [ "$1" = "configure" ]; then
+    mkdir -p /var/log/rustdesk
+fi
+
 case "$1" in
     configure|abort-upgrade|abort-deconfigure|abort-remove)
       mkdir -p /var/lib/rustdesk-server/
