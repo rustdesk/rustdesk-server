@@ -8,7 +8,7 @@ use hbb_common::{
     protobuf::Message as _,
     rendezvous_proto::*,
     sleep,
-    tcp::{new_listener, FramedStream},
+    tcp::{listen_any, FramedStream},
     timeout,
     tokio::{
         self,
@@ -37,12 +37,12 @@ lazy_static::lazy_static! {
 }
 
 static mut DOWNGRADE_THRESHOLD: f64 = 0.66;
-static mut DOWNGRADE_START_CHECK: usize = 1800_000; // in ms
+static mut DOWNGRADE_START_CHECK: usize = 1_800_000; // in ms
 static mut LIMIT_SPEED: usize = 4 * 1024 * 1024; // in bit/s
 static mut TOTAL_BANDWIDTH: usize = 1024 * 1024 * 1024; // in bit/s
 static mut SINGLE_BANDWIDTH: usize = 16 * 1024 * 1024; // in bit/s
-const BLACKLIST_FILE: &'static str = "blacklist.txt";
-const BLOCKLIST_FILE: &'static str = "blocklist.txt";
+const BLACKLIST_FILE: &str = "blacklist.txt";
+const BLOCKLIST_FILE: &str = "blocklist.txt";
 
 #[tokio::main(flavor = "multi_thread")]
 pub async fn start(port: &str, key: &str) -> ResultType<()> {
@@ -50,8 +50,8 @@ pub async fn start(port: &str, key: &str) -> ResultType<()> {
     if let Ok(mut file) = std::fs::File::open(BLACKLIST_FILE) {
         let mut contents = String::new();
         if file.read_to_string(&mut contents).is_ok() {
-            for x in contents.split("\n") {
-                if let Some(ip) = x.trim().split(' ').nth(0) {
+            for x in contents.split('\n') {
+                if let Some(ip) = x.trim().split(' ').next() {
                     BLACKLIST.write().await.insert(ip.to_owned());
                 }
             }
@@ -65,8 +65,8 @@ pub async fn start(port: &str, key: &str) -> ResultType<()> {
     if let Ok(mut file) = std::fs::File::open(BLOCKLIST_FILE) {
         let mut contents = String::new();
         if file.read_to_string(&mut contents).is_ok() {
-            for x in contents.split("\n") {
-                if let Some(ip) = x.trim().split(' ').nth(0) {
+            for x in contents.split('\n') {
+                if let Some(ip) = x.trim().split(' ').next() {
                     BLOCKLIST.write().await.insert(ip.to_owned());
                 }
             }
@@ -77,19 +77,21 @@ pub async fn start(port: &str, key: &str) -> ResultType<()> {
         BLOCKLIST_FILE,
         BLOCKLIST.read().await.len()
     );
-    let addr = format!("0.0.0.0:{}", port);
-    log::info!("Listening on tcp {}", addr);
-    let addr2 = format!("0.0.0.0:{}", port.parse::<u16>().unwrap() + 2);
-    log::info!("Listening on websocket {}", addr2);
-    loop {
-        log::info!("Start");
-        io_loop(
-            new_listener(&addr, false).await?,
-            new_listener(&addr2, false).await?,
-            &key,
-        )
-        .await;
-    }
+    let port: u16 = port.parse()?;
+    log::info!("Listening on tcp :{}", port);
+    let port2 = port + 2;
+    log::info!("Listening on websocket :{}", port2);
+    let main_task = async move {
+        loop {
+            log::info!("Start");
+            io_loop(listen_any(port).await?, listen_any(port2).await?, &key).await;
+        }
+    };
+    let listen_signal = crate::common::listen_signal();
+    tokio::select!(
+        res = main_task => res,
+        res = listen_signal => res,
+    )
 }
 
 fn check_params() {
@@ -151,8 +153,10 @@ fn check_params() {
 }
 
 async fn check_cmd(cmd: &str, limiter: Limiter) -> String {
+    use std::fmt::Write;
+
     let mut res = "".to_owned();
-    let mut fds = cmd.trim().split(" ");
+    let mut fds = cmd.trim().split(' ');
     match fds.next() {
         Some("h") => {
             res = format!(
@@ -173,7 +177,7 @@ async fn check_cmd(cmd: &str, limiter: Limiter) -> String {
         }
         Some("blacklist-add" | "ba") => {
             if let Some(ip) = fds.next() {
-                for ip in ip.split("|") {
+                for ip in ip.split('|') {
                     BLACKLIST.write().await.insert(ip.to_owned());
                 }
             }
@@ -183,7 +187,7 @@ async fn check_cmd(cmd: &str, limiter: Limiter) -> String {
                 if ip == "all" {
                     BLACKLIST.write().await.clear();
                 } else {
-                    for ip in ip.split("|") {
+                    for ip in ip.split('|') {
                         BLACKLIST.write().await.remove(ip);
                     }
                 }
@@ -194,13 +198,13 @@ async fn check_cmd(cmd: &str, limiter: Limiter) -> String {
                 res = format!("{}\n", BLACKLIST.read().await.get(ip).is_some());
             } else {
                 for ip in BLACKLIST.read().await.clone().into_iter() {
-                    res += &format!("{}\n", ip);
+                    let _ = writeln!(res, "{ip}");
                 }
             }
         }
         Some("blocklist-add" | "Ba") => {
             if let Some(ip) = fds.next() {
-                for ip in ip.split("|") {
+                for ip in ip.split('|') {
                     BLOCKLIST.write().await.insert(ip.to_owned());
                 }
             }
@@ -210,7 +214,7 @@ async fn check_cmd(cmd: &str, limiter: Limiter) -> String {
                 if ip == "all" {
                     BLOCKLIST.write().await.clear();
                 } else {
-                    for ip in ip.split("|") {
+                    for ip in ip.split('|') {
                         BLOCKLIST.write().await.remove(ip);
                     }
                 }
@@ -221,7 +225,7 @@ async fn check_cmd(cmd: &str, limiter: Limiter) -> String {
                 res = format!("{}\n", BLOCKLIST.read().await.get(ip).is_some());
             } else {
                 for ip in BLOCKLIST.read().await.clone().into_iter() {
-                    res += &format!("{}\n", ip);
+                    let _ = writeln!(res, "{ip}");
                 }
             }
         }
@@ -306,15 +310,16 @@ async fn check_cmd(cmd: &str, limiter: Limiter) -> String {
                 .read()
                 .await
                 .iter()
-                .map(|x| (x.0.clone(), x.1.clone()))
+                .map(|x| (x.0.clone(), *x.1))
                 .collect();
             tmp.sort_by(|a, b| ((b.1).1).partial_cmp(&(a.1).1).unwrap());
             for (ip, (elapsed, total, highest, speed)) in tmp {
-                if elapsed <= 0 {
+                if elapsed == 0 {
                     continue;
                 }
-                res += &format!(
-                    "{}: {}s {:.2}MB {}kb/s {}kb/s {}kb/s\n",
+                let _ = writeln!(
+                    res,
+                    "{}: {}s {:.2}MB {}kb/s {}kb/s {}kb/s",
                     ip,
                     elapsed / 1000,
                     total as f64 / 1024. / 1024. / 8.,
@@ -489,7 +494,7 @@ async fn relay(
                     total_limiter.consume(nb).await;
                     total += nb;
                     total_s += nb;
-                    if bytes.len() > 0 {
+                    if !bytes.is_empty() {
                         stream.send_raw(bytes.into()).await?;
                     }
                 } else {
@@ -508,7 +513,7 @@ async fn relay(
                     total_limiter.consume(nb).await;
                     total += nb;
                     total_s += nb;
-                    if bytes.len() > 0 {
+                    if !bytes.is_empty() {
                         peer.send_raw(bytes.into()).await?;
                     }
                 } else {
@@ -530,7 +535,7 @@ async fn relay(
             }
             blacked = BLACKLIST.read().await.get(&ip).is_some();
             tm = std::time::Instant::now();
-            let speed = total_s / (n as usize);
+            let speed = total_s / n;
             if speed > highest_s {
                 highest_s = speed;
             }
@@ -540,16 +545,17 @@ async fn relay(
                 (elapsed as _, total as _, highest_s as _, speed as _),
             );
             total_s = 0;
-            if elapsed > unsafe { DOWNGRADE_START_CHECK } && !downgrade {
-                if total > elapsed * downgrade_threshold {
-                    downgrade = true;
-                    log::info!(
-                        "Downgrade {}, exceed downgrade threshold {}bit/ms in {}ms",
-                        id,
-                        downgrade_threshold,
-                        elapsed
-                    );
-                }
+            if elapsed > unsafe { DOWNGRADE_START_CHECK }
+                && !downgrade
+                && total > elapsed * downgrade_threshold
+            {
+                downgrade = true;
+                log::info!(
+                    "Downgrade {}, exceed downgrade threshold {}bit/ms in {}ms",
+                    id,
+                    downgrade_threshold,
+                    elapsed
+                );
             }
         }
     }

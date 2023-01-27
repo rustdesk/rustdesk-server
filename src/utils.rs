@@ -33,7 +33,7 @@ fn gen_keypair() {
 }
 
 fn validate_keypair(pk: &str, sk: &str) -> ResultType<()> {
-    let sk1 = base64::decode(&sk);
+    let sk1 = base64::decode(sk);
     if sk1.is_err() {
         bail!("Invalid secret key");
     }
@@ -45,7 +45,7 @@ fn validate_keypair(pk: &str, sk: &str) -> ResultType<()> {
     }
     let secret_key = secret_key.unwrap();
 
-    let pk1 = base64::decode(&pk);
+    let pk1 = base64::decode(pk);
     if pk1.is_err() {
         bail!("Invalid public key");
     }
@@ -96,14 +96,13 @@ fn doctor_ip(server_ip_address: std::net::IpAddr, server_address: Option<&str>) 
     // reverse dns lookup
     // TODO: (check) doesn't seem to do reverse lookup on OSX...
     let reverse = lookup_addr(&server_ip_address).unwrap();
-    if server_address.is_some() {
-        if reverse == server_address.unwrap() {
+    if let Some(server_address) = server_address {
+        if reverse == server_address {
             println!("Reverse DNS lookup: '{}' MATCHES server address", reverse);
         } else {
             println!(
                 "Reverse DNS lookup: '{}' DOESN'T MATCH server address '{}'",
-                reverse,
-                server_address.unwrap()
+                reverse, server_address
             );
         }
     }
@@ -126,19 +125,18 @@ fn doctor(server_address_unclean: &str) {
     let server_address2 = server_address3.to_lowercase();
     let server_address = server_address2.as_str();
     println!("Checking server:  {}\n", server_address);
-    let server_ipaddr = server_address.parse::<IpAddr>();
-    if server_ipaddr.is_err() {
+    if let Ok(server_ipaddr) = server_address.parse::<IpAddr>() {
+        // user requested an ip address
+        doctor_ip(server_ipaddr, None);
+    } else {
         // the passed string is not an ip address
         let ips: Vec<std::net::IpAddr> = lookup_host(server_address).unwrap();
-        println!("Found {} IP addresses: ", ips.iter().count());
+        println!("Found {} IP addresses: ", ips.len());
 
         ips.iter().for_each(|ip| println!(" - {ip}"));
 
-        ips.iter().for_each(|ip| doctor_ip(*ip, Some(server_address)));
-
-    } else {
-        // user requested an ip address
-        doctor_ip(server_ipaddr.unwrap(), None);
+        ips.iter()
+            .for_each(|ip| doctor_ip(*ip, Some(server_address)));
     }
 }
 

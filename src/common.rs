@@ -1,5 +1,8 @@
 use clap::App;
-use hbb_common::{anyhow::Context, log, ResultType};
+use hbb_common::{
+    anyhow::{Context, Result},
+    log, ResultType,
+};
 use ini::Ini;
 use sodiumoxide::crypto::sign;
 use std::{
@@ -9,15 +12,17 @@ use std::{
     time::{Instant, SystemTime},
 };
 
+#[allow(dead_code)]
 pub(crate) fn get_expired_time() -> Instant {
     let now = Instant::now();
     now.checked_sub(std::time::Duration::from_secs(3600))
         .unwrap_or(now)
 }
 
+#[allow(dead_code)]
 pub(crate) fn test_if_valid_server(host: &str, name: &str) -> ResultType<SocketAddr> {
     use std::net::ToSocketAddrs;
-    let res = if host.contains(":") {
+    let res = if host.contains(':') {
         host.to_socket_addrs()?.next().context("")
     } else {
         format!("{}:{}", host, 0)
@@ -31,9 +36,10 @@ pub(crate) fn test_if_valid_server(host: &str, name: &str) -> ResultType<SocketA
     res
 }
 
+#[allow(dead_code)]
 pub(crate) fn get_servers(s: &str, tag: &str) -> Vec<String> {
     let servers: Vec<String> = s
-        .split(",")
+        .split(',')
         .filter(|x| !x.is_empty() && test_if_valid_server(x, tag).is_ok())
         .map(|x| x.to_owned())
         .collect();
@@ -41,17 +47,19 @@ pub(crate) fn get_servers(s: &str, tag: &str) -> Vec<String> {
     servers
 }
 
+#[allow(dead_code)]
 #[inline]
 fn arg_name(name: &str) -> String {
-    name.to_uppercase().replace("_", "-")
+    name.to_uppercase().replace('_', "-")
 }
 
+#[allow(dead_code)]
 pub fn init_args(args: &str, name: &str, about: &str) {
     let matches = App::new(name)
         .version(crate::version::VERSION)
         .author("Purslane Ltd. <info@rustdesk.com>")
         .about(about)
-        .args_from_usage(&args)
+        .args_from_usage(args)
         .get_matches();
     if let Ok(v) = Ini::load_from_file(".env") {
         if let Some(section) = v.section(None::<String>) {
@@ -76,16 +84,19 @@ pub fn init_args(args: &str, name: &str, about: &str) {
     }
 }
 
+#[allow(dead_code)]
 #[inline]
 pub fn get_arg(name: &str) -> String {
     get_arg_or(name, "".to_owned())
 }
 
+#[allow(dead_code)]
 #[inline]
 pub fn get_arg_or(name: &str, default: String) -> String {
     std::env::var(arg_name(name)).unwrap_or(default)
 }
 
+#[allow(dead_code)]
 #[inline]
 pub fn now() -> u64 {
     SystemTime::now()
@@ -118,7 +129,7 @@ pub fn gen_sk(wait: u64) -> (String, Option<sign::SecretKey>) {
         };
         let (mut pk, mut sk) = gen_func();
         for _ in 0..300 {
-            if !pk.contains("/") && !pk.contains(":") {
+            if !pk.contains('/') && !pk.contains(':') {
                 break;
             }
             (pk, sk) = gen_func();
@@ -137,4 +148,44 @@ pub fn gen_sk(wait: u64) -> (String, Option<sign::SecretKey>) {
         }
     }
     ("".to_owned(), None)
+}
+
+#[cfg(unix)]
+pub async fn listen_signal() -> Result<()> {
+    use hbb_common::tokio;
+    use hbb_common::tokio::signal::unix::{signal, SignalKind};
+
+    tokio::spawn(async {
+        let mut s = signal(SignalKind::hangup())?;
+        let hangup = s.recv();
+        let mut s = signal(SignalKind::terminate())?;
+        let terminate = s.recv();
+        let mut s = signal(SignalKind::interrupt())?;
+        let interrupt = s.recv();
+        let mut s = signal(SignalKind::quit())?;
+        let quit = s.recv();
+
+        tokio::select! {
+            _ = hangup => {
+                log::info!("signal hangup");
+            }
+            _ = terminate => {
+                log::info!("signal terminate");
+            }
+            _ = interrupt => {
+                log::info!("signal interrupt");
+            }
+            _ = quit => {
+                log::info!("signal quit");
+            }
+        }
+        Ok(())
+    })
+    .await?
+}
+
+#[cfg(not(unix))]
+pub async fn listen_signal() -> Result<()> {
+    let () = std::future::pending().await;
+    unreachable!();
 }
