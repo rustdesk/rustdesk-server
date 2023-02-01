@@ -2,7 +2,7 @@ fn main() {
     let out_dir = format!("{}/protos", std::env::var("OUT_DIR").unwrap());
 
     std::fs::create_dir_all(&out_dir).unwrap();
-    
+
     protobuf_codegen::Codegen::new()
         .pure()
         .out_dir(out_dir)
