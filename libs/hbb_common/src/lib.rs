@@ -211,10 +211,7 @@ pub fn gen_version() {
     // generate build date
     let build_date = format!("{}", chrono::Local::now().format("%Y-%m-%d %H:%M"));
     file.write_all(
-        format!(
-            "#[allow(dead_code)]\npub const BUILD_DATE: &str = \"{build_date}\"\n;"
-        )
-        .as_bytes(),
+        format!("#[allow(dead_code)]\npub const BUILD_DATE: &str = \"{build_date}\";\n").as_bytes(),
     )
     .ok();
     file.sync_all().ok();

@@ -288,7 +288,7 @@ fn patch(path: PathBuf) -> PathBuf {
                         .trim()
                         .to_owned();
                     if user != "root" {
-                        return format!("/home/{}", user).into();
+                        return format!("/home/{user}").into();
                     }
                 }
             }
