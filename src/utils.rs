@@ -20,7 +20,7 @@ Available Commands:
 }
 
 fn error_then_help(msg: &str) {
-    println!("ERROR: {}\n", msg);
+    println!("ERROR: {msg}\n");
     print_help();
 }
 
@@ -74,7 +74,7 @@ fn validate_keypair(pk: &str, sk: &str) -> ResultType<()> {
 
 fn doctor_tcp(address: std::net::IpAddr, port: &str, desc: &str) {
     let start = std::time::Instant::now();
-    let conn = format!("{}:{}", address, port);
+    let conn = format!("{address}:{port}");
     if let Ok(_stream) = TcpStream::connect(conn.as_str()) {
         let elapsed = std::time::Instant::now().duration_since(start);
         println!(
@@ -84,12 +84,12 @@ fn doctor_tcp(address: std::net::IpAddr, port: &str, desc: &str) {
             elapsed.as_millis()
         );
     } else {
-        println!("TCP Port {} ({}): ERROR", port, desc);
+        println!("TCP Port {port} ({desc}): ERROR");
     }
 }
 
 fn doctor_ip(server_ip_address: std::net::IpAddr, server_address: Option<&str>) {
-    println!("\nChecking IP address: {}", server_ip_address);
+    println!("\nChecking IP address: {server_ip_address}");
     println!("Is IPV4: {}", server_ip_address.is_ipv4());
     println!("Is IPV6: {}", server_ip_address.is_ipv6());
 
@@ -98,11 +98,10 @@ fn doctor_ip(server_ip_address: std::net::IpAddr, server_address: Option<&str>) 
     let reverse = lookup_addr(&server_ip_address).unwrap();
     if let Some(server_address) = server_address {
         if reverse == server_address {
-            println!("Reverse DNS lookup: '{}' MATCHES server address", reverse);
+            println!("Reverse DNS lookup: '{reverse}' MATCHES server address");
         } else {
             println!(
-                "Reverse DNS lookup: '{}' DOESN'T MATCH server address '{}'",
-                reverse, server_address
+                "Reverse DNS lookup: '{reverse}' DOESN'T MATCH server address '{server_address}'"
             );
         }
     }
@@ -124,7 +123,7 @@ fn doctor(server_address_unclean: &str) {
     let server_address3 = server_address_unclean.trim();
     let server_address2 = server_address3.to_lowercase();
     let server_address = server_address2.as_str();
-    println!("Checking server:  {}\n", server_address);
+    println!("Checking server:  {server_address}\n");
     if let Ok(server_ipaddr) = server_address.parse::<IpAddr>() {
         // user requested an ip address
         doctor_ip(server_ipaddr, None);
@@ -155,7 +154,7 @@ fn main() {
             }
             let res = validate_keypair(args[2].as_str(), args[3].as_str());
             if let Err(e) = res {
-                println!("{}", e);
+                println!("{e}");
                 process::exit(0x0001);
             }
             println!("Key pair is VALID");

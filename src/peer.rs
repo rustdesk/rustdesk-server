@@ -77,7 +77,7 @@ impl PeerMap {
             }
             #[cfg(not(windows))]
             {
-                db = format!("./{}", db);
+                db = format!("./{db}");
             }
             db
         });

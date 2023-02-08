@@ -134,7 +134,7 @@ pub fn gen_sk(wait: u64) -> (String, Option<sign::SecretKey>) {
             }
             (pk, sk) = gen_func();
         }
-        let pub_file = format!("{}.pub", sk_file);
+        let pub_file = format!("{sk_file}.pub");
         if let Ok(mut f) = std::fs::File::create(&pub_file) {
             f.write_all(pk.as_bytes()).ok();
             if let Ok(mut f) = std::fs::File::create(sk_file) {

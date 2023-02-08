@@ -240,7 +240,7 @@ async fn check_cmd(cmd: &str, limiter: Limiter) -> String {
                 }
             } else {
                 unsafe {
-                    res = format!("{}\n", DOWNGRADE_THRESHOLD);
+                    res = format!("{DOWNGRADE_THRESHOLD}\n");
                 }
             }
         }

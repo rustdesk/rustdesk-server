@@ -13,10 +13,9 @@ fn main() -> ResultType<()> {
         .write_mode(WriteMode::Async)
         .start()?;
     let args = format!(
-        "-p, --port=[NUMBER(default={})] 'Sets the listening port'
+        "-p, --port=[NUMBER(default={RELAY_PORT})] 'Sets the listening port'
         -k, --key=[KEY] 'Only allow the client with the same key'
         ",
-        RELAY_PORT,
     );
     let matches = App::new("hbbr")
         .version(version::VERSION)
