@@ -1,0 +1,6 @@
+{
+    "rust.checkWith": "clippy",
+    "rust.formatOnSave": true,
+    "rust.checkOnSave": true,
+    "rust.useNewErrorFormat": true
+}
