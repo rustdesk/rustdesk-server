@@ -1,0 +1,31 @@
+[package]
+name = "rustdesk_server"
+version = "0.1.1"
+description = "rustdesk server gui"
+authors = ["elilchen"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[build-dependencies]
+tauri-build = { version = "1.2", features = [] }
+winres = "0.1"
+
+[dependencies]
+async-std = { version = "1.12", features = ["attributes", "unstable"] }
+crossbeam-channel = "0.5"
+derive-new = "0.5"
+notify = "5.1"
+once_cell = "1.17"
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+tauri = { version = "1.2", features = ["fs-exists", "fs-read-dir", "fs-read-file", "fs-write-file", "path-all", "shell-open", "system-tray"] }
+windows-service = "0.5.0"
+
+[features]
+# by default Tauri runs in production mode
+# when `tauri dev` runs it is executed with `cargo run --no-default-features` if `devPath` is an URL
+default = ["custom-protocol"]
+# this feature is used used for production builds where `devPath` points to the filesystem
+# DO NOT remove this
+custom-protocol = ["tauri/custom-protocol"]

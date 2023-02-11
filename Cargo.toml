@@ -57,3 +57,4 @@ hbb_common = { path = "libs/hbb_common" }
 
 [workspace]
 members = ["libs/hbb_common"]
+exclude = ["ui"]
