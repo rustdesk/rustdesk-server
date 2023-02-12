@@ -95,7 +95,24 @@ jobs:
         with:
           command: build
           args: --release --all-features --target=x86_64-pc-windows-msvc
-          use-cross: true  
+          use-cross: true
+
+      - name: Install NSIS
+        run: |
+          iwr -useb get.scoop.sh -outfile 'install.ps1'
+          .\install.ps1 -RunAsAdmin
+          scoop update
+          scoop bucket add extras
+          scoop install nsis
+
+      - run: rustup default nightly
+      - run: cargo build --release
+        working-directory: ./ui
+      - run: xcopy /y target\x86_64-pc-windows-msvc\release\*.exe ui\setup\bin\
+      - run: xcopy /y ui\target\release\*.exe ui\setup\
+      - run: mkdir ui\setup\logs
+      - run: makensis /V1 setup.nsi
+        working-directory: ./ui
 
       - name: Publish Artifacts
         uses: actions/upload-artifact@v3
@@ -104,7 +121,8 @@ jobs:
           path: |
             target\x86_64-pc-windows-msvc\release\hbbr.exe
             target\x86_64-pc-windows-msvc\release\hbbs.exe
-            target\x86_64-pc-windows-msvc\release\rustdesk-utils.exe 
+            target\x86_64-pc-windows-msvc\release\rustdesk-utils.exe
+            ui\RustDeskServer.Setup.exe
           if-no-files-found: error
 
   # github (draft) release with all binaries
