@@ -109,7 +109,7 @@ jobs:
         run: |
           rustup default nightly
           cargo build --release
-          xcopy /y target\x86_64-pc-windows-msvc\release\*.exe setup\bin\
+          xcopy /y ..\target\x86_64-pc-windows-msvc\release\*.exe setup\bin\
           xcopy /y target\release\*.exe setup\
           mkdir setup\logs
           makensis /V1 setup.nsi
