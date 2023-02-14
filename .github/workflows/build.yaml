@@ -105,14 +105,26 @@ jobs:
           scoop bucket add extras
           scoop install nsis
 
-      - run: rustup default nightly
-      - run: cargo build --release
+      - name: Build UI setup file
+        run: |
+          rustup default nightly
+          cargo build --release
+          xcopy /y target\x86_64-pc-windows-msvc\release\*.exe setup\bin\
+          xcopy /y target\release\*.exe setup\
+          mkdir setup\logs
+          makensis /V1 setup.nsi
+          mkdir SignOutput
+          mv RustDeskServer.Setup.exe SignOutput\
         working-directory: ./ui
-      - run: xcopy /y target\x86_64-pc-windows-msvc\release\*.exe ui\setup\bin\
-      - run: xcopy /y ui\target\release\*.exe ui\setup\
-      - run: mkdir ui\setup\logs
-      - run: makensis /V1 setup.nsi
-        working-directory: ./ui
+
+      - name: Sign UI setup file 
+        uses: GermanBluefox/code-sign-action@v7
+        with:
+          certificate: '${{ secrets.WINDOWS_PFX_BASE64 }}'
+          password: '${{ secrets.WINDOWS_PFX_PASSWORD }}'
+          certificatesha1: '${{ secrets.WINDOWS_PFX_SHA1_THUMBPRINT }}'
+          folder: './ui/SignOutput'
+          recursive: false
 
       - name: Publish Artifacts
         uses: actions/upload-artifact@v3
@@ -122,7 +134,7 @@ jobs:
             target\x86_64-pc-windows-msvc\release\hbbr.exe
             target\x86_64-pc-windows-msvc\release\hbbs.exe
             target\x86_64-pc-windows-msvc\release\rustdesk-utils.exe
-            ui\RustDeskServer.Setup.exe
+            ui\SignOutput\RustDeskServer.Setup.exe
           if-no-files-found: error
 
   # github (draft) release with all binaries
