@@ -132,7 +132,7 @@ Section "Install"
   nsExec::Exec 'sc stop hbbr'
   nsExec::Exec 'sc stop hbbs'
   nsExec::Exec 'taskkill /F /IM ${PRODUCT_NAME}.exe'
-  Sleep 500 ;
+  Sleep 500
 
   SetOutPath $INSTDIR
   File /r "setup\*.*"
@@ -142,12 +142,12 @@ Section "Install"
   CreateShortCut "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk" "$INSTDIR\${PRODUCT_NAME}.exe"
   CreateShortCut "$SMPROGRAMS\${APP_NAME}\Uninstall.lnk" "$INSTDIR\uninstall.exe"
   CreateShortCut "$DESKTOP\${APP_NAME}.lnk" "$INSTDIR\${PRODUCT_NAME}.exe"
-  CreateShortCut "$SMSTARTUP\${APP_NAME}.lnk" "$INSTDIR\${PRODUCT_NAME}.exe"
 
   nsExec::Exec 'netsh advfirewall firewall add rule name="${APP_NAME}" dir=in action=allow program="$INSTDIR\hbbs.exe" enable=yes'
   nsExec::Exec 'netsh advfirewall firewall add rule name="${APP_NAME}" dir=out action=allow program="$INSTDIR\hbbs.exe" enable=yes'
   nsExec::Exec 'netsh advfirewall firewall add rule name="${APP_NAME}" dir=in action=allow program="$INSTDIR\hbbr.exe" enable=yes'
   nsExec::Exec 'netsh advfirewall firewall add rule name="${APP_NAME}" dir=out action=allow program="$INSTDIR\hbbr.exe" enable=yes'
+  ExecWait 'powershell.exe -NoProfile -windowstyle hidden try { [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12 } catch {}; Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile "$$env:TEMP\MicrosoftEdgeWebview2Setup.exe" ; Start-Process -FilePath "$$env:TEMP\MicrosoftEdgeWebview2Setup.exe" -ArgumentList ($\'/silent$\', $\'/install$\') -Wait'
 SectionEnd
 
 Section "Uninstall"
@@ -155,7 +155,7 @@ Section "Uninstall"
   nsExec::Exec 'sc stop hbbr'
   nsExec::Exec 'sc stop hbbs'
   nsExec::Exec 'taskkill /F /IM ${PRODUCT_NAME}.exe'
-  Sleep 500 ;
+  Sleep 500
 
   RMDir /r "$SMPROGRAMS\${APP_NAME}"
   Delete "$SMSTARTUP\${APP_NAME}.lnk"
@@ -163,11 +163,16 @@ Section "Uninstall"
   nsExec::Exec 'sc delete hbbr'
   nsExec::Exec 'sc delete hbbs'
   nsExec::Exec 'netsh advfirewall firewall delete rule name="${APP_NAME}"'
+  RMDir /r "$INSTDIR\bin"
+  RMDir /r "$INSTDIR\logs"
+  RMDir /r "$INSTDIR\service"
+  Delete "$INSTDIR\${PRODUCT_NAME}.exe"
+  Delete "$INSTDIR\uninstall.exe"
 SectionEnd
 
 ####################################################################
 # Functions
 
 Function CreateStartupShortcut
-  CreateShortCut "$DESKTOP\${APP_NAME}.lnk" "$INSTDIR\${PRODUCT_NAME}.exe"
+  CreateShortCut "$SMSTARTUP\${APP_NAME}.lnk" "$INSTDIR\${PRODUCT_NAME}.exe"
 FunctionEnd

@@ -2324,6 +2324,7 @@ dependencies = [
  "once_cell",
  "serde",
  "serde_json",
+ "static_vcruntime",
  "tauri",
  "tauri-build",
  "windows-service",
@@ -2624,6 +2625,12 @@ checksum = "dbe866e1e51e8260c9eed836a042a5e7f6726bb2b411dffeaa712e19c388f23b"
 dependencies = [
  "loom",
 ]
+
+[[package]]
+name = "static_vcruntime"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "954e3e877803def9dc46075bf4060147c55cd70db97873077232eae0269dc89b"
 
 [[package]]
 name = "string_cache"

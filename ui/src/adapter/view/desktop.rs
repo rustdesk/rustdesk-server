@@ -59,6 +59,7 @@ pub async fn run(sender: Sender<Event>, receiver: Receiver<Event>) {
             // }
             WindowEvent::CloseRequested { api, .. } => {
                 api.prevent_close();
+                event.window().minimize().unwrap();
                 event.window().hide().unwrap();
             }
             _ => {}

@@ -1,6 +1,6 @@
 [package]
 name = "rustdesk_server"
-version = "0.1.1"
+version = "0.1.2"
 description = "rustdesk server gui"
 authors = ["elilchen"]
 edition = "2021"
@@ -8,6 +8,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [build-dependencies]
+static_vcruntime = "2.0"
 tauri-build = { version = "1.2", features = [] }
 winres = "0.1"
 

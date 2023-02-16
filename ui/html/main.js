@@ -22,13 +22,14 @@ class View {
         event.listen('__update__', this.appAction.bind(this));
         event.emit('__action__', '__init__');
         while (true) {
+            let now = Date.now();
             try {
                 await this.update();
                 this.render();
             } catch (e) {
                 console.error(e);
             }
-            await new Promise(r => setTimeout(r, 100));
+            await new Promise(r => setTimeout(r, Math.max(0, 33 - (Date.now() - now))));
         }
     }
     async update() {
