@@ -121,6 +121,7 @@ jobs:
 
       - name: Build UI browser file
         run: |
+          npm i
           npm run build
         working-directory: ./ui/html
 
