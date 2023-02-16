@@ -54,6 +54,7 @@ ping = "0.4.0"
 
 [build-dependencies]
 hbb_common = { path = "libs/hbb_common" }
+static_vcruntime = "2.0"
 
 [workspace]
 members = ["libs/hbb_common"]
