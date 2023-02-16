@@ -17,6 +17,5 @@ fn main() {
 "#,
         );
         res.compile().unwrap();
-        static_vcruntime::metabuild();
     }
 }
