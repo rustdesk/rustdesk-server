@@ -17,7 +17,7 @@ pub async fn create(sender: Sender<Event>, receiver: Receiver<Event>) {
             for _ in 1..buffer {
                 match receiver.recv_timeout(Duration::from_nanos(1)) {
                     Ok(event) => match event {
-                        Event::BroswerInit => {
+                        Event::BrowserInit => {
                             send(Event::BrowserUpdate(("file".to_owned(), file.to_owned())));
                         }
                         Event::BrowserAction(action) => match action.as_str() {

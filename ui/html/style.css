@@ -1,4 +1,5 @@
 body {
+    visibility: visible !important;
     margin: 0;
     background: #fff;
 }

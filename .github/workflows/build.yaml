@@ -105,6 +105,11 @@ jobs:
           scoop bucket add extras
           scoop install nsis
 
+      - name: Install Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 16
+
       - name: Sign exe files
         uses: GermanBluefox/code-sign-action@v7
         with:
@@ -113,6 +118,11 @@ jobs:
           certificatesha1: '${{ secrets.WINDOWS_PFX_SHA1_THUMBPRINT }}'
           folder: 'target\x86_64-pc-windows-msvc\release'
           recursive: false
+
+      - name: Build UI browser file
+        run: |
+          npm run build
+        working-directory: ./ui/html
 
       - name: Build UI setup file
         run: |

@@ -9,7 +9,7 @@ pub async fn create(sender: Sender<Event>, receiver: Receiver<Event>) {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
     BrowserAction(String),
-    BroswerInit,
+    BrowserInit,
     BrowserUpdate((String, String)),
     BrowserRender(String),
     FileChange(String),
