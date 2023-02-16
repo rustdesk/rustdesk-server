@@ -99,7 +99,7 @@ pub async fn run(sender: Sender<Event>, receiver: Receiver<Event>) {
             setup_sender.send(Event::ViewInit).unwrap_or_default();
             app.listen_global("__action__", move |msg| {
                 match msg.payload().unwrap_or_default() {
-                    r#""__init__""# => setup_sender.send(Event::BroswerInit).unwrap_or_default(),
+                    r#""__init__""# => setup_sender.send(Event::BrowserInit).unwrap_or_default(),
                     r#""restart""# => setup_sender
                         .send(Event::BrowserAction("restart".to_owned()))
                         .unwrap_or_default(),

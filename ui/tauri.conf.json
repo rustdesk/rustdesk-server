@@ -1,14 +1,14 @@
 {
   "build": {
-    "beforeDevCommand": "",
-    "beforeBuildCommand": "",
-    "devPath": "html",
-    "distDir": "html",
+    "beforeBuildCommand": "npm run build",
+    "beforeDevCommand": "npm run dev",
+    "devPath": "http://127.0.0.1:5177/",
+    "distDir": "html/dist",
     "withGlobalTauri": true
   },
   "package": {
     "productName": "rustdesk_server",
-    "version": "0.1.1"
+    "version": "0.1.2"
   },
   "tauri": {
     "allowlist": {

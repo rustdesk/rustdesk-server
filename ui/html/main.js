@@ -1,3 +1,8 @@
+import 'codemirror/lib/codemirror.css';
+import './style.css';
+import 'codemirror/mode/toml/toml.js';
+import CodeMirror from 'codemirror';
+
 const { event, fs, path, tauri } = window.__TAURI__;
 
 class View {
@@ -125,9 +130,9 @@ RUST_LOG=info
         input.checked = this.is_auto_scroll;
         if (this.is_edit_mode) {
             label[0].style.display = 'none';
-            label[1].style.display = 'inline';
+            label[1].style.display = 'block';
         } else {
-            label[0].style.display = 'inline';
+            label[0].style.display = 'block';
             label[1].style.display = 'none';
         }
         return form;
