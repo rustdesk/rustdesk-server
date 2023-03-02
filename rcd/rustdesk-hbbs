@@ -1,0 +1,57 @@
+#!/bin/sh
+
+# PROVIDE: rustdesk_hbbs
+# REQUIRE: LOGIN
+# KEYWORD: shutdown
+#
+# Add the following lines to /etc/rc.conf.local or /etc/rc.conf
+# to enable this service:
+#
+# rustdesk_hbbs_enable (bool):            Set to NO by default.
+#               Set it to YES to enable nfs-exporter.
+# rustdesk_hbbs_args (string):            Set extra arguments to pass to nfs-exporter
+#               Default is "".
+# rustdesk_hbbs_user (string):            Set user that rustdesk_hbbs will run under
+#               Default is "root".
+# rustdesk_hbbs_group (string):           Set group that rustdesk_hbbs will run under
+#               Default is "wheel".
+
+. /etc/rc.subr
+
+name=rustdesk_hbbs
+desc="Rustdesk ID/Rendezvous Server"
+rcvar=rustdesk_hbbs_enable
+
+load_rc_config $name
+
+: ${rustdesk_hbbs_enable:=NO}
+: ${rustdesk_hbbs_args:=""}
+: ${rustdesk_hbbs_user:=rustdesk}
+: ${rustdesk_hbbs_group:=rustdesk}
+
+pidfile=/var/run/rustdesk_hbbs.pid
+command=/usr/sbin/daemon
+procname=/usr/local/sbin/hbbs
+rustdesk_hbbs_chdir="/var/lib/rustdesk-server/"
+rustdesk_hbbs_args="-r your.ip.add.ress -k _"
+command_args="-f -p ${pidfile} /usr/bin/env ${procname} ${rustdesk_hbbs_args}"
+
+start_precmd=rustdesk_hbbs_startprecmd
+
+rustdesk_hbbs_startprecmd()
+{
+    if [ -e ${pidfile} ]; then
+        chown ${rustdesk_hbbs_user}:${rustdesk_hbbs_group} ${pidfile};
+    else
+        install -o ${rustdesk_hbbs_user} -g ${rustdesk_hbbs_group} /dev/null ${pidfile};
+    fi
+    if [ -e ${rustdesk_hbbs_chdir} ]; then
+        chown -R ${rustdesk_hbbs_user}:${rustdesk_hbbs_group} ${rustdesk_hbbs_chdir};
+        chmod -R 770 ${rustdesk_hbbs_chdir};
+    else
+        mkdir -m 770 ${rustdesk_hbbs_chdir};
+        chown ${rustdesk_hbbs_user}:${rustdesk_hbbs_group} ${rustdesk_hbbs_chdir};
+    fi
+}
+
+run_rc_command "$1"

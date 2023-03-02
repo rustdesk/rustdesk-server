@@ -1,0 +1,55 @@
+#!/bin/sh
+
+# PROVIDE: rustdesk_hbbr
+# REQUIRE: LOGIN
+# KEYWORD: shutdown
+#
+# Add the following lines to /etc/rc.conf.local or /etc/rc.conf
+# to enable this service:
+#
+# rustdesk_hbbr_enable (bool):            Set to NO by default.
+#               Set it to YES to enable nfs-exporter.
+# rustdesk_hbbr_args (string):            Set extra arguments to pass to nfs-exporter
+#               Default is "".
+# rustdesk_hbbr_user (string):            Set user that rustdesk_hbbr will run under
+#               Default is "root".
+# rustdesk_hbbr_group (string):           Set group that rustdesk_hbbr will run under
+#               Default is "wheel".
+. /etc/rc.subr
+
+name=rustdesk_hbbr
+desc="Rustdesk Relay Server"
+rcvar=rustdesk_hbbr_enable
+
+load_rc_config $name
+
+: ${rustdesk_hbbr_enable:=NO}
+: ${rustdesk_hbbr_args:=""}
+: ${rustdesk_hbbr_user:=rustdesk}
+: ${rustdesk_hbbr_group:=rustdesk}
+
+pidfile=/var/run/rustdesk_hbbr.pid
+command=/usr/sbin/daemon
+procname=/usr/local/sbin/hbbr
+rustdesk_hbbr_chdir="/var/lib/rustdesk-server/"
+rustdesk_hbbr_args="-k _"
+command_args="-f -p ${pidfile} /usr/bin/env ${procname} ${rustdesk_hbbr_args}"
+
+start_precmd=rustdesk_hbbr_startprecmd
+
+rustdesk_hbbr_startprecmd()
+{
+    if [ -e ${pidfile} ]; then
+        chown ${rustdesk_hbbr_user}:${rustdesk_hbbr_group} ${pidfile};
+    else
+        install -o ${rustdesk_hbbr_user} -g ${rustdesk_hbbr_group} /dev/null ${pidfile};
+    fi
+    if [ -e ${rustdesk_hbbr_chdir} ]; then
+        chown -R ${rustdesk_hbbr_user}:${rustdesk_hbbr_group} ${rustdesk_hbbr_chdir};
+        chmod -R 770 ${rustdesk_hbbr_chdir};
+    else
+        mkdir -m 7et nonu
+0 ${rustdesk_hbbr_chdir};
+        chown ${rustdesk_hbbr_user}:${rustdesk_hbbr_group} ${rustdesk_hbbr_chdir};
+    fi
+}
