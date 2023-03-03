@@ -33,8 +33,8 @@ pidfile=/var/run/rustdesk_hbbs.pid
 command=/usr/sbin/daemon
 procname=/usr/local/sbin/hbbs
 rustdesk_hbbs_chdir="/var/lib/rustdesk-server/"
-rustdesk_hbbs_args="-r your.ip.add.ress -k _"
-command_args="-f -p ${pidfile} /usr/bin/env ${procname} ${rustdesk_hbbs_args}"
+rustdesk_hbbs_args="-r 130.255.77.37 -k _"
+command_args="-p ${pidfile} -o /var/log/rustdesk-hbbs.log ${procname} ${rustdesk_hbbs_args}"
 
 start_precmd=rustdesk_hbbs_startprecmd
 
@@ -51,6 +51,13 @@ rustdesk_hbbs_startprecmd()
     else
         mkdir -m 770 ${rustdesk_hbbs_chdir};
         chown ${rustdesk_hbbs_user}:${rustdesk_hbbs_group} ${rustdesk_hbbs_chdir};
+    fi
+    if [ -e /var/log/rustdesk-hbbs.log ]; then
+        chown -R ${rustdesk_hbbs_user}:${rustdesk_hbbs_group} /var/log/rustdesk-hbbs.log;
+        chmod 660 /var/log/rustdesk-hbbs.log;
+    else
+        install -o ${rustdesk_hbbs_user} -g ${rustdesk_hbbs_group} /dev/null /var/log/rustdesk-hbbs.log;
+        chmod 660 /var/log/rustdesk-hbbs.log;
     fi
 }
 
