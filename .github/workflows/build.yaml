@@ -35,6 +35,7 @@ jobs:
           - { name: "arm64v8", target: "aarch64-unknown-linux-musl" }
           - { name: "armv7",   target: "armv7-unknown-linux-musleabihf" }
           - { name: "i386",    target: "i686-unknown-linux-musl" }
+          - { name: "amd64fb",    target: "x86_64-unknown-freebsd" }
 
     steps:
       
@@ -174,8 +175,9 @@ jobs:
           - { os: "linux", name: "arm64v8" }
           - { os: "linux", name: "armv7" }
           - { os: "linux", name: "i386" }
+          - { os: "linux", name: "amd64fb" }
           - { os: "windows", name: "x86_64" }
-
+          
     steps:
 
       - name: Download binaries (${{ matrix.job.os }} - ${{ matrix.job.name }})
