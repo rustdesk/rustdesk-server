@@ -38,7 +38,6 @@ use std::{
     sync::Arc,
     time::Instant,
 };
-const ADDR_127: IpAddr = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
 
 #[derive(Clone, Debug)]
 enum Data {
@@ -93,7 +92,6 @@ impl RendezvousServer {
     #[tokio::main(flavor = "multi_thread")]
     pub async fn start(port: i32, serial: i32, key: &str, rmem: usize) -> ResultType<()> {
         let (key, sk) = Self::get_server_sk(key);
-        let addr = format!("0.0.0.0:{port}");
         let nat_port = port - 1;
         let ws_port = port + 2;
         let pm = PeerMap::new().await?;
@@ -162,12 +160,11 @@ impl RendezvousServer {
             }
         );
         if test_addr.to_lowercase() != "no" {
-            let test_addr = (if test_addr.is_empty() {
-                addr.replace("0.0.0.0", "127.0.0.1")
+            let test_addr = if test_addr.is_empty() {
+                listener.local_addr()?
             } else {
-                test_addr
-            })
-            .parse::<SocketAddr>()?;
+                test_addr.parse()?
+            };
             tokio::spawn(async move {
                 allow_err!(test_hbbs(test_addr).await);
             });
@@ -427,7 +424,7 @@ impl RendezvousServer {
                     self.handle_local_addr(la, addr, Some(socket)).await?;
                 }
                 Some(rendezvous_message::Union::ConfigureUpdate(mut cu)) => {
-                    if addr.ip() == ADDR_127 && cu.serial > self.inner.serial {
+                    if addr.ip().is_loopback() && cu.serial > self.inner.serial {
                         let mut inner: Inner = (*self.inner).clone();
                         inner.serial = cu.serial;
                         self.inner = Arc::new(inner);
@@ -566,7 +563,7 @@ impl RendezvousServer {
                 ip != old.socket_addr.ip()
             } else {
                 ip.to_string() != old.info.ip
-            } && ip != ADDR_127;
+            } && !ip.is_loopback();
             let request_pk = old.pk.is_empty() || ip_change;
             if !request_pk {
                 old.socket_addr = socket_addr;
@@ -1053,7 +1050,7 @@ impl RendezvousServer {
         if addr.ip().is_loopback() {
             tokio::spawn(async move {
                 let mut stream = stream;
-                let mut buffer = [0; 64];
+                let mut buffer = [0; 1024];
                 if let Ok(Ok(n)) = timeout(1000, stream.read(&mut buffer[..])).await {
                     if let Ok(data) = std::str::from_utf8(&buffer[..n]) {
                         let res = rs.check_cmd(data).await;
