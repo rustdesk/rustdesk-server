@@ -26,7 +26,7 @@ jobs:
   build:
 
     name: Build - ${{ matrix.job.name }}
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-18.04
     strategy:
       fail-fast: false
       matrix:
@@ -45,7 +45,7 @@ jobs:
       - name: Install toolchain
         uses: actions-rs/toolchain@v1
         with:
-          toolchain: "1.68"
+          toolchain: "1.67.1"
           override: true
           default: true
           components: rustfmt
@@ -166,7 +166,7 @@ jobs:
     needs: 
       - build
       - build-win
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-18.04
     strategy:
       fail-fast: false
       matrix:
@@ -206,7 +206,7 @@ jobs:
 
     name: Docker push - ${{ matrix.job.name }}
     needs: build
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-18.04
     strategy:
       fail-fast: false
       matrix:
@@ -276,7 +276,7 @@ jobs:
 
     name: Docker manifest
     needs: docker
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-18.04
 
     steps:
 
@@ -328,7 +328,7 @@ jobs:
 
     name: Docker push classic - ${{ matrix.job.name }}
     needs: build
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-18.04
     strategy:
       fail-fast: false
       matrix:
