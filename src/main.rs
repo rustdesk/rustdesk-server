@@ -1,6 +1,7 @@
 // https://tools.ietf.org/rfc/rfc5128.txt
 // https://blog.csdn.net/bytxl/article/details/44344855
 
+use std::path::Path;
 use flexi_logger::*;
 use hbb_common::{bail, config::RENDEZVOUS_PORT, ResultType};
 use hbbs::{common::*, *};
@@ -8,11 +9,19 @@ use hbbs::{common::*, *};
 const RMEM: usize = 0;
 
 fn main() -> ResultType<()> {
-    let _logger = Logger::try_with_env_or_str("info")?
-        .log_to_stdout()
-        .format(opt_format)
-        .write_mode(WriteMode::Async)
-        .start()?;
+    if Path::new("/etc/freebsd-update.conf").is_file() {
+         let _logger = Logger::try_with_env_or_str("info")?
+             .log_to_stdout()
+             .format(opt_format)
+             .write_mode(WriteMode::Direct)
+             .start()?;
+     } else {
+         let _logger = Logger::try_with_env_or_str("info")?
+             .log_to_stdout()
+             .format(opt_format)
+             .write_mode(WriteMode::Async)
+             .start()?;
+     }
     let args = format!(
         "-c --config=[FILE] +takes_value 'Sets a custom config file'
         -p, --port=[NUMBER(default={RENDEZVOUS_PORT})] 'Sets the listening port'
