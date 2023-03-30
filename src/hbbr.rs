@@ -8,19 +8,15 @@ use relay_server::*;
 mod version;
 
 fn main() -> ResultType<()> {
-    if Path::new("/etc/freebsd-update.conf").is_file() {
-        let _logger = Logger::try_with_env_or_str("info")?
-            .log_to_stdout()
-            .format(opt_format)
+    let _logger = Logger::try_with_env_or_str("info")?
+        .log_to_stdout()
+        .format(opt_format)
+        if Path::new("/etc/freebsd-update.conf").is_file() {
             .write_mode(WriteMode::Direct)
-            .start()?;
-    } else {
-        let _logger = Logger::try_with_env_or_str("info")?
-            .log_to_stdout()
-            .format(opt_format)
-            .write_mode(WriteMode::Async)
-            .start()?;
-    }
+        }
+        else{
+            .write_mode(WriteMode::Async)        
+        }        .start()?;
     let args = format!(
         "-p, --port=[NUMBER(default={RELAY_PORT})] 'Sets the listening port'
         -k, --key=[KEY] 'Only allow the client with the same key'
