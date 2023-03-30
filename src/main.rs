@@ -9,19 +9,16 @@ use hbbs::{common::*, *};
 const RMEM: usize = 0;
 
 fn main() -> ResultType<()> {
-    if Path::new("/etc/freebsd-update.conf").is_file() {
-        let _logger = Logger::try_with_env_or_str("info")?
-            .log_to_stdout()
-            .format(opt_format)
+    let _logger = Logger::try_with_env_or_str("info")?
+        .log_to_stdout()
+        .format(opt_format)
+        if Path::new("/etc/freebsd-update.conf").is_file() {
             .write_mode(WriteMode::Direct)
-            .start()?;
-    } else {
-        let _logger = Logger::try_with_env_or_str("info")?
-            .log_to_stdout()
-            .format(opt_format)
-            .write_mode(WriteMode::Async)
-            .start()?;
-    }
+        }
+        else{
+            .write_mode(WriteMode::Async)        
+        }    
+        .start()?;
     let args = format!(
         "-c --config=[FILE] +takes_value 'Sets a custom config file'
         -p, --port=[NUMBER(default={RENDEZVOUS_PORT})] 'Sets the listening port'
