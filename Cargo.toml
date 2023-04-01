@@ -33,7 +33,7 @@ axum = { version = "0.5", features = ["headers"] }
 sqlx = { version = "0.6", features = [ "runtime-tokio-rustls", "sqlite", "macros", "chrono", "json" ] }
 deadpool = "0.8"
 async-trait = "0.1"
-async-speed-limit = { git = "https://github.com/open-trade/async-speed-limit", "dont_minimize_extra_stacks"] }
+async-speed-limit = { git = "https://github.com/open-trade/async-speed-limit" }
 uuid = { version = "1.0", features = ["v4"] }
 bcrypt = "0.13"
 chrono = "0.4"
@@ -46,7 +46,7 @@ tungstenite = "0.17"
 regex = "1.4"
 tower-http = { version = "0.3", features = ["fs", "trace", "cors"] }
 http = "0.2"
-flexi_logger = { version = "0.22", features = ["async", "use_chrono_for_offset"] }
+flexi_logger = { version = "0.22", features = ["async", "use_chrono_for_offset", "dont_minimize_extra_stacks"] }
 ipnetwork = "0.20"
 local-ip-address = "0.5.1"
 dns-lookup = "1.0.8"
