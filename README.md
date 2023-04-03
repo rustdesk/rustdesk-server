@@ -24,7 +24,7 @@ Three executables will be generated in target/release.
 
 You can find updated binaries on the [releases](https://github.com/rustdesk/rustdesk-server/releases) page.
 
-If you wanna develop your own server, [rustdesk-server-demo](https://github.com/rustdesk/rustdesk-server-demo) might be a better and simpler start for you than this repo.
+If you want to develop your own server, [rustdesk-server-demo](https://github.com/rustdesk/rustdesk-server-demo) might be a better and simpler start for you than this repo.
 
 ## Docker images
 
@@ -124,7 +124,7 @@ These images are build against `busybox:stable` with the addition of the binarie
 | arm64v8 | 2.0.0 | `rustdesk/rustdesk-server-s6:2.0.0-arm64v8` |
 | armv7 | 2.0.0 | `rustdesk/rustdesk-server-s6:2.0.0-armv7` |
 
-You're strongly encuraged to use the `multiarch` image either with the `major version` or `latest` tag.
+You're strongly encouraged to use the `multiarch` image either with the `major version` or `latest` tag.
 
 The S6-overlay acts as a supervisor and keeps both process running, so with this image there's no need to have two separate running containers.
 
@@ -138,7 +138,7 @@ docker run --name rustdesk-server \
   -v "$PWD/data:/data" -d rustdesk/rustdesk-server-s6:latest
 ```
 
-or without --net=host, but P2P direct connection can not work.
+or without --net=host, but P2P direct connection cannot work.
 
 ```bash
 docker run --name rustdesk-server \
