@@ -1,3 +1,13 @@
+<p align="center">
+  <a href="#hoe-handmatig-opbouwen">Opbouwen</a> •
+  <a href="#docker-bestanden-images">Docker</a> •
+  <a href="#s6-overlay-gebaseerde-bestanden">S6-Overlay</a> •
+  <a href="#hoe-maak-je-een-key-paar">Key paar</a> •
+  <a href="#deb-pakketten">Debian pakketten</a> •
+  <a href="#env-variabelen">ENV variabelen</a><br>
+  [<a href="README.md">English</a>] | [<a href="README-DE.md">Deutsch</a>]<br>
+</p>
+
 # RustDesk Server Programa
 
 [![build](https://github.com/rustdesk/rustdesk-server/actions/workflows/build.yaml/badge.svg)](https://github.com/rustdesk/rustdesk-server/actions/workflows/build.yaml)
@@ -46,7 +56,7 @@ docker run --name hbbs --net=host -v "$PWD/data:/root" -d rustdesk/rustdesk-serv
 docker run --name hbbr --net=host -v "$PWD/data:/root" -d rustdesk/rustdesk-server:latest hbbr 
 ```
 
-of zonder --net=host, maar een directe P2P verbinding zal niet werken.
+of zonder `--net=host`, maar een directe P2P verbinding zal niet werken.
 
 Voor systemen die SELinux gebruiken is het vervangen van `/root` door `/root:z` nodig om de containers correct te laten draaien. Als alternatief kan SELinux containerscheiding volledig worden uitgeschakeld door de optie `--security-opt label=disable` toe te voegen.
 
@@ -138,7 +148,7 @@ docker run --name rustdesk-server \
   -v "$PWD/data:/data" -d rustdesk/rustdesk-server-s6:latest
 ```
 
-of zonder --net=host, maar een directe P2P verbinding zal niet werken.
+of zonder `--net=host`, maar een directe P2P verbinding zal niet werken.
 
 ```bash
 docker run --name rustdesk-server \
@@ -330,6 +340,6 @@ U kunt de variabelen zoals gebruikelijk opgeven of een `.env` bestand gebruiken.
 | LIMIT_SPEED | hbbr | snelheidslimiet (in Mb/s) |
 | PORT | hbbs/hbbr | luister-poort (21116 voor hbbs - 21117 voor hbbr) |
 | RELAY_SERVERS | hbbs | IP-adres/DNS-naam van de machines waarop hbbr draait (gescheiden door komma) |
-| RUST_LOG | all | debug-niveau instellen (error|warn|info|debug|trace) |
+| RUST_LOG | all | debug-niveau instellen (error\|warn\|info\|debug\|trace) |
 | SINGLE_BANDWIDTH | hbbr | maximale bandbreedte voor een enkele verbinding (in Mb/s) |
 | TOTAL_BANDWIDTH | hbbr | maximale totale bandbreedte (in Mb/s) |
