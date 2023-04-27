@@ -1,3 +1,13 @@
+<p align="center">
+  <a href="#how-to-build-manually">Manually</a> •
+  <a href="#docker-images">Docker</a> •
+  <a href="#s6-overlay-based-images">S6-overlay</a> •
+  <a href="#how-to-create-a-keypair">Keypair</a> •
+  <a href="#deb-packages">Debian</a> •
+  <a href="#env-variables">Variables</a><br>
+  [<a href="README-DE.md">Deutsch</a>] | [<a href="README-NL.md">Nederlands</a>]<br>
+</p>
+
 # RustDesk Server Program
 
 [![build](https://github.com/rustdesk/rustdesk-server/actions/workflows/build.yaml/badge.svg)](https://github.com/rustdesk/rustdesk-server/actions/workflows/build.yaml)
@@ -46,7 +56,7 @@ docker run --name hbbs --net=host -v "$PWD/data:/root" -d rustdesk/rustdesk-serv
 docker run --name hbbr --net=host -v "$PWD/data:/root" -d rustdesk/rustdesk-server:latest hbbr 
 ```
 
-or without --net=host, but P2P direct connection can not work.
+or without `--net=host`, but P2P direct connection can not work.
 
 For systems using SELinux, replacing `/root` by `/root:z` is required for the containers to run correctly. Alternatively, SELinux container separation can be disabled completely adding the option `--security-opt label=disable`.
 
@@ -98,7 +108,7 @@ services:
     restart: unless-stopped
 ```
 
-Edit line 16 to point to your relay server (the one listening on port 21117). You can also edit the volume lines (L18 and L33) if you need.
+Edit line 16 to point to your relay server (the one listening on port 21117). You can also edit the volume lines (line 18 and line 33) if you need.
 
 (docker-compose credit goes to @lukebarone and @QuiGonLeong)
 
@@ -138,7 +148,7 @@ docker run --name rustdesk-server \
   -v "$PWD/data:/data" -d rustdesk/rustdesk-server-s6:latest
 ```
 
-or without --net=host, but P2P direct connection cannot work.
+or without `--net=host`, but P2P direct connection cannot work.
 
 ```bash
 docker run --name rustdesk-server \
