@@ -706,17 +706,14 @@ impl RendezvousServer {
                 }
                 ph.nat_type = NatType::SYMMETRIC.into(); // will force relay
             }
-            let same_intranet = !ws
-                && match peer_addr {
-                    SocketAddr::V4(a) => match addr {
-                        SocketAddr::V4(b) => a.ip() == b.ip(),
+            let same_intranet: bool = !ws
+                && (peer_is_lan && is_lan || {
+                    match (peer_addr, addr) {
+                        (SocketAddr::V4(a), SocketAddr::V4(b)) => a.ip() == b.ip(),
+                        (SocketAddr::V6(a), SocketAddr::V6(b)) => a.ip() == b.ip(),
                         _ => false,
-                    },
-                    SocketAddr::V6(a) => match addr {
-                        SocketAddr::V6(b) => a.ip() == b.ip(),
-                        _ => false,
-                    },
-                };
+                    }
+                });
             let socket_addr = AddrMangle::encode(addr).into();
             if same_intranet {
                 log::debug!(
