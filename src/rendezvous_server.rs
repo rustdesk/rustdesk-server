@@ -709,17 +709,14 @@ impl RendezvousServer {
                 }
                 ph.nat_type = NatType::SYMMETRIC.into(); // will force relay
             }
-            let same_intranet = !ws
-                && match peer_addr {
-                    SocketAddr::V4(a) => match addr {
-                        SocketAddr::V4(b) => a.ip() == b.ip(),
+            let same_intranet: bool = !ws
+                && (peer_is_lan && is_lan || {
+                    match (peer_addr, addr) {
+                        (SocketAddr::V4(a), SocketAddr::V4(b)) => a.ip() == b.ip(),
+                        (SocketAddr::V6(a), SocketAddr::V6(b)) => a.ip() == b.ip(),
                         _ => false,
-                    },
-                    SocketAddr::V6(a) => match addr {
-                        SocketAddr::V6(b) => a.ip() == b.ip(),
-                        _ => false,
-                    },
-                };
+                    }
+                });
             let socket_addr = AddrMangle::encode(addr).into();
             if same_intranet {
                 log::debug!(
@@ -1191,8 +1188,16 @@ impl RendezvousServer {
     #[inline]
     fn is_lan(&self, addr: SocketAddr) -> bool {
         if let Some(network) = &self.inner.mask {
-            if let SocketAddr::V4(addr) = addr {
-                return network.contains(*addr.ip());
+            match addr {
+                SocketAddr::V4(v4_socket_addr) => {
+                    return network.contains(*v4_socket_addr.ip());
+                }
+                
+                SocketAddr::V6(v6_socket_addr) => {
+                    if let Some(v4_addr) = v6_socket_addr.ip().to_ipv4_mapped() {
+                        return network.contains(v4_addr);
+                    }
+                }
             }
         }
         false
