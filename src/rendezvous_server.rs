@@ -167,8 +167,17 @@ impl RendezvousServer {
             };
             tokio::spawn(async move {
                 if let Err(err) = test_hbbs(test_addr).await {
-                    log::error!("Failed to run hbbs test with {test_addr}: {err}");
-                    std::process::exit(1);
+                    if test_addr.is_ipv6() && test_addr.ip().is_unspecified() {
+                        let mut test_addr = test_addr;
+                        test_addr.set_ip(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
+                        if let Err(err) = test_hbbs(test_addr).await {
+                            log::error!("Failed to run hbbs test with {test_addr}: {err}");
+                            std::process::exit(1);
+                        }
+                    } else {
+                        log::error!("Failed to run hbbs test with {test_addr}: {err}");
+                        std::process::exit(1);
+                    }
                 }
             });
         };
