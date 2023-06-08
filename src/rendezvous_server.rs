@@ -1,7 +1,7 @@
 use crate::common::*;
 use crate::peer::*;
 use hbb_common::{
-    allow_err,
+    allow_err, bail,
     bytes::{Bytes, BytesMut},
     bytes_codec::BytesCodec,
     config,
@@ -166,7 +166,10 @@ impl RendezvousServer {
                 test_addr.parse()?
             };
             tokio::spawn(async move {
-                allow_err!(test_hbbs(test_addr).await);
+                if let Err(err) = test_hbbs(test_addr).await {
+                    log::error!("Failed to run hbbs test with {test_addr}: {err}");
+                    std::process::exit(1);
+                }
             });
         };
         let main_task = async move {
@@ -1225,6 +1228,15 @@ async fn check_relay_servers(rs0: Arc<RelayServers>, tx: Sender) {
 
 // temp solution to solve udp socket failure
 async fn test_hbbs(addr: SocketAddr) -> ResultType<()> {
+    let mut addr = addr;
+    if addr.ip().is_unspecified() {
+        addr.set_ip(if addr.is_ipv4() {
+            IpAddr::V4(Ipv4Addr::LOCALHOST)
+        } else {
+            IpAddr::V6(Ipv6Addr::LOCALHOST)
+        });
+    }
+
     let mut socket = FramedSocket::new(config::Config::get_any_listen_addr(addr.is_ipv4())).await?;
     let mut msg_out = RendezvousMessage::new();
     msg_out.set_register_peer(RegisterPeer {
@@ -1238,8 +1250,7 @@ async fn test_hbbs(addr: SocketAddr) -> ResultType<()> {
         tokio::select! {
           _ = timer.tick() => {
               if last_time_recv.elapsed().as_secs() > 12 {
-                 log::error!("Timeout of test_hbbs");
-                 std::process::exit(1);
+                  bail!("Timeout of test_hbbs");
               }
               socket.send(&msg_out, addr).await?;
           }

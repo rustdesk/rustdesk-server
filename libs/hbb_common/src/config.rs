@@ -337,14 +337,13 @@ impl Config2 {
 pub fn load_path<T: serde::Serialize + serde::de::DeserializeOwned + Default + std::fmt::Debug>(
     file: PathBuf,
 ) -> T {
-    let cfg = match confy::load_path(file) {
+    match confy::load_path(file) {
         Ok(config) => config,
         Err(err) => {
             log::error!("Failed to load config: {}", err);
             T::default()
         }
-    };
-    cfg
+    }
 }
 
 #[inline]
