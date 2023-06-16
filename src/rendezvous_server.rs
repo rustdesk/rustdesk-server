@@ -436,7 +436,7 @@ impl RendezvousServer {
                     self.handle_local_addr(la, addr, Some(socket)).await?;
                 }
                 Some(rendezvous_message::Union::ConfigureUpdate(mut cu)) => {
-                    if addr.ip().is_loopback() && cu.serial > self.inner.serial {
+                    if try_into_v4(addr).ip().is_loopback() && cu.serial > self.inner.serial {
                         let mut inner: Inner = (*self.inner).clone();
                         inner.serial = cu.serial;
                         self.inner = Arc::new(inner);
@@ -1203,7 +1203,7 @@ impl RendezvousServer {
                 }
 
                 SocketAddr::V6(v6_socket_addr) => {
-                    if let Some(v4_addr) = v6_socket_addr.ip().to_ipv4_mapped() {
+                    if let Some(v4_addr) = v6_socket_addr.ip().to_ipv4() {
                         return network.contains(v4_addr);
                     }
                 }

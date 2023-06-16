@@ -374,8 +374,8 @@ async fn handle_connection(
     key: &str,
     ws: bool,
 ) {
-    let ip = addr.ip().to_string();
-    if !ws && ip == "127.0.0.1" {
+    let ip = hbb_common::try_into_v4(addr).ip();
+    if !ws && ip.is_loopback() {
         let limiter = limiter.clone();
         tokio::spawn(async move {
             let mut stream = stream;
@@ -389,6 +389,7 @@ async fn handle_connection(
         });
         return;
     }
+    let ip = ip.to_string();
     if BLOCKLIST.read().await.get(&ip).is_some() {
         log::info!("{} blocked", ip);
         return;
