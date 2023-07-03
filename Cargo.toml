@@ -30,13 +30,15 @@ mac_address = "1.1"
 whoami = "1.2"
 base64 = "0.13"
 axum = { version = "0.5", features = ["headers"] }
-sqlx = { version = "0.6", features = [ "runtime-tokio-rustls", "sqlite", "macros", "chrono", "json" ] }
+
+# sqlx > 0.7 -> include libsqlite3-sys vul fix
+sqlx = { version = "0.7.0-alpha.3", features = [ "runtime-tokio-rustls", "sqlite", "macros", "chrono", "json" ] }
+
 deadpool = "0.8"
 async-trait = "0.1"
 async-speed-limit = { git = "https://github.com/open-trade/async-speed-limit" }
 uuid = { version = "1.0", features = ["v4"] }
 bcrypt = "0.13"
-chrono = "0.4"
 jsonwebtoken = "8"
 headers = "0.3"
 once_cell = "1.8"
@@ -51,6 +53,10 @@ ipnetwork = "0.20"
 local-ip-address = "0.5.1"
 dns-lookup = "1.0.8"
 ping = "0.4.0"
+
+# chrono < 0.5 = time vul
+chrono = { git = "https://github.com/chronotope/chrono", branch="0.5-alpha" }
+
 
 [build-dependencies]
 hbb_common = { path = "libs/hbb_common" }
