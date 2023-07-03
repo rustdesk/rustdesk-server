@@ -22,7 +22,13 @@ serde_derive = "1.0"
 serde = "1.0"
 serde_json = "1.0"
 lazy_static = "1.4"
-clap = "2"
+
+# TODO: implement clap 4.3.8 ->
+# atty 0.2.14 warning and ansi-term warning got fixed by this,
+# but clap 4.3.8 create new problems, concerning inner changes.
+#clap = "4.3.8"
+clap = "2.34.0"
+
 rust-ini = "0.18"
 minreq = { version = "2.4", features = ["punycode"] }
 machine-uid = "0.2"
@@ -48,7 +54,10 @@ tungstenite = "0.17"
 regex = "1.4"
 tower-http = { version = "0.3", features = ["fs", "trace", "cors"] }
 http = "0.2"
-flexi_logger = { version = "0.22", features = ["async", "use_chrono_for_offset", "dont_minimize_extra_stacks"] }
+
+# flexi_logger -> atty 0.2.14 warning
+flexi_logger = { version = "0.25.5", features = ["async", "dont_minimize_extra_stacks"] }
+
 ipnetwork = "0.20"
 local-ip-address = "0.5.1"
 dns-lookup = "1.0.8"

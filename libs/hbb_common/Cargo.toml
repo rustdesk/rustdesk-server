@@ -13,7 +13,10 @@ tokio-util = { version = "0.7", features = ["full"] }
 futures = "0.3"
 bytes = { version = "1.2", features = ["serde"] }
 log = "0.4"
-env_logger = "0.9"
+
+# env_logger -> atty 0.2.14 warning
+env_logger = "0.10.0"
+
 socket2 = { version = "0.3", features = ["reuseport"] }
 zstd = "0.9"
 quinn = {version = "0.8", optional = true }
