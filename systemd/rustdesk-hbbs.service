@@ -10,8 +10,8 @@ WorkingDirectory=/var/lib/rustdesk-server/
 User=
 Group=
 Restart=always
-StandardOutput=append:/var/log/rustdesk/rustdesk-hbbs.log
-StandardError=append:/var/log/rustdesk/rustdesk-hbbs.error
+StandardOutput=append:/var/log/rustdesk-server/hbbs.log
+StandardError=append:/var/log/rustdesk-server/hbbs.error
 # Restart service after 10 seconds if node service crashes
 RestartSec=10
 

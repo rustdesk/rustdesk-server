@@ -10,8 +10,8 @@ WorkingDirectory=/var/lib/rustdesk-server/
 User=
 Group=
 Restart=always
-StandardOutput=append:/var/log/rustdesk/rustdesk-hbbr.log
-StandardError=append:/var/log/rustdesk/rustdesk-hbbr.error
+StandardOutput=append:/var/log/rustdesk-server/hbbr.log
+StandardError=append:/var/log/rustdesk-server/hbbr.error
 # Restart service after 10 seconds if node service crashes
 RestartSec=10
 
