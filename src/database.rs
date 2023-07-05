@@ -142,6 +142,13 @@ impl Database {
         .await?;
         Ok(())
     }
+
+    pub async fn update_id(&self, guid: &Vec<u8>, id: &str) -> ResultType<()> {
+        sqlx::query!("update peer set id=? where guid=?", id, guid)
+            .execute(self.pool.get().await?.deref_mut())
+            .await?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

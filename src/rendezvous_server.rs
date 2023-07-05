@@ -59,6 +59,7 @@ static mut ROTATION_RELAY_SERVER: usize = 0;
 type RelayServers = Vec<String>;
 static CHECK_RELAY_TIMEOUT: u64 = 3_000;
 static mut ALWAYS_USE_RELAY: bool = false;
+static mut ALLOW_CHANGE_ID: bool = false;
 
 #[derive(Clone)]
 struct Inner {
@@ -151,13 +152,23 @@ impl RendezvousServer {
                 ALWAYS_USE_RELAY = true;
             }
         }
+        if std::env::var("ALLOW_CHANGE_ID")
+            .unwrap_or_default()
+            .to_uppercase()
+            == "Y"
+        {
+            unsafe {
+                ALLOW_CHANGE_ID = true;
+            }
+        }
         log::info!(
-            "ALWAYS_USE_RELAY={}",
+            "ALWAYS_USE_RELAY={}, ALLOW_CHANGE_ID={}",
             if unsafe { ALWAYS_USE_RELAY } {
                 "Y"
             } else {
                 "N"
-            }
+            },
+            if unsafe { ALLOW_CHANGE_ID } { "Y" } else { "N" }
         );
         if test_addr.to_lowercase() != "no" {
             let test_addr = if test_addr.is_empty() {
@@ -546,11 +557,10 @@ impl RendezvousServer {
                     msg_out.set_test_nat_response(res);
                     Self::send_to_sink(sink, msg_out).await;
                 }
-                Some(rendezvous_message::Union::RegisterPk(_)) => {
-                    let res = register_pk_response::Result::NOT_SUPPORT;
+                Some(rendezvous_message::Union::RegisterPk(rp)) => {
                     let mut msg_out = RendezvousMessage::new();
                     msg_out.set_register_pk_response(RegisterPkResponse {
-                        result: res.into(),
+                        result: self.handle_change_id(rp, addr).await.into(),
                         ..Default::default()
                     });
                     Self::send_to_sink(sink, msg_out).await;
@@ -1210,6 +1220,76 @@ impl RendezvousServer {
             }
         }
         false
+    }
+
+    #[inline]
+    async fn handle_change_id(
+        &mut self,
+        rp: RegisterPk,
+        addr: SocketAddr,
+    ) -> register_pk_response::Result {
+        if !unsafe { ALLOW_CHANGE_ID } {
+            return register_pk_response::Result::NOT_SUPPORT;
+        }
+
+        if rp.uuid.is_empty() {
+            return register_pk_response::Result::UUID_MISMATCH;
+        }
+        if !hbb_common::is_valid_custom_id(&rp.id) {
+            return register_pk_response::Result::INVALID_ID_FORMAT;
+        }
+        if rp.id == rp.old_id {
+            return register_pk_response::Result::OK;
+        }
+
+        let old_id = rp.old_id;
+        let ip = addr.ip().to_string();
+        if !self.check_ip_blocker(&ip, &old_id).await {
+            return register_pk_response::Result::TOO_FREQUENT;
+        }
+
+        let peer = self.pm.get(&old_id).await;
+        if peer.is_none() {
+            return register_pk_response::Result::UUID_MISMATCH;
+        }
+
+        let peer = peer.unwrap();
+        {
+            let p = peer.read().await;
+            if p.uuid != rp.uuid {
+                log::warn!(
+                    "Change ID peer {} uuid mismatch: {:?} vs {:?}",
+                    old_id,
+                    rp.uuid,
+                    p.uuid
+                );
+                drop(p);
+                return register_pk_response::Result::UUID_MISMATCH;
+            }
+            if p.info.ip != ip {
+                log::warn!(
+                    "Change ID peer {} ip mismatch: {} vs {}",
+                    old_id,
+                    ip,
+                    p.info.ip,
+                );
+                drop(p);
+                return register_pk_response::Result::UUID_MISMATCH;
+            }
+        }
+
+        // rate limit
+        let mut req_pk = peer.read().await.reg_pk;
+        if req_pk.1.elapsed().as_secs() > 6 {
+            req_pk.0 = 0;
+        } else if req_pk.0 > 2 {
+            return register_pk_response::Result::TOO_FREQUENT;
+        }
+        req_pk.0 += 1;
+        req_pk.1 = Instant::now();
+        peer.write().await.reg_pk = req_pk;
+
+        self.pm.update_id(old_id, rp.id).await
     }
 }
 

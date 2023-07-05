@@ -133,6 +133,32 @@ impl PeerMap {
     }
 
     #[inline]
+    pub(crate) async fn update_id(
+        &mut self,
+        old_id: String,
+        id: String,
+    ) -> register_pk_response::Result {
+        if self.get(&id).await.is_some() {
+            return register_pk_response::Result::ID_EXISTS;
+        }
+
+        let mut m = self.map.write().await;
+        if let Some(p) = m.remove(&old_id) {
+            if let Err(err) = self.db.update_id(&p.read().await.guid, &id).await {
+                log::error!("db.update_id failed: {}", err);
+                return register_pk_response::Result::SERVER_ERROR;
+            }
+
+            log::info!("update_id {} => {}", old_id, id);
+            m.insert(id, p);
+
+            register_pk_response::Result::OK
+        } else {
+            register_pk_response::Result::SERVER_ERROR
+        }
+    }
+
+    #[inline]
     pub(crate) async fn get(&self, id: &str) -> Option<LockPeer> {
         let p = self.map.read().await.get(id).cloned();
         if p.is_some() {
