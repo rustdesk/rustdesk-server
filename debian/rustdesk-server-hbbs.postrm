@@ -6,7 +6,7 @@ SERVICE=rustdesk-hbbs.service
 systemctl --system daemon-reload >/dev/null || true
 
 if [ "$1" = "purge" ]; then
-	rm -rf /var/lib/rustdesk-server/
+	rm -rf /var/lib/rustdesk-server/ /var/log/rustdesk-server/rustdesk-hbbs.*
 	deb-systemd-helper purge "${SERVICE}" >/dev/null || true
 	deb-systemd-helper unmask "${SERVICE}" >/dev/null || true
 fi
