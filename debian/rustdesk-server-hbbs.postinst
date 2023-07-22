@@ -4,7 +4,7 @@ set -e
 SERVICE=rustdesk-hbbs.service
 
 if [ "$1" = "configure" ]; then
-    mkdir -p /var/log/rustdesk
+    mkdir -p /var/log/rustdesk-server
 fi
 
 case "$1" in
