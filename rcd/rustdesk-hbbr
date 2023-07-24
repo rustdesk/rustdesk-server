@@ -8,9 +8,9 @@
 # to enable this service:
 #
 # rustdesk_hbbr_enable (bool):            Set to NO by default.
-#               Set it to YES to enable nfs-exporter.
-# rustdesk_hbbr_args (string):            Set extra arguments to pass to nfs-exporter
-#               Default is "".
+#               Set it to YES to enable rustdesk_hbbr.
+# rustdesk_hbbr_args (string):            Set extra arguments to pass to rustdesk_hbbr
+#               Default is "-k _".
 # rustdesk_hbbr_user (string):            Set user that rustdesk_hbbr will run under
 #               Default is "root".
 # rustdesk_hbbr_group (string):           Set group that rustdesk_hbbr will run under
