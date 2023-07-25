@@ -18,8 +18,8 @@ impl deadpool::managed::Manager for DbPool {
     type Type = SqliteConnection;
     type Error = SqlxError;
     async fn create(&self) -> Result<SqliteConnection, SqlxError> {
-        let mut opt = SqliteConnectOptions::from_str(&self.url).unwrap();
-        opt.log_statements(log::LevelFilter::Debug);
+        let opt = SqliteConnectOptions::from_str(&self.url).unwrap();
+        opt.clone().log_statements(log::LevelFilter::Debug);
         SqliteConnection::connect_with(&opt).await
     }
     async fn recycle(
