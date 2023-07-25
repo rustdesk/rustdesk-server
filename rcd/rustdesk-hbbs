@@ -8,9 +8,9 @@
 # to enable this service:
 #
 # rustdesk_hbbs_enable (bool):            Set to NO by default.
-#               Set it to YES to enable nfs-exporter.
-# rustdesk_hbbs_args (string):            Set extra arguments to pass to nfs-exporter
-#               Default is "".
+#               Set it to YES to enable rustdesk_hbbs.
+# rustdesk_hbbs_args (string):            Set extra arguments to pass to rustdesk_hbbs
+#               Default is "-r ${rustdesk_hbbs_ip} -k _".
 # rustdesk_hbbs_user (string):            Set user that rustdesk_hbbs will run under
 #               Default is "root".
 # rustdesk_hbbs_group (string):           Set group that rustdesk_hbbs will run under
@@ -33,7 +33,7 @@ load_rc_config $name
 pidfile=/var/run/rustdesk_hbbs.pid
 command=/usr/sbin/daemon
 procname=/usr/local/sbin/hbbs
-rustdesk_hbbs_chdir="/var/lib/rustdesk-server/"
+rustdesk_hbbs_chdir=/var/db/rustdesk-server
 command_args="-p ${pidfile} -o /var/log/rustdesk-hbbs.log ${procname} ${rustdesk_hbbs_args}"
 ## If you want the daemon do its log over syslog comment out the above line and remove the comment from the below replacement
 #command_args="-p ${pidfile} -T ${name} ${procname} ${rustdesk_hbbs_args}"
