@@ -26,19 +26,19 @@ pub static IP_BLOCK_DUR: u64 = 60;
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]
 pub(crate) struct PeerInfo {
     #[serde(default)]
-    pub(crate) ip: String,
+    pub(crate) ip: String, // 对等节点ip
 }
 
 pub(crate) struct Peer {
-    pub(crate) socket_addr: SocketAddr,
-    pub(crate) last_reg_time: Instant,
-    pub(crate) guid: Vec<u8>,
-    pub(crate) uuid: Bytes,
-    pub(crate) pk: Bytes,
+    pub(crate) socket_addr: SocketAddr, // 对等节点socket地址
+    pub(crate) last_reg_time: Instant,  // 上一次 注册/更新 时间点
+    pub(crate) guid: Vec<u8>,           // 对等节点 唯一标识符
+    pub(crate) uuid: Bytes,             // 对等节点 uuid
+    pub(crate) pk: Bytes,               // 对等节点公钥
     // pub(crate) user: Option<Vec<u8>>,
     pub(crate) info: PeerInfo,
     // pub(crate) disabled: bool,
-    pub(crate) reg_pk: (u32, Instant), // how often register_pk
+    pub(crate) reg_pk: (u32, Instant), // how often register_pk 公钥注册频率,(计数器,上一时间点)
 }
 
 impl Default for Peer {

@@ -105,11 +105,16 @@ pub fn now() -> u64 {
         .unwrap_or_default()
 }
 
+/// 生成 Ed25519 密钥对
+/// [32字节私钥][32字节公钥]
+/// - wait: 线程等待时间 if 私钥文件不存在
 pub fn gen_sk(wait: u64) -> (String, Option<sign::SecretKey>) {
+    // 存储私钥文件的名称
     let sk_file = "id_ed25519";
     if wait > 0 && !std::path::Path::new(sk_file).exists() {
         std::thread::sleep(std::time::Duration::from_millis(wait));
     }
+    // open secret key file, base64 decoding
     if let Ok(mut file) = std::fs::File::open(sk_file) {
         let mut contents = String::new();
         if file.read_to_string(&mut contents).is_ok() {
@@ -123,21 +128,26 @@ pub fn gen_sk(wait: u64) -> (String, Option<sign::SecretKey>) {
             }
         }
     } else {
+        // func: for create key pair
         let gen_func = || {
             let (tmp, sk) = sign::gen_keypair();
             (base64::encode(tmp), sk)
         };
         let (mut pk, mut sk) = gen_func();
+        // 直到public key不包含 / : 特殊字符
         for _ in 0..300 {
             if !pk.contains('/') && !pk.contains(':') {
                 break;
             }
             (pk, sk) = gen_func();
         }
+        // 公钥文件
         let pub_file = format!("{sk_file}.pub");
         if let Ok(mut f) = std::fs::File::create(&pub_file) {
+            // 公钥写入
             f.write_all(pk.as_bytes()).ok();
             if let Ok(mut f) = std::fs::File::create(sk_file) {
+                // 私钥写入
                 let s = base64::encode(&sk);
                 if f.write_all(s.as_bytes()).is_ok() {
                     log::info!("Private/public key written to {}/{}", sk_file, pub_file);

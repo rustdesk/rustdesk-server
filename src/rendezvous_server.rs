@@ -41,7 +41,7 @@ use std::{
 
 #[derive(Clone, Debug)]
 enum Data {
-    Msg(Box<RendezvousMessage>, SocketAddr),
+    Msg(Box<RendezvousMessage>, SocketAddr), // protocol message -> SocketAddr (udp socket)
     RelayServers0(String),
     RelayServers(RelayServers),
 }
@@ -66,42 +66,51 @@ struct Inner {
     version: String,
     software_url: String,
     mask: Option<Ipv4Network>,
-    local_ip: String,
-    sk: Option<sign::SecretKey>,
+    local_ip: String,            // 本地ip
+    sk: Option<sign::SecretKey>, // 可选密钥
 }
 
 #[derive(Clone)]
 pub struct RendezvousServer {
     tcp_punch: Arc<Mutex<HashMap<SocketAddr, Sink>>>,
-    pm: PeerMap,
+    pm: PeerMap, // 对等节点表
     tx: Sender,
-    relay_servers: Arc<RelayServers>,
-    relay_servers0: Arc<RelayServers>,
-    rendezvous_servers: Arc<Vec<String>>,
+    relay_servers: Arc<RelayServers>,     // 中继服务器
+    relay_servers0: Arc<RelayServers>,    // 中继服务器
+    rendezvous_servers: Arc<Vec<String>>, // rendezvous服务器的地址
     inner: Arc<Inner>,
 }
 
 enum LoopFailure {
-    UdpSocket,
-    Listener3,
-    Listener2,
-    Listener,
+    UdpSocket, // udp listener
+    Listener3, // ws
+    Listener2, // nat
+    Listener,  // port
 }
 
 impl RendezvousServer {
     #[tokio::main(flavor = "multi_thread")]
     pub async fn start(port: i32, serial: i32, key: &str, rmem: usize) -> ResultType<()> {
         let (key, sk) = Self::get_server_sk(key);
+        // 网络地址转换（Network Address Translation，NAT）端口
         let nat_port = port - 1;
+        // WebSocket 的端口
         let ws_port = port + 2;
         let pm = PeerMap::new().await?;
+
         log::info!("serial={}", serial);
+        // rendezvous servers
         let rendezvous_servers = get_servers(&get_arg("rendezvous-servers"), "rendezvous-servers");
+
         log::info!("Listening on tcp/udp :{}", port);
         log::info!("Listening on tcp :{}, extra port for NAT test", nat_port);
         log::info!("Listening on websocket :{}", ws_port);
+        // udp 监听端口
         let mut socket = create_udp_listener(port, rmem).await?;
+
+        // Msg / RelayServers0(String) should split / RelayServers(Vec<String>)
         let (tx, mut rx) = mpsc::unbounded_channel::<Data>();
+
         let software_url = get_arg("software-url");
         let version = hbb_common::get_version_from_url(&software_url);
         if !version.is_empty() {
@@ -118,10 +127,11 @@ impl RendezvousServer {
                     .unwrap_or_default(),
             )
         };
+        // rendezvous server
         let mut rs = Self {
             tcp_punch: Arc::new(Mutex::new(HashMap::new())),
             pm,
-            tx: tx.clone(),
+            tx: tx.clone(), // channel input
             relay_servers: Default::default(),
             relay_servers0: Default::default(),
             rendezvous_servers: Arc::new(rendezvous_servers),
@@ -137,10 +147,13 @@ impl RendezvousServer {
         log::info!("mask: {:?}", rs.inner.mask);
         log::info!("local-ip: {:?}", rs.inner.local_ip);
         std::env::set_var("PORT_FOR_API", port.to_string());
+
         rs.parse_relay_servers(&get_arg("relay-servers"));
+
         let mut listener = create_tcp_listener(port).await?;
         let mut listener2 = create_tcp_listener(nat_port).await?;
         let mut listener3 = create_tcp_listener(ws_port).await?;
+
         let test_addr = std::env::var("TEST_HBBS").unwrap_or_default();
         if std::env::var("ALWAYS_USE_RELAY")
             .unwrap_or_default()
@@ -159,6 +172,7 @@ impl RendezvousServer {
                 "N"
             }
         );
+        // 测试 hbbs
         if test_addr.to_lowercase() != "no" {
             let test_addr = if test_addr.is_empty() {
                 listener.local_addr()?
@@ -214,6 +228,8 @@ impl RendezvousServer {
                 }
             }
         };
+        // 信号检测
+        // hangup/terminated/interrupt/quit
         let listen_signal = listen_signal();
         tokio::select!(
             res = main_task => res,
@@ -221,6 +237,13 @@ impl RendezvousServer {
         )
     }
 
+    /// RendezvousServer main loop
+    /// - rx
+    /// - listener - port
+    /// - listener2 - nat
+    /// - listener3 - ws
+    /// - socket - udp listener
+    /// - key - public key
     async fn io_loop(
         &mut self,
         rx: &mut Receiver,
@@ -230,9 +253,11 @@ impl RendezvousServer {
         socket: &mut FramedSocket,
         key: &str,
     ) -> LoopFailure {
+        // 定时检测
         let mut timer_check_relay = interval(Duration::from_millis(CHECK_RELAY_TIMEOUT));
         loop {
             tokio::select! {
+                // 定时检查中继服务器(udp)
                 _ = timer_check_relay.tick() => {
                     if self.relay_servers0.len() > 1 {
                         let rs = self.relay_servers0.clone();
@@ -242,6 +267,7 @@ impl RendezvousServer {
                         });
                     }
                 }
+                // Data channel received
                 Some(data) = rx.recv() => {
                     match data {
                         Data::Msg(msg, addr) => { allow_err!(socket.send(msg.as_ref(), addr).await); }
@@ -249,6 +275,7 @@ impl RendezvousServer {
                         Data::RelayServers(rs) => { self.relay_servers = Arc::new(rs); }
                     }
                 }
+                // udp listener
                 res = socket.next() => {
                     match res {
                         Some(Ok((bytes, addr))) => {
@@ -266,6 +293,7 @@ impl RendezvousServer {
                         }
                     }
                 }
+                // nat tcp listener
                 res = listener2.accept() => {
                     match res {
                         Ok((stream, addr))  => {
@@ -278,6 +306,7 @@ impl RendezvousServer {
                         }
                     }
                 }
+                // ws tcp listener
                 res = listener3.accept() => {
                     match res {
                         Ok((stream, addr))  => {
@@ -290,6 +319,7 @@ impl RendezvousServer {
                         }
                     }
                 }
+                // port tcp listener
                 res = listener.accept() => {
                     match res {
                         Ok((stream, addr)) => {
@@ -1165,19 +1195,26 @@ impl RendezvousServer {
 
     #[inline]
     fn get_server_sk(key: &str) -> (String, Option<sign::SecretKey>) {
+        // out secret key
         let mut out_sk = None;
         let mut key = key.to_owned();
+        // can base64: binary data -> ascii string
         if let Ok(sk) = base64::decode(&key) {
+            // secret key byte
             if sk.len() == sign::SECRETKEYBYTES {
                 log::info!("The key is a crypto private key");
+                // 私钥
                 key = base64::encode(&sk[(sign::SECRETKEYBYTES / 2)..]);
-                let mut tmp = [0u8; sign::SECRETKEYBYTES];
+                let mut tmp: [u8; 64] = [0u8; sign::SECRETKEYBYTES];
                 tmp[..].copy_from_slice(&sk);
+                // 整个密钥
                 out_sk = Some(sign::SecretKey(tmp));
             }
         }
 
+        // no key set
         if key.is_empty() || key == "-" || key == "_" {
+            // (public key, secret key)
             let (pk, sk) = crate::common::gen_sk(0);
             out_sk = sk;
             if !key.is_empty() {
@@ -1187,6 +1224,7 @@ impl RendezvousServer {
             }
         }
 
+        // key is set, but not base64 value
         if !key.is_empty() {
             log::info!("Key: {}", key);
             std::env::set_var("KEY_FOR_API", key.clone());
@@ -1214,7 +1252,7 @@ impl RendezvousServer {
 }
 
 async fn check_relay_servers(rs0: Arc<RelayServers>, tx: Sender) {
-    let mut futs = Vec::new();
+    let mut _futures = Vec::new();
     let rs = Arc::new(Mutex::new(Vec::new()));
     for x in rs0.iter() {
         let mut host = x.to_owned();
@@ -1223,7 +1261,7 @@ async fn check_relay_servers(rs0: Arc<RelayServers>, tx: Sender) {
         }
         let rs = rs.clone();
         let x = x.clone();
-        futs.push(tokio::spawn(async move {
+        _futures.push(tokio::spawn(async move {
             if FramedStream::new(&host, None, CHECK_RELAY_TIMEOUT)
                 .await
                 .is_ok()
@@ -1232,7 +1270,7 @@ async fn check_relay_servers(rs0: Arc<RelayServers>, tx: Sender) {
             }
         }));
     }
-    join_all(futs).await;
+    join_all(_futures).await;
     log::debug!("check_relay_servers");
     let rs = std::mem::take(&mut *rs.lock().await);
     if !rs.is_empty() {
@@ -1294,6 +1332,7 @@ async fn send_rk_res(
 
 async fn create_udp_listener(port: i32, rmem: usize) -> ResultType<FramedSocket> {
     let addr = SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), port as _);
+    // 环境不支持 IPv6/IPv6 地址被占用/防火墙或网络策略限制
     if let Ok(s) = FramedSocket::new_reuse(&addr, false, rmem).await {
         log::debug!("listen on udp {:?}", s.local_addr());
         return Ok(s);

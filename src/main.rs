@@ -25,12 +25,22 @@ fn main() -> ResultType<()> {
         -k, --key=[KEY] 'Only allow the client with the same key'",
     );
     init_args(&args, "hbbs", "RustDesk ID/Rendezvous Server");
+    // listening port
     let port = get_arg_or("port", RENDEZVOUS_PORT.to_string()).parse::<i32>()?;
     if port < 3 {
         bail!("Invalid port");
     }
+    // udp recv buffer size
     let rmem = get_arg("rmem").parse::<usize>().unwrap_or(RMEM);
+    // update serial number
     let serial: i32 = get_arg("serial").parse().unwrap_or(0);
-    RendezvousServer::start(port, serial, &get_arg("key"), rmem)?;
+    // - Entrypoint -
+    RendezvousServer::start(
+        port,
+        serial,
+        &get_arg("key"), /* client served key */
+        rmem,
+    )?;
+    // - - - - - - -
     Ok(())
 }
