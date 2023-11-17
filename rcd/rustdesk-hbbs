@@ -35,7 +35,7 @@ command=/usr/sbin/daemon
 procname=/usr/local/sbin/hbbs
 rustdesk_hbbs_chdir=/var/db/rustdesk-server
 command_args="-p ${pidfile} -o /var/log/rustdesk-hbbs.log ${procname} ${rustdesk_hbbs_args}"
-## If you want the daemon do its log over syslog comment out the above line and remove the comment from the below replacement
+## If you want the daemon to do its log over syslog, comment out the above line and remove the comment from the below replacement
 #command_args="-p ${pidfile} -T ${name} ${procname} ${rustdesk_hbbs_args}"
 
 start_precmd=rustdesk_hbbs_startprecmd
