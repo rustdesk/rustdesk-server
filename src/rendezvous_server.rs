@@ -35,6 +35,7 @@ use sodiumoxide::crypto::sign;
 use std::{
     collections::HashMap,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     sync::Arc,
     time::Instant,
 };
@@ -55,10 +56,10 @@ enum Sink {
 }
 type Sender = mpsc::UnboundedSender<Data>;
 type Receiver = mpsc::UnboundedReceiver<Data>;
-static mut ROTATION_RELAY_SERVER: usize = 0;
+static ROTATION_RELAY_SERVER: AtomicUsize = AtomicUsize::new(0);
 type RelayServers = Vec<String>;
 static CHECK_RELAY_TIMEOUT: u64 = 3_000;
-static mut ALWAYS_USE_RELAY: bool = false;
+static ALWAYS_USE_RELAY: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone)]
 struct Inner {
@@ -147,13 +148,11 @@ impl RendezvousServer {
             .to_uppercase()
             == "Y"
         {
-            unsafe {
-                ALWAYS_USE_RELAY = true;
-            }
+            ALWAYS_USE_RELAY.store(true, Ordering::SeqCst);
         }
         log::info!(
             "ALWAYS_USE_RELAY={}",
-            if unsafe { ALWAYS_USE_RELAY } {
+            if ALWAYS_USE_RELAY.load(Ordering::SeqCst) {
                 "Y"
             } else {
                 "N"
@@ -711,7 +710,7 @@ impl RendezvousServer {
             let peer_is_lan = self.is_lan(peer_addr);
             let is_lan = self.is_lan(addr);
             let mut relay_server = self.get_relay_server(addr.ip(), peer_addr.ip());
-            if unsafe { ALWAYS_USE_RELAY } || (peer_is_lan ^ is_lan) {
+            if ALWAYS_USE_RELAY.load(Ordering::SeqCst) || (peer_is_lan ^ is_lan) {
                 if peer_is_lan {
                     // https://github.com/rustdesk/rustdesk-server/issues/24
                     relay_server = self.inner.local_ip.clone()
@@ -905,10 +904,7 @@ impl RendezvousServer {
         } else if self.relay_servers.len() == 1 {
             return self.relay_servers[0].clone();
         }
-        let i = unsafe {
-            ROTATION_RELAY_SERVER += 1;
-            ROTATION_RELAY_SERVER % self.relay_servers.len()
-        };
+        let i = ROTATION_RELAY_SERVER.fetch_add(1, Ordering::SeqCst) % self.relay_servers.len();
         self.relay_servers[i].clone()
     }
 
@@ -1027,13 +1023,17 @@ impl RendezvousServer {
             Some("always-use-relay" | "aur") => {
                 if let Some(rs) = fds.next() {
                     if rs.to_uppercase() == "Y" {
-                        unsafe { ALWAYS_USE_RELAY = true };
+                        ALWAYS_USE_RELAY.store(true, Ordering::SeqCst);
                     } else {
-                        unsafe { ALWAYS_USE_RELAY = false };
+                        ALWAYS_USE_RELAY.store(false, Ordering::SeqCst);
                     }
                     self.tx.send(Data::RelayServers0(rs.to_owned())).ok();
                 } else {
-                    let _ = writeln!(res, "ALWAYS_USE_RELAY: {:?}", unsafe { ALWAYS_USE_RELAY });
+                    let _ = writeln!(
+                        res,
+                        "ALWAYS_USE_RELAY: {:?}",
+                        ALWAYS_USE_RELAY.load(Ordering::SeqCst)
+                    );
                 }
             }
             Some("test-geo" | "tg") => {
