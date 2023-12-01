@@ -1,5 +1,4 @@
 pub mod compress;
-pub mod platform;
 pub mod protos;
 pub use bytes;
 use config::Config;
