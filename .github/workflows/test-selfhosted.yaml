@@ -11,7 +11,9 @@ jobs:
     name: Build 
     #runs-on: ubuntu-22.04
     runs-on: self-hosted
-    os: ubuntu-22.04
+    container:
+      # Runner docker image
+      image: ubuntu:22.04
     strategy:
       fail-fast: false
       matrix:
