@@ -12,8 +12,8 @@ jobs:
     #runs-on: ubuntu-22.04
     runs-on: self-hosted
     # Runner docker image
-    #container:
-      #image: ubuntu:22.04
+    container:
+      image: archlinux/archlinux:base-devel
     strategy:
       fail-fast: false
       matrix:
