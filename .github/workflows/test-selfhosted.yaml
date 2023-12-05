@@ -1,0 +1,49 @@
+name: test self-hosted runner
+
+on:
+  schedule:
+    # schedule build every night
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build 
+    #runs-on: ubuntu-22.04
+    runs-on: self-hosted
+    os: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        job:
+          - { name: "amd64",   target: "x86_64-unknown-linux-musl" }
+          - { name: "arm64v8", target: "aarch64-unknown-linux-musl" }
+          - { name: "armv7",   target: "armv7-unknown-linux-musleabihf" }
+          - { name: "i386",    target: "i686-unknown-linux-musl" }
+          - { name: "amd64fb",    target: "x86_64-unknown-freebsd" }
+
+    steps:
+      
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Install toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: "stable"
+          override: true
+          default: true
+          components: rustfmt
+          profile: minimal
+          target: ${{ matrix.job.target }}
+
+      - name: Exec sqkx
+        run: |
+          cargo install sqlx-cli
+
+      - name: Build
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release --target=${{ matrix.job.target }}
+          use-cross: true  
