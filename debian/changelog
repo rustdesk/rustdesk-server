@@ -1,3 +1,7 @@
+rustdesk-server (1.1.9) UNRELEASED; urgency=medium
+
+  * remove unsafe
+
 rustdesk-server (1.1.8) UNRELEASED; urgency=medium
 
   * fix test_hbbs and mask in lan
