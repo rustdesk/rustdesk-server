@@ -10,10 +10,12 @@ jobs:
   build:
     name: Build 
     #runs-on: ubuntu-22.04
+    # need to docker login ghcr.io on self-hosted machine for cross build, use github username and personal token (lowest permission is fine)
     runs-on: self-hosted
     # Runner docker image
-    container:
-      image: archlinux/archlinux:base-devel
+    # with container, it is hard to handle cross build (need docker in docker)
+    #container:
+      #image: archlinux/archlinux:base-devel
     strategy:
       fail-fast: false
       matrix:
