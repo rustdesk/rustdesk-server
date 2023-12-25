@@ -26,7 +26,7 @@ clap = "2"
 rust-ini = "0.18"
 minreq = { version = "2.4", features = ["punycode"] }
 machine-uid = "0.2"
-mac_address = "1.1"
+mac_address = "1.1.5"
 whoami = "1.2"
 base64 = "0.13"
 axum = { version = "0.5", features = ["headers"] }
