@@ -120,6 +120,9 @@ pub fn gen_sk(wait: u64) -> (String, Option<sign::SecretKey>) {
                 let pk = base64::encode(&tmp[sign::SECRETKEYBYTES / 2..]);
                 log::info!("Private key comes from {}", sk_file);
                 return (pk, Some(sign::SecretKey(tmp)));
+            } else {
+                log::error!("Malformed private key. You probably have a trailing newline in the secret key file.");
+                std::process::exit(1);
             }
         }
     } else {
