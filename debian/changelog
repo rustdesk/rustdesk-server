@@ -1,4 +1,4 @@
-rustdesk-server (1.1.10) UNRELEASED; urgency=medium
+rustdesk-server (1.1.10-2) UNRELEASED; urgency=medium
 
   * fix hangup signal exit when run with nohup
   * some minors
