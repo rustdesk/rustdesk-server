@@ -156,8 +156,6 @@ pub async fn listen_signal() -> Result<()> {
     use hbb_common::tokio::signal::unix::{signal, SignalKind};
 
     tokio::spawn(async {
-        let mut s = signal(SignalKind::hangup())?;
-        let hangup = s.recv();
         let mut s = signal(SignalKind::terminate())?;
         let terminate = s.recv();
         let mut s = signal(SignalKind::interrupt())?;
@@ -166,9 +164,6 @@ pub async fn listen_signal() -> Result<()> {
         let quit = s.recv();
 
         tokio::select! {
-            _ = hangup => {
-                log::info!("signal hangup");
-            }
             _ = terminate => {
                 log::info!("signal terminate");
             }
