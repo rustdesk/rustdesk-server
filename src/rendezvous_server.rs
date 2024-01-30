@@ -1175,7 +1175,7 @@ impl RendezvousServer {
                 tmp[..].copy_from_slice(&sk);
                 out_sk = Some(sign::SecretKey(tmp));
             } else {
-                log::error!("Malformed private key");
+                log::error!("Malformed private key. You probably have a trailing newline in the secret key file.");
                 std::process::exit(1);
             }
         }
