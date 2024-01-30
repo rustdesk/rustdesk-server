@@ -78,7 +78,7 @@ pub fn init_args(args: &str, name: &str, about: &str) {
         }
     }
     for (k, v) in matches.args {
-        if let Some(v) = v.vals.get(0) {
+        if let Some(v) = v.vals.first() {
             std::env::set_var(arg_name(k), v.to_string_lossy().to_string());
         }
     }
