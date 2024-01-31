@@ -113,7 +113,8 @@ pub fn gen_sk(wait: u64) -> (String, Option<sign::SecretKey>) {
     if let Ok(mut file) = std::fs::File::open(sk_file) {
         let mut contents = String::new();
         if file.read_to_string(&mut contents).is_ok() {
-            let sk = base64::decode(&contents).unwrap_or_default();
+            let contents = contents.trim();
+            let sk = base64::decode(contents).unwrap_or_default();
             if sk.len() == sign::SECRETKEYBYTES {
                 let mut tmp = [0u8; sign::SECRETKEYBYTES];
                 tmp[..].copy_from_slice(&sk);
@@ -121,7 +122,8 @@ pub fn gen_sk(wait: u64) -> (String, Option<sign::SecretKey>) {
                 log::info!("Private key comes from {}", sk_file);
                 return (pk, Some(sign::SecretKey(tmp)));
             } else {
-                log::error!("Malformed private key. You probably have a trailing newline in the secret key file.");
+                // don't use log here, since it is async
+                println!("Fatal error: malformed private key in {sk_file}.");
                 std::process::exit(1);
             }
         }
