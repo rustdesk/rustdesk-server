@@ -1174,9 +1174,6 @@ impl RendezvousServer {
                 let mut tmp = [0u8; sign::SECRETKEYBYTES];
                 tmp[..].copy_from_slice(&sk);
                 out_sk = Some(sign::SecretKey(tmp));
-            } else {
-                log::error!("Malformed private key");
-                std::process::exit(1);
             }
         }
 
