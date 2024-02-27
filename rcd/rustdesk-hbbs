@@ -9,10 +9,10 @@
 #
 # rustdesk_hbbs_enable (bool):            Set to NO by default.
 #               Set it to YES to enable rustdesk_hbbs.
-# rustdesk_hbbs_ip (string):              Set IP address/hostname of relay server to use
+# rustdesk_hbbr_server (string):          Set IP address/hostname of relay (hbbr) server to use
 #               Defaults to "127.0.0.1", please replace with your server hostname/IP.
 # rustdesk_hbbs_args (string):            Set extra arguments to pass to rustdesk_hbbs
-#               Default is "-r ${rustdesk_hbbs_ip} -k _".
+#               Default is "-r ${rustdesk_hbbr_server} -k _".
 # rustdesk_hbbs_user (string):            Set user that rustdesk_hbbs will run under
 #               Default is "root".
 # rustdesk_hbbs_group (string):           Set group that rustdesk_hbbs will run under
@@ -27,8 +27,8 @@ rcvar=rustdesk_hbbs_enable
 load_rc_config $name
 
 : ${rustdesk_hbbs_enable:=NO}
-: ${rustdesk_hbbs_ip:=127.0.0.1}
-: ${rustdesk_hbbs_args="-r ${rustdesk_hbbs_ip} -k _"}
+: ${rustdesk_hbbr_server:=127.0.0.1}
+: ${rustdesk_hbbs_args="-r ${rustdesk_hbbr_server} -k _"}
 : ${rustdesk_hbbs_user:=rustdesk}
 : ${rustdesk_hbbs_group:=rustdesk}
 
