@@ -116,7 +116,6 @@ Edit line 16 to point to your relay server (the one listening on port 21117). Yo
 
 
 Note that here, the rustdesk/rustdesk-server:latest in China may be replaced with the latest version number on dockerhub, such as rustdesk-server:1.1.10-3. Otherwise, the old version may be pulled due to image acceleration.
-注意，这里的rustdesk/rustdesk-server:latest可能在中国大陆区域内换成dockerhub上的最新版本号，比如rustdesk-server:1.1.10-3，否则可能因为镜像加速的原因拉取到落后的版本。
 
 ## S6-overlay based images
 
