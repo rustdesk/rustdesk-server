@@ -344,7 +344,7 @@ You can specify the variables as usual or use an `.env` file.
 | KEY | hbbs/hbbr | if set force the use of a specific key, if set to **"_"** force the use of any key |
 | LIMIT_SPEED | hbbr | speed limit (in Mb/s) |
 | PORT | hbbs/hbbr | listening port (21116 for hbbs - 21117 for hbbr) |
-| RELAY_SERVERS | hbbs | IP address/DNS name of the machines running hbbr (separated by comma) |
+| RELAY | hbbs | IP address/DNS name of the machines running hbbr (separated by comma) |
 | RUST_LOG | all | set debug level (error\|warn\|info\|debug\|trace) |
 | SINGLE_BANDWIDTH | hbbr | max bandwidth for a single connection (in Mb/s) |
 | TOTAL_BANDWIDTH | hbbr | max total bandwidth (in Mb/s) |
