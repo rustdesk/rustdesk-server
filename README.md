@@ -114,6 +114,9 @@ Edit line 16 to point to your relay server (the one listening on port 21117). Yo
 
 (docker-compose credit goes to @lukebarone and @QuiGonLeong)
 
+
+> Note that here, the rustdesk/rustdesk-server:latest in China may be replaced with the latest version number on dockerhub, such as rustdesk-server:1.1.10-3. Otherwise, the old version may be pulled due to image acceleration.
+
 ## S6-overlay based images
 
 These images are build against `busybox:stable` with the addition of the binaries (both hbbr and hbbs) and [S6-overlay](https://github.com/just-containers/s6-overlay). They're available on [Docker hub](https://hub.docker.com/r/rustdesk/rustdesk-server-s6/) with these tags:
