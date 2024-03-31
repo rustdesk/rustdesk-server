@@ -282,8 +282,10 @@ pub async fn listen_any(port: u16) -> ResultType<TcpListener> {
             .bind(SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), port))
             .is_ok()
         {
-            if let Ok(l) = socket.listen(DEFAULT_BACKLOG) {
-                return Ok(l);
+            if let Ok(_l) = socket.listen(DEFAULT_BACKLOG) {
+            /*
+               return Ok(l);
+            */
             }
         }
     }
