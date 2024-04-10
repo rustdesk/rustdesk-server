@@ -1,0 +1,125 @@
+# Default values for rustdesk-server.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+replicaCount: 1
+
+hbbs:
+  enabled: true
+  image:
+    repository: rustdesk/rustdesk-server
+    pullPolicy: IfNotPresent
+    # Overrides the image tag whose default is the chart appVersion.
+    tag: ""
+  relay: rustdesk.example.com
+  annotations: {}
+  # extraArgs:
+  #   - foo
+  #   - bar
+
+hbbr:
+  enabled: true
+  image:
+    repository: rustdesk/rustdesk-server
+    pullPolicy: IfNotPresent
+    # Overrides the image tag whose default is the chart appVersion.
+    tag: ""
+  annotations: {}
+  # extraArgs:
+  #   - foo
+  #   - bar
+  secret:
+    # existingSecret: rustdesk-server-hbbr
+    private: foo
+    public: bar
+    # -- Labels for the Secret
+    labels: {}
+    # -- Annotations for the Secret
+    annotations: {}
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Automatically mount a ServiceAccount's API credentials?
+  automount: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext: {}
+  # fsGroup: 2000
+
+securityContext: {}
+  # capabilities:
+  #   drop:
+  #   - ALL
+  # readOnlyRootFilesystem: true
+  # runAsNonRoot: true
+  # runAsUser: 1000
+
+service:
+  type: ClusterIP
+  hbbsNatTest: 21115
+  hbbsPort: 21116
+  hbbsWebsocket: 21118
+  hbbrPort: 21117
+  hbbrWebsocket: 21119
+
+persistence:
+  # storageClassName: default
+  accessModes:
+    - ReadWriteOnce
+  size: 100Mi
+  # annotations: {}
+  finalizers:
+    - kubernetes.io/pvc-protection
+  # selectorLabels: {}
+  ## Sub-directory of the PV to mount. Can be templated.
+  # subPath: ""
+  ## Name of an existing PVC. Can be templated.
+  # existingClaim:
+  ## Extra labels to apply to a PVC.
+  extraPvcLabels: {}
+
+resources: {}
+  # We usually recommend not to specify default resources and to leave this as a conscious
+  # choice for the user. This also increases chances charts run on environments with little
+  # resources, such as Minikube. If you do want to specify resources, uncomment the following
+  # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
+  # limits:
+  #   cpu: 100m
+  #   memory: 128Mi
+  # requests:
+  #   cpu: 100m
+  #   memory: 128Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 100
+  targetCPUUtilizationPercentage: 80
+  # targetMemoryUtilizationPercentage: 80
+
+extraVolumes: []
+## Additional volumes to the pod.
+# - name: reverse-proxy-auth-config
+#   secret:
+#     secretName: reverse-proxy-auth-config
+
+## Extra volume mounts that will be added to the container
+extraVolumeMounts: []
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}

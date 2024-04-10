@@ -1,0 +1,111 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "rustdesk-server.fullname" . }}-hbbs
+  labels:
+    {{- include "rustdesk-server.labels" . | nindent 4 }}
+    app.kubernetes.io/component: hbbs
+  {{- with .Values.hbbs.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "rustdesk-server.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: hbbs
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "rustdesk-server.labels" . | nindent 8 }}
+        app.kubernetes.io/component: hbbs
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "rustdesk-server.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}-hbbs
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.hbbs.image.repository }}:{{ .Values.hbbs.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.hbbs.image.pullPolicy }}
+          command: [ "/usr/bin/hbbs" ]
+          args:
+          {{- with .Values.hbbs.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+          {{- else}}
+            - "-r"
+            - "$(RELAY)"
+            - "-k"
+            - "_"
+          {{- end }}
+          {{- if .Values.hbbs.relay }}
+          env:
+            - name: DB_URL
+              value: "/db/db_v2.sqlite3"
+          envFrom:
+          - configMapRef:
+              name: {{ include "rustdesk-server.fullname" . }}-hbbs
+          {{- end }}
+          ports:
+            - name: hbbs-nat-test
+              containerPort: 21115
+              protocol: TCP
+            - name: hbbs-port
+              containerPort: 21116
+              protocol: TCP
+            - name: hbbs-port-udp
+              containerPort: 21116
+              protocol: UDP
+            - name: hbbs-websocket
+              containerPort: 21118
+              protocol: TCP
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - mountPath: /root
+              readOnly: true
+              name: hbbr-keys
+            - mountPath: /db
+              name: hbbs-db
+          {{- if .Values.extraVolumeMounts }}
+            {{ toYaml .Values.extraVolumeMounts | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: hbbr-keys
+          secret:
+      {{- if .Values.hbbr.secret.existingSecret }}
+            secretName: {{ .Values.hbbr.secret.existingSecret }}
+      {{- else }}
+            secretName: {{ include "rustdesk-server.fullname" . }}-hbbr
+      {{- end }}
+        - name: hbbs-db
+          persistentVolumeClaim:
+            claimName: {{ if .Values.persistence.existingClaim }}{{ .Values.persistence.existingClaim }}{{- else }}{{ template "rustdesk-server.fullname" . }}-hbbs-pvc{{- end }}
+      {{- if .Values.extraVolumes }}
+        {{ toYaml .Values.extraVolumes | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

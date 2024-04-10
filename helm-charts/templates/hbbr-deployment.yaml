@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "rustdesk-server.fullname" . }}-hbbr
+  labels:
+    {{- include "rustdesk-server.labels" . | nindent 4 }}
+    app.kubernetes.io/component: hbbr
+  {{- with .Values.hbbr.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "rustdesk-server.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: hbbr
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "rustdesk-server.labels" . | nindent 8 }}
+        app.kubernetes.io/component: hbbr
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "rustdesk-server.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}-hbbr
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.hbbr.image.repository }}:{{ .Values.hbbr.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.hbbr.image.pullPolicy }}
+          command: [ "/usr/bin/hbbr" ]
+          args:
+          {{- with .Values.hbbr.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+          {{- else}}
+            - "-k"
+            - "_"
+          {{- end }}
+          ports:
+            - name: hbbr-port
+              containerPort: 21117
+              protocol: TCP
+            - name: hbbr-websocket
+              containerPort: 21119
+              protocol: TCP
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - mountPath: /root
+              readOnly: true
+              name: hbbr-keys
+          {{- if .Values.extraVolumeMounts }}
+            {{ toYaml .Values.extraVolumeMounts | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: hbbr-keys
+          secret:
+      {{- if .Values.hbbr.secret.existingSecret }}
+            secretName: {{ .Values.hbbr.secret.existingSecret }}
+      {{- else }}
+            secretName: {{ include "rustdesk-server.fullname" . }}-hbbr
+      {{- end }}
+      {{- if .Values.extraVolumes }}
+        {{ toYaml .Values.extraVolumes | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
