@@ -64,29 +64,37 @@ impl Database {
         );
         let _ = pool.get().await?; // test
         let db = Database { pool };
+
+        // Load and run migrations
+        let migrator = sqlx::migrate!("./db_v2/migrations/");
+        migrator.run(db.pool.get().await?.deref_mut()).await?;
+
         db.create_tables().await?;
         Ok(db)
     }
 
     async fn create_tables(&self) -> ResultType<()> {
         sqlx::query!(
-            "
-            create table if not exists peer (
+            r#"
+            CREATE TABLE IF NOT EXISTS peer (
                 guid blob primary key not null,
                 id varchar(100) not null,
                 uuid blob not null,
                 pk blob not null,
                 created_at datetime not null default(current_timestamp),
-                user blob,
-                status tinyint,
+                "user" blob,
+                status tinyint not null default(1),
                 note varchar(300),
-                info text not null
+                region text null,
+                strategy blob,
+                info JSON not null DEFAULT '{}', 
+                "last_online" datetime not null default('2011-11-16 11:55:19')
             ) without rowid;
             create unique index if not exists index_peer_id on peer (id);
             create index if not exists index_peer_user on peer (user);
             create index if not exists index_peer_created_at on peer (created_at);
             create index if not exists index_peer_status on peer (status);
-        "
+        "#
         )
         .execute(self.pool.get().await?.deref_mut())
         .await?;
