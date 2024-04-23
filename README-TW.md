@@ -5,7 +5,7 @@
   <a href="#如何建立金鑰對">金鑰對</a> •
   <a href="#deb-套件">Debian</a> •
   <a href="#ENV-環境參數">環境參數</a><br>
-  [<a href="README.md">English</a>] | [<a href="README-DE.md">Deutsch</a>] | [<a href="README-NL.md">Nederlands</a>]<br>
+  [<a href="README.md">English</a>] | [<a href="README-DE.md">Deutsch</a>] | [<a href="README-NL.md">Nederlands</a>] | [<a href="README-ZH.md">简体中文</a>]<br>
 </p>
 
 # RustDesk Server Program

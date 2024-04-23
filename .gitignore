@@ -9,3 +9,4 @@ debian/debhelper-build-stamp
 src/version.rs
 db_v2.sqlite3
 test.*
+.idea
