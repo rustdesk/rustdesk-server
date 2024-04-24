@@ -5,7 +5,7 @@
   <a href="#hoe-maak-je-een-key-paar">Key paar</a> •
   <a href="#deb-pakketten">Debian pakketten</a> •
   <a href="#env-variabelen">ENV variabelen</a><br>
-  [<a href="README.md">English</a>] | [<a href="README-DE.md">Deutsch</a>] | [<a href="README-TW.md">繁體中文</a>]<br>
+  [<a href="README.md">English</a>] | [<a href="README-DE.md">Deutsch</a>] | [<a href="README-TW.md">繁體中文</a>] | [<a href="README-ZH.md">简体中文</a>]<br>
 </p>
 
 # RustDesk Server Programa
