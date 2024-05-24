@@ -1,3 +1,7 @@
+rustdesk-server (1.1.11-1) UNRELEASED; urgency=medium
+  * set reuse port to make restart friendly
+  * revert hbbr `-k` to not ruin back-compatibility
+
 rustdesk-server (1.1.11) UNRELEASED; urgency=medium
   * change -k to default '-', so you need not to set -k any more
 

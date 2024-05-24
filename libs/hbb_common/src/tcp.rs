@@ -260,8 +260,16 @@ pub async fn new_listener<T: ToSocketAddrs>(addr: T, reuse: bool) -> ResultType<
     }
 }
 
-pub async fn listen_any(port: u16) -> ResultType<TcpListener> {
+pub async fn listen_any(port: u16, reuse: bool) -> ResultType<TcpListener> {
     if let Ok(mut socket) = TcpSocket::new_v6() {
+        if reuse {
+            // windows has no reuse_port, but it's reuse_address
+            // almost equals to unix's reuse_port + reuse_address,
+            // though may introduce nondeterministic behavior
+            #[cfg(unix)]
+            socket.set_reuseport(true).ok();
+            socket.set_reuseaddr(true).ok();
+        }
         #[cfg(unix)]
         {
             use std::os::unix::io::{FromRawFd, IntoRawFd};

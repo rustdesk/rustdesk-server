@@ -39,7 +39,7 @@ fn main() -> ResultType<()> {
         matches.value_of("port").unwrap_or(&port.to_string()),
         matches
             .value_of("key")
-            .unwrap_or(&std::env::var("KEY").unwrap_or("-".to_owned())),
+            .unwrap_or(&std::env::var("KEY").unwrap_or_default()),
     )?;
     Ok(())
 }
