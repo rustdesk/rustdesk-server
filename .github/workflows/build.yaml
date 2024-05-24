@@ -260,11 +260,12 @@ jobs:
           echo "MAJOR_TAG=$M" >> $GITHUB_ENV
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v3
+        uses: docker/build-push-action@v5
         with:
           context: "./docker"
           platforms: ${{ matrix.job.docker_platform }}
           push: true
+          provenance: false
           build-args: |
             S6_ARCH=${{ matrix.job.s6_platform }}
           tags: |
@@ -380,11 +381,12 @@ jobs:
           echo "MAJOR_TAG=$M" >> $GITHUB_ENV
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v3
+        uses: docker/build-push-action@v5
         with:
           context: "./docker-classic"
           platforms: ${{ matrix.job.docker_platform }}
           push: true
+          provenance: false
           tags: |
             ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-${{ matrix.job.name }}
             ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-${{ matrix.job.name }}
