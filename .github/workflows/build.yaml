@@ -173,12 +173,12 @@ jobs:
       fail-fast: false
       matrix:
         job:
-          - { os: "linux", name: "amd64" }
-          - { os: "linux", name: "arm64v8" }
-          - { os: "linux", name: "armv7" }
-          - { os: "linux", name: "i386" }
-          - { os: "linux", name: "amd64fb" }
-          - { os: "windows", name: "x86_64" }
+          - { os: "linux", name: "amd64", suffix: "" }
+          - { os: "linux", name: "arm64v8", suffix: "" }
+          - { os: "linux", name: "armv7", suffix: "" }
+          - { os: "linux", name: "i386", suffix: "" }
+          - { os: "linux", name: "amd64fb", suffix: "" }
+          - { os: "windows", name: "x86_64", suffix: "-unsigned" }
           
     steps:
 
@@ -195,13 +195,13 @@ jobs:
         run: |
           sudo apt update
           DEBIAN_FRONTEND=noninteractive sudo apt install -y zip
-          zip ${{ matrix.job.name }}/rustdesk-server-${{ matrix.job.os }}-${{ matrix.job.name }}.zip ${{ matrix.job.name }}/*
+          zip ${{ matrix.job.name }}/rustdesk-server-${{ matrix.job.os }}-${{ matrix.job.name }}${{ matrix.job.suffix }}.zip ${{ matrix.job.name }}/*
 
       - name: Create Release (${{ matrix.job.os }} - (${{ matrix.job.name }})
         uses: softprops/action-gh-release@v1
         with:
           draft: true
-          files: ${{ matrix.job.name }}/rustdesk-server-${{ matrix.job.os }}-${{ matrix.job.name }}.zip
+          files: ${{ matrix.job.name }}/rustdesk-server-${{ matrix.job.os }}-${{ matrix.job.name }}${{ matrix.job.suffix }}.zip
             
   # docker build and push of single-arch images
   docker:
