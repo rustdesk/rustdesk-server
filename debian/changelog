@@ -1,3 +1,6 @@
+rustdesk-server (1.1.11) UNRELEASED; urgency=medium
+  * change -k to default '-', so you need not to set -k any more
+
 rustdesk-server (1.1.10-3) UNRELEASED; urgency=medium
   * fix on -2
 
