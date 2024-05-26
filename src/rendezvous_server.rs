@@ -1182,14 +1182,11 @@ impl RendezvousServer {
             out_sk = sk;
             if !key.is_empty() {
                 key = pk;
-            } else {
-                std::env::set_var("KEY_FOR_API", pk);
             }
         }
 
         if !key.is_empty() {
             log::info!("Key: {}", key);
-            std::env::set_var("KEY_FOR_API", key.clone());
         }
         (key, out_sk)
     }
