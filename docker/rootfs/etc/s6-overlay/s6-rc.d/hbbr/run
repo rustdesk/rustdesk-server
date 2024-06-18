@@ -2,4 +2,8 @@
 cd /data || return
 PARAMS=
 [ "${ENCRYPTED_ONLY}" = "1" ] && PARAMS="-k _"
-exec s6-setuidgid rustdesk /usr/bin/hbbr $PARAMS
+if [ "$(id -u)" -ne 0 ] ; then
+  /usr/bin/hbbr $PARAMS
+else
+  exec s6-setuidgid rustdesk /usr/bin/hbbr $PARAMS
+fi

@@ -3,4 +3,8 @@ sleep 2
 cd /data || return
 PARAMS=
 [ "${ENCRYPTED_ONLY}" = "1" ] && PARAMS="-k _"
-exec s6-setuidgid rustdesk /usr/bin/hbbs -r $RELAY $PARAMS
+if [ "$(id -u)" -ne 0 ] ; then
+  /usr/bin/hbbs -r $RELAY $PARAMS
+else
+  exec s6-setuidgid rustdesk /usr/bin/hbbs -r $RELAY $PARAMS
+fi
