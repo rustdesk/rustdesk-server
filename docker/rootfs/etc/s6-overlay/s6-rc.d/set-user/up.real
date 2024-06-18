@@ -1,0 +1,10 @@
+#!/command/with-contenv sh
+
+PUID=${PUID:-1000}
+PGID=${PGID:-1000}
+USERNAME=rustdesk
+GROUPNAME=rustdesk
+
+addgroup -g "${PGID}" "${GROUPNAME}"
+adduser -D -h /data -u "${PUID}" -G "${GROUPNAME}" "${USERNAME}"
+chown "${PUID}:${PGID}" "/data"

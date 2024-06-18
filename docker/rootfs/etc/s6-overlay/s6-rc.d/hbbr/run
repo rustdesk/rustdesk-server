@@ -1,5 +1,5 @@
 #!/command/with-contenv sh
-cd /data
+cd /data || return
 PARAMS=
 [ "${ENCRYPTED_ONLY}" = "1" ] && PARAMS="-k _"
-/usr/bin/hbbr $PARAMS
+exec s6-setuidgid rustdesk /usr/bin/hbbr $PARAMS
