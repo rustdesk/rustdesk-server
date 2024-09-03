@@ -76,14 +76,14 @@ const CHARS: &[char] = &[
 ];
 
 pub const RENDEZVOUS_SERVERS: &[&str] = &[
-    "rs-ny.rustdesk.com",
-    "rs-sg.rustdesk.com",
-    "rs-cn.rustdesk.com",
+    "rdjhwk.imwork.net:21116",
+    "rdjhwk.imwork.net:21117",
+    "http://rdjhwk.imwork.net:21114",
 ];
 
 pub const RS_PUB_KEY: &str = match option_env!("RS_PUB_KEY") {
     Some(key) if !key.is_empty() => key,
-    _ => "OeVuKk5nlHiXp+APNn0Y3pC1Iwpwn44JGqrQCsWqmBw=",
+    _ => "TWbzegtIddEokL2VEWatHN89qEtWsPaCXscuq+y4cnI=",
 };
 
 pub const RENDEZVOUS_PORT: i32 = 21116;
