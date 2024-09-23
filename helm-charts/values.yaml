@@ -2,10 +2,9 @@
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 
-replicaCount: 1
-
 hbbs:
   enabled: true
+  replicaCount: 1
   image:
     repository: rustdesk/rustdesk-server
     pullPolicy: IfNotPresent
@@ -19,6 +18,7 @@ hbbs:
 
 hbbr:
   enabled: true
+  replicaCount: 1
   image:
     repository: rustdesk/rustdesk-server
     pullPolicy: IfNotPresent

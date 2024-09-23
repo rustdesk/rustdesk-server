@@ -10,7 +10,7 @@ metadata:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
-  replicas: 1
+  replicas: {{ .Values.hbbs.replicaCount }}
   selector:
     matchLabels:
       {{- include "rustdesk-server.selectorLabels" . | nindent 6 }}
