@@ -1,4 +1,4 @@
-name: build ghcr
+name: Build and publish to ghcr.io
 
 on:
   workflow_dispatch:
@@ -81,7 +81,7 @@ jobs:
             target/${{ matrix.job.target }}/release/rustdesk-utils
         
   # Build and push single-arch Docker images to ghcr.io
-  docker:
+  create-s6-overlay-images:
 
     name: Docker push - ${{ matrix.job.name }}
     needs: build
@@ -164,10 +164,10 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
 
   # Build and push multi-arch Docker images to ghcr.io
-  docker-manifest:
+  create-s6-overlay-images-manifest:
 
-    name: Docker manifest
-    needs: docker
+    name: Manifest for s6-overlay images
+    needs: create-s6-overlay-images
     runs-on: ubuntu-24.04
 
     permissions:
@@ -229,14 +229,8 @@ jobs:
             ghcr.io/${{ github.repository }}-s6:${{ env.LATEST_TAG }}-i386
           push: true
 
-
-
-
-
-
-
   # Build and push single-arch Docker images to ghcr.io
-  docker-classic:
+  create-classic-images:
 
     name: Docker push - ${{ matrix.job.name }}
     needs: build
@@ -317,10 +311,10 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
 
   # Build and push multi-arch Docker images to ghcr.io
-  docker-classic-manifest:
+  create-classic-images-manifest:
 
-    name: Docker manifest
-    needs: docker-classic
+    name: Manifest for classic images
+    needs: create-classic-images
     runs-on: ubuntu-24.04
 
     permissions:
