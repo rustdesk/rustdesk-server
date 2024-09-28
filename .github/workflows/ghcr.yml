@@ -32,7 +32,7 @@ jobs:
           - { name: "arm64v8", target: "aarch64-unknown-linux-musl" }
           - { name: "armv7",   target: "armv7-unknown-linux-musleabihf" }
           - { name: "i386",    target: "i686-unknown-linux-musl" }
-          - { name: "amd64fb", target: "x86_64-unknown-freebsd" }
+          #- { name: "amd64fb", target: "x86_64-unknown-freebsd" }
 
     steps:
 
@@ -104,11 +104,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4.2.0
         
+      #- name: Download binaries
+        #uses: actions/download-artifact@v3
+        #with:
+          #name: binaries-linux-${{ matrix.job.name }}
+          #path: docker/rootfs/usr/bin
+
       - name: Download binaries
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
-          name: binaries-linux-${{ matrix.job.name }}
+          pattern: binaries-linux-${{ matrix.job.name }}
           path: docker/rootfs/usr/bin
+          merge-multiple: true
 
       - name: Make binaries executable
         run: chmod -v a+x docker/rootfs/usr/bin/*
