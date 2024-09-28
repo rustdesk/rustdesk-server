@@ -1,4 +1,4 @@
-name: build
+name: build for ghcr.io
 
 on:
   workflow_dispatch:
