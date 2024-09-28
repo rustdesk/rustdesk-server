@@ -74,13 +74,11 @@ jobs:
       - name: Publish Artifacts
         uses: actions/upload-artifact@v4
         with:
-            name: binaries-linux-${{ matrix.job.name }}
-            path:
-                - target/${{ matrix.job.target }}/release/hbbr
-                - target/${{ matrix.job.target }}/release/hbbs
-                - target/${{ matrix.job.target }}/release/rustdesk-utils
-            if-no-files-found: error
-        
+          name: binaries-linux-${{ matrix.job.name }}
+          path: |
+            target/${{ matrix.job.target }}/release/hbbr
+            target/${{ matrix.job.target }}/release/hbbs
+            target/${{ matrix.job.target }}/release/rustdesk-utils
         
   # Build and push single-arch Docker images to ghcr.io
   docker:
