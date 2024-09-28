@@ -37,7 +37,7 @@ jobs:
     steps:
 
       - name: Checkout
-        uses: actions/checkout@v4.2.0
+        uses: actions/checkout@v3
 
       - name: Install toolchain
         uses: actions-rs/toolchain@v1
@@ -68,8 +68,7 @@ jobs:
             target/${{ matrix.job.target }}/release/hbbs
             target/${{ matrix.job.target }}/release/rustdesk-utils
           if-no-files-found: error
-  
-  # S6 Version
+
   # Build and push single-arch Docker images to ghcr.io
   docker:
 
@@ -92,10 +91,10 @@ jobs:
     steps:
 
       - name: Checkout
-        uses: actions/checkout@v4.2.0
+        uses: actions/checkout@v3
         
       - name: Download binaries
-        uses: actions/download-artifact@v4.1.8
+        uses: actions/download-artifact@v3
         with:
           name: binaries-linux-${{ matrix.job.name }}
           path: docker/rootfs/usr/bin
@@ -104,14 +103,14 @@ jobs:
         run: chmod -v a+x docker/rootfs/usr/bin/*
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3.2.0
+        uses: docker/setup-qemu-action@v2
       
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3.6.1
+        uses: docker/setup-buildx-action@v2
 
       - name: Log in to GitHub Container Registry
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3.3.0
+        uses: docker/login-action@v2
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -119,7 +118,7 @@ jobs:
         
       - name: Extract metadata (tags, labels) for Docker
         id: meta
-        uses: docker/metadata-action@v5.5.1
+        uses: docker/metadata-action@v4
         with:
           images: ghcr.io/${{ github.repository }}-s6
 
@@ -132,7 +131,7 @@ jobs:
           echo "MAJOR_TAG=$M" >> $GITHUB_ENV
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v6.8.0
+        uses: docker/build-push-action@v5
         with:
           context: "./docker"
           platforms: ${{ matrix.job.docker_platform }}
@@ -161,7 +160,7 @@ jobs:
 
       - name: Log in to GitHub Container Registry
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3.3.0
+        uses: docker/login-action@v2
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -177,7 +176,7 @@ jobs:
 
       # Create and push manifest for :ve.rs.ion tag
       - name: Create and push manifest (:ve.rs.ion)
-        uses: Noelware/docker-manifest-action@v0.4.2
+        uses: Noelware/docker-manifest-action@master
         if: github.event_name != 'workflow_dispatch'
         with:
           base-image: ghcr.io/${{ github.repository }}-s6:${{ env.GIT_TAG }}
@@ -188,140 +187,21 @@ jobs:
             ghcr.io/${{ github.repository }}-s6:${{ env.GIT_TAG }}-i386
           push: true
 
-      # Create and push manifest for :latest tag
-      - name: Create and push manifest (:latest)
-        uses: Noelware/docker-manifest-action@v0.4.2
+      # Create and push manifest for :major tag
+      - name: Create and push manifest (:major)
+        uses: Noelware/docker-manifest-action@master
         with:
-          base-image: ghcr.io/${{ github.repository }}-s6:${{ env.LATEST_TAG }}
+          base-image: ghcr.io/${{ github.repository }}-s6:${{ env.MAJOR_TAG }}
           extra-images: |
-            ghcr.io/${{ github.repository }}-s6:${{ env.LATEST_TAG }}-amd64,
-            ghcr.io/${{ github.repository }}-s6:${{ env.LATEST_TAG }}-arm64v8,
-            ghcr.io/${{ github.repository }}-s6:${{ env.LATEST_TAG }}-armv7,
-            ghcr.io/${{ github.repository }}-s6:${{ env.LATEST_TAG }}-i386
-          push: true
-
-
-
-  # Classic Version
-  # Build and push single-arch Docker images to ghcr.io
-  docker-classic:
-
-    name: Docker push - ${{ matrix.job.name }}
-    needs: build
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        job:
-          - { name: "amd64",   docker_platform: "linux/amd64",  s6_platform: "x86_64" }
-          - { name: "arm64v8", docker_platform: "linux/arm64",  s6_platform: "aarch64" }
-          - { name: "armv7",   docker_platform: "linux/arm/v7", s6_platform: "armhf" }
-          - { name: "i386",    docker_platform: "linux/386",    s6_platform: "i686" }
-
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-
-      - name: Checkout
-        uses: actions/checkout@v4.2.0
-        
-      - name: Download binaries
-        uses: actions/download-artifact@v4.1.8
-        with:
-          name: binaries-linux-${{ matrix.job.name }}
-          path: docker/rootfs/usr/bin
-
-      - name: Make binaries executable
-        run: chmod -v a+x docker/rootfs/usr/bin/*
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3.2.0
-      
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3.6.1
-
-      - name: Log in to GitHub Container Registry
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3.3.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-        
-      - name: Extract metadata (tags, labels) for Docker
-        id: meta
-        uses: docker/metadata-action@v5.5.1
-        with:
-          images: ghcr.io/${{ github.repository }}
-
-      - name: Get git tag
-        id: vars
-        run: |
-          T=${GITHUB_REF#refs/*/}
-          M=${T%%.*}
-          echo "GIT_TAG=$T" >> $GITHUB_ENV
-          echo "MAJOR_TAG=$M" >> $GITHUB_ENV
-
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v6.8.0
-        with:
-          context: "./docker-classic"
-          platforms: ${{ matrix.job.docker_platform }}
-          push: true
-          provenance: false
-          tags: |
-            ghcr.io/${{ github.repository }}-s6:${{ env.LATEST_TAG }}-${{ matrix.job.name }}
-            ghcr.io/${{ github.repository }}-s6:${{ env.GIT_TAG }}-${{ matrix.job.name }}
-            ghcr.io/${{ github.repository }}-s6:${{ env.MAJOR_TAG }}-${{ matrix.job.name }}
-          labels: ${{ steps.meta.outputs.labels }}
-
-  # Build and push multi-arch Docker images to ghcr.io
-  docker-classic-manifest:
-
-    name: Docker manifest
-    needs: docker-classic
-    runs-on: ubuntu-24.04
-
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-
-      - name: Log in to GitHub Container Registry
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3.3.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Get git tag
-        id: vars
-        run: |
-          T=${GITHUB_REF#refs/*/}
-          M=${T%%.*}
-          echo "GIT_TAG=$T" >> $GITHUB_ENV
-          echo "MAJOR_TAG=$M" >> $GITHUB_ENV
-
-      # Create and push manifest for :ve.rs.ion tag
-      - name: Create and push manifest (:ve.rs.ion)
-        uses: Noelware/docker-manifest-action@v0.4.2
-        if: github.event_name != 'workflow_dispatch'
-        with:
-          base-image: ghcr.io/${{ github.repository }}-s6:${{ env.GIT_TAG }}
-          extra-images: |
-            ghcr.io/${{ github.repository }}-s6:${{ env.GIT_TAG }}-amd64,
-            ghcr.io/${{ github.repository }}-s6:${{ env.GIT_TAG }}-arm64v8,
-            ghcr.io/${{ github.repository }}-s6:${{ env.GIT_TAG }}-armv7,
-            ghcr.io/${{ github.repository }}-s6:${{ env.GIT_TAG }}-i386
+            ghcr.io/${{ github.repository }}-s6:${{ env.MAJOR_TAG }}-amd64,
+            ghcr.io/${{ github.repository }}-s6:${{ env.MAJOR_TAG }}-arm64v8,
+            ghcr.io/${{ github.repository }}-s6:${{ env.MAJOR_TAG }}-armv7,
+            ghcr.io/${{ github.repository }}-s6:${{ env.MAJOR_TAG }}-i386
           push: true
 
       # Create and push manifest for :latest tag
       - name: Create and push manifest (:latest)
-        uses: Noelware/docker-manifest-action@v0.4.2
+        uses: Noelware/docker-manifest-action@master
         with:
           base-image: ghcr.io/${{ github.repository }}-s6:${{ env.LATEST_TAG }}
           extra-images: |
