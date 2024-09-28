@@ -269,7 +269,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           pattern: binaries-linux-${{ matrix.job.name }}
-          path: docker/rootfs/usr/bin
+          path: docker-classic
           merge-multiple: true
 
       - name: Make binaries executable
