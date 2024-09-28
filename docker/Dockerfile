@@ -12,8 +12,8 @@ RUN \
 
 COPY rootfs /
 
-ENV RELAY relay.example.com
-ENV ENCRYPTED_ONLY 0
+ENV RELAY=relay.example.com
+ENV ENCRYPTED_ONLY=0
 ENV PGID=1000
 ENV PUID=1000
 
