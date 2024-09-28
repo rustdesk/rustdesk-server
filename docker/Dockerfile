@@ -1,6 +1,6 @@
 FROM busybox:stable
 
-ARG S6_OVERLAY_VERSION=3.1.1.2
+ARG S6_OVERLAY_VERSION=3.2.0.0
 ARG S6_ARCH=x86_64
 ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz /tmp
 ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-${S6_ARCH}.tar.xz /tmp
@@ -12,8 +12,8 @@ RUN \
 
 COPY rootfs /
 
-ENV RELAY relay.example.com
-ENV ENCRYPTED_ONLY 0
+ENV RELAY=relay.example.com
+ENV ENCRYPTED_ONLY=0
 
 EXPOSE 21115 21116 21116/udp 21117 21118 21119
 
