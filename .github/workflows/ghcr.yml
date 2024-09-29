@@ -267,7 +267,7 @@ jobs:
           merge-multiple: true
 
       - name: Make binaries executable
-        run: chmod -v a+x docker/rootfs/usr/bin/*
+        run: chmod -v a+x docker-classic/*
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
