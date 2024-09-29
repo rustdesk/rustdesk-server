@@ -21,7 +21,6 @@ jobs:
 
   # Binary build
   build:
-
     name: Build - ${{ matrix.job.name }}
     runs-on: ubuntu-24.04
     strategy:
@@ -35,7 +34,6 @@ jobs:
           #- { name: "amd64fb", target: "x86_64-unknown-freebsd" }
 
     steps:
-
       - name: Checkout
         uses: actions/checkout@v4
     
@@ -60,17 +58,6 @@ jobs:
       - name: Exec chmod
         run: chmod -v a+x target/${{ matrix.job.target }}/release/*
 
-      #- name: Publish Artifacts
-        #uses: actions/upload-artifact@v3
-        #with:
-          #name: binaries-linux-${{ matrix.job.name }}
-          #path: |
-            #target/${{ matrix.job.target }}/release/hbbr
-            #target/${{ matrix.job.target }}/release/hbbs
-            #target/${{ matrix.job.target }}/release/rustdesk-utils
-          #if-no-files-found: error
-
-
       - name: Publish Artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -82,7 +69,6 @@ jobs:
         
   # Build and push single-arch Docker images to ghcr.io
   create-s6-overlay-images:
-
     name: Docker push - ${{ matrix.job.name }}
     needs: build
     runs-on: ubuntu-24.04
@@ -95,20 +81,9 @@ jobs:
           - { name: "armv7",   docker_platform: "linux/arm/v7", s6_platform: "armhf" }
           - { name: "i386",    docker_platform: "linux/386",    s6_platform: "i686" }
 
-    permissions:
-      contents: read
-      packages: write
-
     steps:
-
       - name: Checkout
         uses: actions/checkout@v4
-        
-      #- name: Download binaries
-        #uses: actions/download-artifact@v3
-        #with:
-          #name: binaries-linux-${{ matrix.job.name }}
-          #path: docker/rootfs/usr/bin
 
       - name: Download binaries
         uses: actions/download-artifact@v4
@@ -136,7 +111,7 @@ jobs:
         
       - name: Extract metadata (tags, labels) for Docker
         id: meta
-        uses: docker/metadata-action@v4
+        uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}-s6
 
@@ -149,7 +124,7 @@ jobs:
           echo "MAJOR_TAG=$M" >> $GITHUB_ENV
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: "./docker"
           platforms: ${{ matrix.job.docker_platform }}
@@ -163,19 +138,13 @@ jobs:
             ghcr.io/${{ github.repository }}-s6:${{ env.MAJOR_TAG }}-${{ matrix.job.name }}
           labels: ${{ steps.meta.outputs.labels }}
 
-  # Build and push multi-arch Docker images to ghcr.io
+  # Set up minifest and tag for pushed image
   create-s6-overlay-images-manifest:
-
     name: Manifest for s6-overlay images
     needs: create-s6-overlay-images
     runs-on: ubuntu-24.04
 
-    permissions:
-      contents: read
-      packages: write
-
     steps:
-
       - name: Log in to GitHub Container Registry
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
@@ -231,7 +200,6 @@ jobs:
 
   # Build and push single-arch Docker images to ghcr.io
   create-classic-images:
-
     name: Docker push - ${{ matrix.job.name }}
     needs: build
     runs-on: ubuntu-24.04
@@ -244,20 +212,9 @@ jobs:
           - { name: "armv7",   docker_platform: "linux/arm/v7" }
           - { name: "i386",    docker_platform: "linux/386" }
 
-    permissions:
-      contents: read
-      packages: write
-
     steps:
-
       - name: Checkout
         uses: actions/checkout@v4
-        
-      #- name: Download binaries
-        #uses: actions/download-artifact@v3
-        #with:
-          #name: binaries-linux-${{ matrix.job.name }}
-          #path: docker/rootfs/usr/bin
 
       - name: Download binaries
         uses: actions/download-artifact@v4
@@ -285,7 +242,7 @@ jobs:
         
       - name: Extract metadata (tags, labels) for Docker
         id: meta
-        uses: docker/metadata-action@v4
+        uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
 
@@ -298,7 +255,7 @@ jobs:
           echo "MAJOR_TAG=$M" >> $GITHUB_ENV
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: "./docker-classic"
           platforms: ${{ matrix.job.docker_platform }}
@@ -310,19 +267,13 @@ jobs:
             ghcr.io/${{ github.repository }}:${{ env.MAJOR_TAG }}-${{ matrix.job.name }}
           labels: ${{ steps.meta.outputs.labels }}
 
-  # Build and push multi-arch Docker images to ghcr.io
+  # Set up minifest and tag for pushed image
   create-classic-images-manifest:
-
     name: Manifest for classic images
     needs: create-classic-images
     runs-on: ubuntu-24.04
 
-    permissions:
-      contents: read
-      packages: write
-
     steps:
-
       - name: Log in to GitHub Container Registry
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
