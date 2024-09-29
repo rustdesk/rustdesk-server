@@ -15,7 +15,7 @@ env:
 
 permissions:
   contents: read
-  packages: write
+  packages: write # So need to set "secrets.GITHUB_TOKEN"
 
 jobs:
 
