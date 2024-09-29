@@ -66,7 +66,8 @@ jobs:
             target/${{ matrix.job.target }}/release/hbbr
             target/${{ matrix.job.target }}/release/hbbs
             target/${{ matrix.job.target }}/release/rustdesk-utils
-        
+          if-no-files-found: error
+  
   # Build and push single-arch Docker images to ghcr.io
   create-s6-overlay-images:
     name: Docker push - ${{ matrix.job.name }}
