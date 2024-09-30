@@ -26,7 +26,7 @@ jobs:
   build:
 
     name: Build - ${{ matrix.job.name }}
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -168,7 +168,7 @@ jobs:
     needs: 
       - build
       - build-win
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -208,7 +208,7 @@ jobs:
 
     name: Docker push - ${{ matrix.job.name }}
     needs: build
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -279,7 +279,7 @@ jobs:
 
     name: Docker manifest
     needs: docker
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
 
     steps:
 
@@ -330,7 +330,7 @@ jobs:
 
     name: Docker push - ${{ matrix.job.name }}
     needs: build
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -398,7 +398,7 @@ jobs:
 
     name: Docker manifest
     needs: docker
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
 
     steps:
 
@@ -448,7 +448,7 @@ jobs:
 
     name: debian package - ${{ matrix.job.name }}
     needs: build
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
