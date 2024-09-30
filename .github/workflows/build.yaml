@@ -469,10 +469,10 @@ jobs:
     steps:
 
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v2
+      #- name: Set up QEMU
+        #uses: docker/setup-qemu-action@v3
 
       - name: Create packaging env
         run: |
@@ -495,7 +495,7 @@ jobs:
           debuild -i -us -uc -b -a${{ matrix.job.debian_platform }}
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           draft: true
           files: |
