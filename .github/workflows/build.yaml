@@ -51,6 +51,10 @@ jobs:
           components: rustfmt
           profile: minimal
           target: ${{ matrix.job.target }}
+      
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: ${{ matrix.job.os }}
 
       - name: Build
         uses: actions-rs/cargo@v1
@@ -90,6 +94,10 @@ jobs:
           components: rustfmt
           profile: minimal
           target: x86_64-pc-windows-msvc
+      
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: ${{ matrix.job.os }}
 
       - name: Build
         uses: actions-rs/cargo@v1
