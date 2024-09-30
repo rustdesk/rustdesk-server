@@ -104,7 +104,6 @@ jobs:
         with:
           command: build
           args: --release --all-features --target=x86_64-pc-windows-msvc
-          use-cross: true
 
       - name: Install NSIS
         run: |
