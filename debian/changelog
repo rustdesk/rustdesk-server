@@ -1,3 +1,7 @@
+rustdesk-server (1.1.12) UNRELEASED; urgency=medium
+  * WS real ip
+  * Bump s6-overlay to v3.2.0.0 and fix env warnings
+
 rustdesk-server (1.1.11-1) UNRELEASED; urgency=medium
   * set reuse port to make restart friendly
   * revert hbbr `-k` to not ruin back-compatibility

@@ -392,19 +392,30 @@ async fn handle_connection(
 
 async fn make_pair(
     stream: TcpStream,
-    addr: SocketAddr,
+    mut addr: SocketAddr,
     key: &str,
     limiter: Limiter,
     ws: bool,
 ) -> ResultType<()> {
     if ws {
-        make_pair_(
-            tokio_tungstenite::accept_async(stream).await?,
-            addr,
-            key,
-            limiter,
-        )
-        .await;
+        use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
+        let callback = |req: &Request, response: Response| {
+            let headers = req.headers();
+            let real_ip = headers
+                .get("X-Real-IP")
+                .or_else(|| headers.get("X-Forwarded-For"))
+                .and_then(|header_value| header_value.to_str().ok());
+            if let Some(ip) = real_ip {
+                if ip.contains('.') {
+                    addr = format!("{ip}:0").parse().unwrap_or(addr);
+                } else {
+                    addr = format!("[{ip}]:0").parse().unwrap_or(addr);
+                }
+            }
+            Ok(response)
+        };
+        let ws_stream = tokio_tungstenite::accept_hdr_async(stream, callback).await?;
+        make_pair_(ws_stream, addr, key, limiter).await;
     } else {
         make_pair_(FramedStream::from(stream, addr), addr, key, limiter).await;
     }
