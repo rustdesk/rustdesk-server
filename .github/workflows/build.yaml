@@ -82,7 +82,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install toolchain
+      - name: Install toolchain # Can't switch to "dtolnay/rust-toolchain", it will cause "Build UI setup file" error.
         uses: actions-rs/toolchain@v1
         with:
           toolchain: "1.70.0"
