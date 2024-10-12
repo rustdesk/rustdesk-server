@@ -40,7 +40,7 @@ If you want to develop your own server, [rustdesk-server-demo](https://github.co
 
 ## Docker images
 
-Docker images are automatically generated and published to [Docker Hub](https://hub.docker.com/r/rustdesk/rustdesk-server/) and [GitHub Container Registry](https://github.com/rustdesk?tab=packages&repo_name=rustdesk-server) on every GitHub release. We have 2 kind of images.
+Docker images are automatically generated and published to [Docker Hub](https://hub.docker.com/r/rustdesk) and [GitHub Container Registry](https://github.com/rustdesk?tab=packages&repo_name=rustdesk-server) on every GitHub release. We have 2 kind of images.
 
 ### Classic image
 
