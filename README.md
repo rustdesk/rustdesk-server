@@ -44,7 +44,7 @@ Docker images are automatically generated and published on every GitHub release.
 
 ### Classic image
 
-These images are built from scratch with two main binaries (`hbbr` and `hbbs`). They're available on [Docker hub](https://hub.docker.com/r/rustdesk/rustdesk-server/) with these architectures:
+These images are built from scratch with two main binaries (`hbbs` and `hbbr`). They're available on [Docker hub](https://hub.docker.com/r/rustdesk/rustdesk-server/) with these architectures:
 
 * amd64
 * arm64v8
@@ -126,7 +126,7 @@ Edit line 16 to point to your relay server (the one listening on port 21117). Yo
 
 ## S6-overlay based images
 
-These images are build against `busybox:stable` with the addition of the binaries (both hbbr and hbbs) and [S6-overlay](https://github.com/just-containers/s6-overlay). They're available on [Docker hub](https://hub.docker.com/r/rustdesk/rustdesk-server-s6/) with these tags:
+These images are build against `busybox:stable` with the addition of the binaries (both `hbbs` and `hbbr`) and [S6-overlay](https://github.com/just-containers/s6-overlay). They're available on [Docker hub](https://hub.docker.com/r/rustdesk/rustdesk-server-s6/) with these tags:
 
 | Version       | image:tag                         |
 | ------------- | --------------------------------- |
