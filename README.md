@@ -34,17 +34,17 @@ Three executables will be generated in target/release.
 
 You can find updated binaries on the [Releases](https://github.com/rustdesk/rustdesk-server/releases) page.
 
-If you want extra features [RustDesk Server Pro](https://rustdesk.com/pricing.html) might suit you better.
+If you want extra features, [RustDesk Server Pro](https://rustdesk.com/pricing.html) might suit you better.
 
 If you want to develop your own server, [rustdesk-server-demo](https://github.com/rustdesk/rustdesk-server-demo) might be a better and simpler start for you than this repo.
 
 ## Docker images
 
-Docker images are automatically generated and published on every GitHub release. We have 2 kind of images.
+Docker images are automatically generated and published to [Docker Hub](https://hub.docker.com/r/rustdesk/rustdesk-server/) and [GitHub Container Registry](https://github.com/rustdesk?tab=packages&repo_name=rustdesk-server) on every GitHub release. We have 2 kind of images.
 
 ### Classic image
 
-These images are built from scratch with two main binaries (`hbbs` and `hbbr`). They're available on [Docker hub](https://hub.docker.com/r/rustdesk/rustdesk-server/) with these architectures:
+These images are built from scratch with two main binaries (`hbbs` and `hbbr`). They're available on [Docker Hub](https://hub.docker.com/r/rustdesk/rustdesk-server/) and [GitHub Container Registry](https://github.com/rustdesk/rustdesk-server/pkgs/container/rustdesk-server) with these architectures:
 
 * amd64
 * arm64v8
@@ -126,16 +126,21 @@ Edit line 16 to point to your relay server (the one listening on port 21117). Yo
 
 ## S6-overlay based images
 
-These images are build against `busybox:stable` with the addition of the binaries (both `hbbs` and `hbbr`) and [S6-overlay](https://github.com/just-containers/s6-overlay). They're available on [Docker hub](https://hub.docker.com/r/rustdesk/rustdesk-server-s6/) with these tags:
+These images are build against `busybox:stable` with the addition of the binaries (both `hbbs` and `hbbr`) and [S6-overlay](https://github.com/just-containers/s6-overlay). They're available on [Docker hub](https://hub.docker.com/r/rustdesk/rustdesk-server-s6/) and [GitHub Container Registry](https://github.com/rustdesk/rustdesk-server/pkgs/container/rustdesk-server) with these architectures:
 
-| Version       | image:tag                         |
-| ------------- | --------------------------------- |
-| latest        | `rustdesk/rustdesk-server:latest` |
-| Major version | `rustdesk/rustdesk-server:1`      |
+* amd64
+* i386
+* arm64v8
+* armv7
 
-You're strongly encouraged to use the `multiarch` image either with the `major version` or `latest` tag.
+You could use `latest` tag or major version tag `1` with supported architectures:
 
-The S6-overlay acts as a supervisor and keeps both process running, so with this image there's no need to have two separate running containers.
+| Version       | image:tag                            |
+| ------------- | ------------------------------------ |
+| latest        | `rustdesk/rustdesk-server-s6:latest` |
+| Major version | `rustdesk/rustdesk-server-s6:1`      |
+
+The S6-overlay acts as a supervisor and keeps both process running, so with this image, there's no need to have two separate running containers.
 
 You can start these images directly with `docker run` with this command:
 
@@ -242,7 +247,7 @@ services:
 #### Use Docker secrets to store the key pair
 
 You can alternatively use docker secrets to store the keys.
-This is useful if you're using **docker-compose** or **docker swarm**.
+This is useful if you're using **docker-compose** or **Docker Swarm**.
 Just follow this examples:
 
 ```bash
@@ -315,9 +320,10 @@ Secret Key:  egAVd44u33ZEUIDTtksGcHeVeAwywarEdHmf99KM5ajwEsuG3NQFT9coAfiZ6nen4hf
 
 ## .deb packages
 
-Separate .deb packages are available for each binary, you can find them in the [releases](https://github.com/rustdesk/rustdesk-server/releases).
+Separate .deb packages are available for each binary, you can find them in the [Releases](https://github.com/rustdesk/rustdesk-server/releases).
 These packages are meant for the following distributions:
 
+- Ubuntu 24.04 LTS
 - Ubuntu 22.04 LTS
 - Ubuntu 20.04 LTS
 - Ubuntu 18.04 LTS
@@ -326,7 +332,7 @@ These packages are meant for the following distributions:
 
 ## ENV variables
 
-hbbs and hbbr can be configured using these ENV variables.
+`hbbs` and `hbbr` can be configured using these ENV variables.
 You can specify the variables as usual or use an `.env` file.
 
 | variable | binary | description |
