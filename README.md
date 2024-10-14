@@ -348,3 +348,185 @@ You can specify the variables as usual or use an `.env` file.
 | RUST_LOG | all | set debug level (error\|warn\|info\|debug\|trace) |
 | SINGLE_BANDWIDTH | hbbr | max bandwidth for a single connection (in Mb/s) |
 | TOTAL_BANDWIDTH | hbbr | max total bandwidth (in Mb/s) |
+
+
+## K8S manifest S6-overlay based images
+
+This YAML configuration defines several Kubernetes resources for deploying and exposing RustDesk, including a ConfigMap for configuration settings, a PersistentVolumeClaim for data storage, a Deployment to manage the application's containers, and two Services for exposing TCP and UDP ports respectively.
+
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rustdesk-config
+  namespace: rustdesk
+data:
+  RELAY: rustdesk.example.com
+  ENCRYPTED_ONLY: "1"
+  #KEY_PUB:
+  #KEY_PRIV:
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rustdesk-data-pvc
+  namespace: rustdesk
+spec:
+  storageClassName: nfs-provisioner-storage
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rustdesk-deploy
+  namespace: rustdesk
+  labels:
+    app: rustdesk-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rustdesk-app
+  template:
+    metadata:
+      labels:
+        app: rustdesk-app
+    spec:
+      containers:
+        - name: rustdesk-container
+          image: rustdesk/rustdesk-server-s6:1.1.10-3
+          envFrom:
+          - configMapRef:
+              name: rustdesk-config
+          resources: {}
+          ports:
+            - containerPort: 21115
+            - containerPort: 21116
+            - containerPort: 21118
+            - containerPort: 21117
+            - containerPort: 21119
+          volumeMounts:
+            - name: rustdesk-data
+              mountPath: /data
+      volumes:
+        - name: rustdesk-data
+          persistentVolumeClaim:
+            claimName: rustdesk-data-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rustdesk-tcp-ports
+  namespace: rustdesk
+spec:
+  selector:
+    app: rustdesk-app
+  ports:
+    - name: tcp-port-1
+      port: 21115
+      targetPort: 21115
+    - name: tcp-port-2
+      port: 21116
+      targetPort: 21116
+    - name: tcp-port-3
+      port: 21117
+      targetPort: 21117
+  type: LoadBalancer
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rustdesk-udp-ports
+  namespace: rustdesk
+spec:
+  selector:
+    app: rustdesk-app
+  ports:
+    - name: udp-port-1
+      port: 21116
+      targetPort: 21116
+      protocol: UDP
+  type: LoadBalancer
+```
+
+### LoadBalancer to expose the service
+If you use a bare metal environment to expose the services, use Metallb together with the "metallb.universe.tf/allow-shared-ip" annotations to expose port 21116 in both protocols (UDP and TCP) on the same external ip.
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: rustdesk-tcp-ports
+  namespace: rustdesk
+  annotations:
+    metallb.universe.tf/allow-shared-ip: "rustdesk-access-port"
+spec:
+  selector:
+    app: rustdesk-app
+  ports:
+    - name: tcp-port-1
+      port: 21115
+      targetPort: 21115
+    - name: tcp-port-2  
+      port: 21116
+      targetPort: 21116
+    - name: tcp-port-3
+      port: 21117
+      targetPort: 21117
+  type: LoadBalancer
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rustdesk-udp-ports
+  namespace: rustdesk
+  annotations:
+    metallb.universe.tf/allow-shared-ip: "rustdesk-access-port"
+spec:
+  selector:
+    app: rustdesk-app  
+  ports:
+      - name: udp-port-1
+        port: 21116
+        targetPort: 21116
+        protocol: UDP
+  type: LoadBalancer
+```
+### Persistent Volumes
+If you use the manual storageClass type, create a persistent volume before adding the persistentVolumeClaim. The example uses nfs-subdir-external-provisioner StorageClass, but feel free to use it as you see fit.
+A manual storageClass example:
+
+```yaml
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: rustdesk-data-pv
+  labels:
+    type: local
+spec:
+  storageClassName: manual
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteMany
+  hostPath:
+    path: '/path/data'
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rustdesk-data-pvc
+  namespace: rustdesk
+spec:
+  storageClassName: manual
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 10Gi
+```
