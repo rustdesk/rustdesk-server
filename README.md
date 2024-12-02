@@ -121,8 +121,11 @@ Edit line 16 to point to your relay server (the one listening on port 21117). Yo
 
 (docker-compose credit goes to @lukebarone and @QuiGonLeong)
 
+> [!NOTE]  
+> The rustdesk/rustdesk-server:latest in China may be replaced with the latest version number on Docker Hub, such as rustdesk-server:1.1.10-3. Otherwise, the old version may be pulled due to image acceleration.
 
-> Note that here, the rustdesk/rustdesk-server:latest in China may be replaced with the latest version number on dockerhub, such as rustdesk-server:1.1.10-3. Otherwise, the old version may be pulled due to image acceleration.
+> [!NOTE]  
+> If you are experiencing issues pulling from Docker Hub, try pulling from the [GitHub Container Registry](https://github.com/rustdesk/rustdesk-server/pkgs/container/rustdesk-server) instead.
 
 ## S6-overlay based images
 
