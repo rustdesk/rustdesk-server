@@ -28,7 +28,7 @@ impl FromStr for KeyboardMode {
 
 impl KeyboardMode {
     pub fn iter() -> Iter<'static, KeyboardMode> {
-        static KEYBOARD_MODES: [KeyboardMode; 4] = [
+        const KEYBOARD_MODES: [KeyboardMode; 4] = [
             KeyboardMode::Legacy,
             KeyboardMode::Map,
             KeyboardMode::Translate,
