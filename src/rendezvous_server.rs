@@ -1072,22 +1072,28 @@ impl RendezvousServer {
         let stream = FramedStream::from(stream, addr);
         tokio::spawn(async move {
             let mut stream = stream;
-            if let Some(Ok(bytes)) = stream.next_timeout(30_000).await {
-                if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(&bytes) {
-                    match msg_in.union {
-                        Some(rendezvous_message::Union::TestNatRequest(_)) => {
-                            let mut msg_out = RendezvousMessage::new();
-                            msg_out.set_test_nat_response(TestNatResponse {
-                                port: addr.port() as _,
-                                ..Default::default()
-                            });
-                            stream.send(&msg_out).await.ok();
+            loop {
+                if let Some(Ok(bytes)) = stream.next_timeout(30_000).await {
+                    if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(&bytes) {
+                        match msg_in.union {
+                            Some(rendezvous_message::Union::TestNatRequest(_)) => {
+                                let mut msg_out = RendezvousMessage::new();
+                                msg_out.set_test_nat_response(TestNatResponse {
+                                    port: addr.port() as _,
+                                    ..Default::default()
+                                });
+                                stream.send(&msg_out).await.ok();
+                            }
+                            Some(rendezvous_message::Union::OnlineRequest(or)) => {
+                                allow_err!(rs.handle_online_request(&mut stream, or.peers).await);
+                            }
+                            _ => {}
                         }
-                        Some(rendezvous_message::Union::OnlineRequest(or)) => {
-                            allow_err!(rs.handle_online_request(&mut stream, or.peers).await);
-                        }
-                        _ => {}
+                    } else {
+                        break;
                     }
+                } else {
+                    break;
                 }
             }
         });
