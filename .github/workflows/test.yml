@@ -20,6 +20,7 @@ jobs:
           profile: minimal
           toolchain: stable
           override: true
+          submodules: recursive
       - uses: Swatinem/rust-cache@v2
       - uses: actions-rs/cargo@v1
         with:
@@ -34,6 +35,7 @@ jobs:
           profile: minimal
           toolchain: stable
           override: true
+          submodules: recursive
       - uses: Swatinem/rust-cache@v2
       - uses: actions-rs/cargo@v1
         with:
@@ -50,6 +52,7 @@ jobs:
           toolchain: stable
           override: true
           components: rustfmt
+          submodules: recursive
       - uses: Swatinem/rust-cache@v2
       - uses: actions-rs/cargo@v1
         with:
@@ -69,6 +72,7 @@ jobs:
           toolchain: stable
           override: true
           components: clippy
+          submodules: recursive
       - uses: Swatinem/rust-cache@v2
       - uses: actions-rs/cargo@v1
         with:
