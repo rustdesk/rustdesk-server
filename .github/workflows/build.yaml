@@ -300,6 +300,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
 
       - name: Sign the images with GitHub OIDC Token
+        if: false
         env:
           DIGEST: ${{ steps.build-and-push.outputs.digest }}
           TAGS: ${{ steps.meta.outputs.tags }}
@@ -417,14 +418,14 @@ jobs:
           extra-images: ${{ env.GHCR_IMAGE_NAME }}:${{ env.LATEST_TAG }}-amd64,${{ env.GHCR_IMAGE_NAME }}:${{ env.LATEST_TAG }}-arm64v8,${{ env.GHCR_IMAGE_NAME }}:${{ env.LATEST_TAG }}-armv7,${{ env.GHCR_IMAGE_NAME }}:${{ env.LATEST_TAG }}-i386
           push: true
       # SIGN >>>>>>>>      
-      - name: Sign the images with GitHub OIDC Token (Tag resign)
+      - name: Sign the images with GitHub OIDC Token
         run: |
-          cosign sign --yes ${{ steps.manifest-ver-docker.outputs.images }} \
-                            ${{ steps.manifest-ver-ghcr.outputs.images }} \
-                            ${{ steps.manifest-major-docker.outputs.images }} \
-                            ${{ steps.manifest-major-ghcr.outputs.images }} \
-                            ${{ steps.manifest-latest-docker.outputs.images }} \
-                            ${{ steps.manifest-latest-ghcr.outputs.images }}
+          cosign sign --yes --recursive ${{ steps.manifest-ver-docker.outputs.images }} \
+                                        ${{ steps.manifest-ver-ghcr.outputs.images }} \
+                                        ${{ steps.manifest-major-docker.outputs.images }} \
+                                        ${{ steps.manifest-major-ghcr.outputs.images }} \
+                                        ${{ steps.manifest-latest-docker.outputs.images }} \
+                                        ${{ steps.manifest-latest-ghcr.outputs.images }}
 
       - name: "Image:Digest -> Digest"
         id: get-digest
@@ -533,6 +534,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
 
       - name: Sign the images with GitHub OIDC Token
+        if: false
         env:
           DIGEST: ${{ steps.build-and-push.outputs.digest }}
           TAGS: ${{ steps.meta.outputs.tags }}
