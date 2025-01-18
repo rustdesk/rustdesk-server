@@ -363,6 +363,7 @@ jobs:
       #  this has to run only if invoked by a new tag
       - name: Create and push manifest (:ve.rs.ion) (Docker Hub)
         uses: Noelware/docker-manifest-action@master
+        id: manifest-ver-docker
         if: github.event_name != 'workflow_dispatch'
         with:
           base-image: ${{ secrets.DOCKER_IMAGE }}:${{ env.GIT_TAG }}
@@ -371,16 +372,17 @@ jobs:
 
       - name: Create and push manifest (:ve.rs.ion) (ghcr.io)
         uses: Noelware/docker-manifest-action@master
+        id: manifest-ver-ghcr
         if: github.event_name != 'workflow_dispatch'
         with:
           base-image: ${{ env.GHCR_IMAGE_NAME }}:${{ env.GIT_TAG }}
           extra-images: ${{ env.GHCR_IMAGE_NAME }}:${{ env.GIT_TAG }}-amd64,${{ env.GHCR_IMAGE_NAME }}:${{ env.GIT_TAG }}-arm64v8,${{ env.GHCR_IMAGE_NAME }}:${{ env.GIT_TAG }}-armv7,${{ env.GHCR_IMAGE_NAME }}:${{ env.GIT_TAG }}-i386
           push: true
 
-
       # manifest for :1 tag (major release)
       - name: Create and push manifest (:major) (Docker Hub)
         uses: Noelware/docker-manifest-action@master
+        id: manifest-major-docker
         if: github.event_name != 'workflow_dispatch'
         with:
           base-image: ${{ secrets.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}
@@ -389,6 +391,7 @@ jobs:
 
       - name: Create and push manifest (:major) (ghcr.io)
         uses: Noelware/docker-manifest-action@master
+        id: manifest-major-ghcr
         if: github.event_name != 'workflow_dispatch'
         with:
           base-image: ${{ env.GHCR_IMAGE_NAME }}:${{ env.MAJOR_TAG }}
@@ -398,6 +401,7 @@ jobs:
       # manifest for :latest tag
       - name: Create and push manifest (:latest) (Docker Hub)
         uses: Noelware/docker-manifest-action@master
+        id: manifest-latest-docker
         if: github.event_name != 'workflow_dispatch'
         with:
           base-image: ${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}
@@ -406,12 +410,52 @@ jobs:
 
       - name: Create and push manifest (:latest) (ghcr.io)
         uses: Noelware/docker-manifest-action@master
+        id: manifest-latest-ghcr
         if: github.event_name != 'workflow_dispatch'
         with:
           base-image: ${{ env.GHCR_IMAGE_NAME }}:${{ env.LATEST_TAG }}
           extra-images: ${{ env.GHCR_IMAGE_NAME }}:${{ env.LATEST_TAG }}-amd64,${{ env.GHCR_IMAGE_NAME }}:${{ env.LATEST_TAG }}-arm64v8,${{ env.GHCR_IMAGE_NAME }}:${{ env.LATEST_TAG }}-armv7,${{ env.GHCR_IMAGE_NAME }}:${{ env.LATEST_TAG }}-i386
           push: true
-            
+      # SIGN >>>>>>>>      
+      - name: Sign the images with GitHub OIDC Token (Tag resign)
+        run: |
+          cosign sign --yes ${{ steps.manifest-ver-docker.outputs.images }} \
+                            ${{ steps.manifest-ver-ghcr.outputs.images }} \
+                            ${{ steps.manifest-major-docker.outputs.images }} \
+                            ${{ steps.manifest-major-ghcr.outputs.images }} \
+                            ${{ steps.manifest-latest-docker.outputs.images }} \
+                            ${{ steps.manifest-latest-ghcr.outputs.images }}
+
+      - name: "Image:Digest -> Digest"
+        id: get-digest
+        shell: bash
+        run: |
+          all_images-docker="${{ steps.manifest-ver-docker.outputs.images }} \
+                             ${{ steps.manifest-major-docker.outputs.images }} \
+                             ${{ steps.manifest-latest-docker.outputs.images }} \
+          all_images-ghcr="${{ steps.manifest-ver-docker.outputs.images }} \
+                           ${{ steps.manifest-ver-ghcr.outputs.images }} \
+                           ${{ steps.manifest-major-ghcr.outputs.images }} \
+                           ${{ steps.manifest-latest-ghcr.outputs.images }}"            
+          digests-docker=$(echo "$all_images-docker" | tr ' ' '\n' | awk -F'@' '{if (NF > 1) print $2}' | sort -u | tr '\n' ' ')
+          echo "digest-docker=$digests" >> $GITHUB_OUTPUT
+          digests-ghcr=$(echo "$all_images-ghcr" | tr ' ' '\n' | awk -F'@' '{if (NF > 1) print $2}' | sort -u | tr '\n' ' ')
+          echo "digest-ghcr=$digests" >> $GITHUB_OUTPUT
+
+      - name: GitHub Attestations (Tag resign) (Docker Hub)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: index.docker.io/${{ secrets.DOCKER_IMAGE }}
+          subject-digest: ${{ steps.get-digest.outputs.digests-docker }}
+          push-to-registry: true          
+
+      - name: GitHub Attestations (Tag resign) (ghcr.io)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.GHCR_IMAGE_NAME }}
+          subject-digest: ${{ steps.get-digest.outputs.digests-ghcr }}
+          push-to-registry: true
+
   # docker build and push of single-arch images
   docker-classic:
 
@@ -553,6 +597,7 @@ jobs:
       #  this has to run only if invoked by a new tag
       - name: Create and push manifest (:ve.rs.ion) (Docker Hub)
         uses: Noelware/docker-manifest-action@master
+        id: manifest-ver-docker
         if: github.event_name != 'workflow_dispatch'
         with:
           base-image: ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}
@@ -561,6 +606,7 @@ jobs:
 
       - name: Create and push manifest (:ve.rs.ion) (ghcr.io)
         uses: Noelware/docker-manifest-action@master
+        id: manifest-ver-ghcr
         if: github.event_name != 'workflow_dispatch'
         with:
           base-image: ${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.GIT_TAG }}
@@ -570,6 +616,8 @@ jobs:
       # manifest for :1 tag (major release)
       - name: Create and push manifest (:major) (Docker Hub)
         uses: Noelware/docker-manifest-action@master
+        id: manifest-major-docker
+        if: github.event_name != 'workflow_dispatch'
         with:
           base-image: ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}
           extra-images: ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-amd64,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-arm64v8,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-armv7,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-i386
@@ -577,6 +625,8 @@ jobs:
 
       - name: Create and push manifest (:major) (ghcr.io)
         uses: Noelware/docker-manifest-action@master
+        id: manifest-major-ghcr
+        if: github.event_name != 'workflow_dispatch'
         with:
           base-image: ${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.MAJOR_TAG }}
           extra-images: ${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.MAJOR_TAG }}-amd64,${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.MAJOR_TAG }}-arm64v8,${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.MAJOR_TAG }}-armv7,${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.MAJOR_TAG }}-i386
@@ -584,6 +634,8 @@ jobs:
 
       # manifest for :latest tag
       - name: Create and push manifest (:latest) (Docker Hub)
+        id: manifest-latest-docker
+        if: github.event_name != 'workflow_dispatch'
         uses: Noelware/docker-manifest-action@master
         with:
           base-image: ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}
@@ -592,6 +644,8 @@ jobs:
 
       - name: Create and push manifest (:latest) (ghcr.io)
         uses: Noelware/docker-manifest-action@master
+        id: manifest-latest-ghcr
+        if: github.event_name != 'workflow_dispatch'
         with:
           base-image: ${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.LATEST_TAG }}
           extra-images: ${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.LATEST_TAG }}-amd64,${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.LATEST_TAG }}-arm64v8,${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.LATEST_TAG }}-armv7,${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.LATEST_TAG }}-i386
