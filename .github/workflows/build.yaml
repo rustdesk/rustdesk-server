@@ -249,6 +249,9 @@ jobs:
       - name: Make binaries executable
         run: chmod -v a+x docker/rootfs/usr/bin/*
 
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.7.0
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
       
@@ -284,6 +287,7 @@ jobs:
           # pattern={{raw}} = git tag
 
       - name: Build and push Docker image
+        id: build-and-push
         uses: docker/build-push-action@v5
         with:
           context: "./docker"
@@ -294,6 +298,31 @@ jobs:
             S6_ARCH=${{ matrix.job.s6_platform }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Sign the images with GitHub OIDC Token
+        env:
+          DIGEST: ${{ steps.build-and-push.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          images=""
+          for tag in ${TAGS}; do
+            images+="${tag}@${DIGEST} "
+          done
+          cosign sign --yes ${images}
+
+      - name: GitHub Attestations (Docker Hub)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: index.docker.io/${{ secrets.DOCKER_IMAGE }}
+          subject-digest: ${{ steps.build-and-push.outputs.digest }}
+          push-to-registry: true
+
+      - name: GitHub Attestations (ghcr.io)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ghcr.io/${{ github.repository }}-s6
+          subject-digest: ${{ steps.build-and-push.outputs.digest }}
+          push-to-registry: true
 
   # docker build and push of multiarch images
   docker-manifest:
@@ -318,6 +347,9 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.7.0
 
       - name: Get git tag
         id: vars
@@ -409,6 +441,9 @@ jobs:
       - name: Make binaries executable
         run: chmod -v a+x docker-classic/*
 
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.7.0
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
       
@@ -444,6 +479,7 @@ jobs:
           # pattern={{raw}} = git tag
 
       - name: Build and push Docker image
+        id: build-and-push
         uses: docker/build-push-action@v5
         with:
           context: "./docker-classic"
@@ -452,6 +488,31 @@ jobs:
           provenance: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Sign the images with GitHub OIDC Token
+        env:
+          DIGEST: ${{ steps.build-and-push.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          images=""
+          for tag in ${TAGS}; do
+            images+="${tag}@${DIGEST} "
+          done
+          cosign sign --yes ${images}
+
+      - name: GitHub Attestations (Docker Hub)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: index.docker.io/${{ secrets.DOCKER_IMAGE_CLASSIC }}
+          subject-digest: ${{ steps.build-and-push.outputs.digest }}
+          push-to-registry: true
+
+      - name: GitHub Attestations (ghcr.io)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.build-and-push.outputs.digest }}
+          push-to-registry: true
 
   # docker build and push of multiarch images
   docker-manifest-classic:
@@ -476,6 +537,9 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.7.0
 
       - name: Get git tag
         id: vars
