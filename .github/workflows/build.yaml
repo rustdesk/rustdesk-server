@@ -26,26 +26,31 @@ jobs:
   build:
 
     name: Build - ${{ matrix.job.name }}
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.job.os }}
     strategy:
       fail-fast: false
       matrix:
         job:
-          - { name: "amd64",   target: "x86_64-unknown-linux-musl" }
-          - { name: "arm64v8", target: "aarch64-unknown-linux-musl" }
-          - { name: "armv7",   target: "armv7-unknown-linux-musleabihf" }
-          - { name: "i386",    target: "i686-unknown-linux-musl" }
-          - { name: "amd64fb",    target: "x86_64-unknown-freebsd" }
+          - { name: "amd64",   target: "x86_64-unknown-linux-musl",      os: "ubuntu-24.04",     cross-build: false }
+          - { name: "arm64v8", target: "aarch64-unknown-linux-musl",     os: "ubuntu-24.04-arm", cross-build: false }
+          - { name: "armv7",   target: "armv7-unknown-linux-musleabihf", os: "ubuntu-24.04",     cross-build: true } # No cross build toolkit for armv8 -> armv7
+          - { name: "i386",    target: "i686-unknown-linux-musl",        os: "ubuntu-24.04",     cross-build: true }
+          - { name: "amd64fb", target: "x86_64-unknown-freebsd",         os: "ubuntu-24.04",     cross-build: true }
 
     steps:
       
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@v1
         with:
-          toolchain: "1.70.0"
+          toolchain: "1.84.0"
           targets: ${{ matrix.job.target }}
           components: "rustfmt"
       
@@ -58,7 +63,7 @@ jobs:
         with:
           command: build
           args: --release --all-features --target=${{ matrix.job.target }}
-          use-cross: true  
+          use-cross: ${{ matrix.job.cross-build }}  
 
       - name: Exec chmod
         run: chmod -v a+x target/${{ matrix.job.target }}/release/*
@@ -168,11 +173,11 @@ jobs:
   # github (draft) release with all binaries
   release:
 
-    name: Github release
+    name: GitHub release
     needs: 
       - build
       - build-win
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     strategy:
       fail-fast: false
       matrix:
@@ -210,17 +215,17 @@ jobs:
   # docker build and push of single-arch images
   docker:
 
-    name: Docker push - ${{ matrix.job.name }}
+    name: Docker (s6) push - ${{ matrix.job.name }}
     needs: build
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.job.os }}
     strategy:
       fail-fast: false
       matrix:
         job:
-          - { name: "amd64",   docker_platform: "linux/amd64",  s6_platform: "x86_64" }
-          - { name: "arm64v8", docker_platform: "linux/arm64",  s6_platform: "aarch64" }
-          - { name: "armv7",   docker_platform: "linux/arm/v7", s6_platform: "armhf" }
-          - { name: "i386",    docker_platform: "linux/386",    s6_platform: "i686" }
+          - { name: "amd64",   docker_platform: "linux/amd64",  s6_platform: "x86_64",  os: "ubuntu-24.04" }
+          - { name: "arm64v8", docker_platform: "linux/arm64",  s6_platform: "aarch64", os: "ubuntu-24.04-arm" }
+          - { name: "armv7",   docker_platform: "linux/arm/v7", s6_platform: "armhf",   os: "ubuntu-24.04-arm" }
+          - { name: "i386",    docker_platform: "linux/386",    s6_platform: "i686",    os: "ubuntu-24.04" }
 
     steps:
 
@@ -281,9 +286,9 @@ jobs:
   # docker build and push of multiarch images
   docker-manifest:
 
-    name: Docker manifest
+    name: Docker manifest (s6)
     needs: docker
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
 
     steps:
 
@@ -332,16 +337,17 @@ jobs:
   # docker build and push of single-arch images
   docker-classic:
 
-    name: Docker push - ${{ matrix.job.name }}
+    name: Docker (Classic) push - ${{ matrix.job.name }}
     needs: build
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.job.os }}
     strategy:
       fail-fast: false
       matrix:
         job:
-          - { name: "amd64",   docker_platform: "linux/amd64" }
-          - { name: "arm64v8", docker_platform: "linux/arm64" }
-          - { name: "armv7",   docker_platform: "linux/arm/v7" }
+          - { name: "amd64",   docker_platform: "linux/amd64",  os: "ubuntu-24.04" }
+          - { name: "arm64v8", docker_platform: "linux/arm64",  os: "ubuntu-24.04-arm" }
+          - { name: "armv7",   docker_platform: "linux/arm/v7", os: "ubuntu-24.04-arm" }
+          - { name: "i386",    docker_platform: "linux/386",    os: "ubuntu-24.04" }
 
     steps:
 
@@ -400,9 +406,9 @@ jobs:
   # docker build and push of multiarch images
   docker-manifest-classic:
 
-    name: Docker manifest
+    name: Docker manifest (Classic)
     needs: docker
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
 
     steps:
 
@@ -450,17 +456,17 @@ jobs:
 
   deb-package:
 
-    name: debian package - ${{ matrix.job.name }}
+    name: Debian package - ${{ matrix.job.name }}
     needs: build
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.job.os }}
     strategy:
       fail-fast: false
       matrix:
         job:
-          - { name: "amd64",   debian_platform: "amd64",   crossbuild_package: "" }
-          - { name: "arm64v8", debian_platform: "arm64",   crossbuild_package: "crossbuild-essential-arm64" }
-          - { name: "armv7",   debian_platform: "armhf",   crossbuild_package: "crossbuild-essential-armhf" }
-          - { name: "i386",    debian_platform: "i386",    crossbuild_package: "crossbuild-essential-i386" }
+          - { name: "amd64",   debian_platform: "amd64",   crossbuild_package: "",                           os: "ubuntu-24.04" }
+          - { name: "arm64v8", debian_platform: "arm64",   crossbuild_package: "",                           os: "ubuntu-24.04-arm" }
+          - { name: "armv7",   debian_platform: "armhf",   crossbuild_package: "crossbuild-essential-armhf", os: "ubuntu-24.04-arm" }
+          - { name: "i386",    debian_platform: "i386",    crossbuild_package: "crossbuild-essential-i386",  os: "ubuntu-24.04" }
 
     steps:
 
