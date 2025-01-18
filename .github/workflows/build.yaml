@@ -279,7 +279,7 @@ jobs:
             ghcr.io/${{ github.repository }}-s6
           tags: |
             type=raw,value=latest-${{ matrix.job.name }}
-            type=semver,pattern={{raw}}
+            type=semver,pattern={{raw}}-${{ matrix.job.name }}
             type=semver,pattern={{major}}-${{ matrix.job.name }}
           # pattern={{raw}} = git tag
 
