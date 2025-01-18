@@ -33,9 +33,9 @@ jobs:
         job:
           - { name: "amd64",   target: "x86_64-unknown-linux-musl",      os: "ubuntu-24.04",     cross-build: false }
           - { name: "arm64v8", target: "aarch64-unknown-linux-musl",     os: "ubuntu-24.04-arm", cross-build: false }
-          - { name: "armv7",   target: "armv7-unknown-linux-musleabihf", os: "ubuntu-24.04-arm", cross-build: true }
+          - { name: "armv7",   target: "armv7-unknown-linux-musleabihf", os: "ubuntu-24.04",     cross-build: true } # No cross build toolkit for armv8 -> armv7
           - { name: "i386",    target: "i686-unknown-linux-musl",        os: "ubuntu-24.04",     cross-build: true }
-          - { name: "amd64fb", target: "x86_64-unknown-freebsd",         os: "ubuntu-24.04",     cross-build: false }
+          - { name: "amd64fb", target: "x86_64-unknown-freebsd",         os: "ubuntu-24.04",     cross-build: true }
 
     steps:
       
