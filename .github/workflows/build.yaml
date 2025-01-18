@@ -173,7 +173,7 @@ jobs:
   # github (draft) release with all binaries
   release:
 
-    name: Github release
+    name: GitHub release
     needs: 
       - build
       - build-win
@@ -215,7 +215,7 @@ jobs:
   # docker build and push of single-arch images
   docker:
 
-    name: Docker push - ${{ matrix.job.name }}
+    name: Docker (s6) push - ${{ matrix.job.name }}
     needs: build
     runs-on: ${{ matrix.job.os }}
     strategy:
@@ -286,7 +286,7 @@ jobs:
   # docker build and push of multiarch images
   docker-manifest:
 
-    name: Docker manifest
+    name: Docker manifest (s6)
     needs: docker
     runs-on: ubuntu-24.04-arm
 
@@ -337,7 +337,7 @@ jobs:
   # docker build and push of single-arch images
   docker-classic:
 
-    name: Docker push - ${{ matrix.job.name }}
+    name: Docker (Classic) push - ${{ matrix.job.name }}
     needs: build
     runs-on: ${{ matrix.job.os }}
     strategy:
@@ -347,6 +347,7 @@ jobs:
           - { name: "amd64",   docker_platform: "linux/amd64",  os: "ubuntu-24.04" }
           - { name: "arm64v8", docker_platform: "linux/arm64",  os: "ubuntu-24.04-arm" }
           - { name: "armv7",   docker_platform: "linux/arm/v7", os: "ubuntu-24.04-arm" }
+          - { name: "i386",    docker_platform: "linux/386",    os: "ubuntu-24.04" }
 
     steps:
 
@@ -405,7 +406,7 @@ jobs:
   # docker build and push of multiarch images
   docker-manifest-classic:
 
-    name: Docker manifest
+    name: Docker manifest (Classic)
     needs: docker
     runs-on: ubuntu-24.04-arm
 
@@ -455,7 +456,7 @@ jobs:
 
   deb-package:
 
-    name: debian package - ${{ matrix.job.name }}
+    name: Debian package - ${{ matrix.job.name }}
     needs: build
     runs-on: ${{ matrix.job.os }}
     strategy:
