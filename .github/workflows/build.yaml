@@ -433,8 +433,7 @@ jobs:
           all_images-docker="${{ steps.manifest-ver-docker.outputs.images }} \
                              ${{ steps.manifest-major-docker.outputs.images }} \
                              ${{ steps.manifest-latest-docker.outputs.images }} \
-          all_images-ghcr="${{ steps.manifest-ver-docker.outputs.images }} \
-                           ${{ steps.manifest-ver-ghcr.outputs.images }} \
+          all_images-ghcr="${{ steps.manifest-ver-ghcr.outputs.images }} \
                            ${{ steps.manifest-major-ghcr.outputs.images }} \
                            ${{ steps.manifest-latest-ghcr.outputs.images }}"            
           digests-docker=$(echo "$all_images-docker" | tr ' ' '\n' | awk -F'@' '{if (NF > 1) print $2}' | sort -u | tr '\n' ' ')
