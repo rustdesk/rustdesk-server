@@ -177,7 +177,7 @@ jobs:
     needs: 
       - build
       - build-win
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     strategy:
       fail-fast: false
       matrix:
@@ -217,15 +217,15 @@ jobs:
 
     name: Docker push - ${{ matrix.job.name }}
     needs: build
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.job.os }}
     strategy:
       fail-fast: false
       matrix:
         job:
-          - { name: "amd64",   docker_platform: "linux/amd64",  s6_platform: "x86_64" }
-          - { name: "arm64v8", docker_platform: "linux/arm64",  s6_platform: "aarch64" }
-          - { name: "armv7",   docker_platform: "linux/arm/v7", s6_platform: "armhf" }
-          - { name: "i386",    docker_platform: "linux/386",    s6_platform: "i686" }
+          - { name: "amd64",   docker_platform: "linux/amd64",  s6_platform: "x86_64",  os: "ubuntu-24.04" }
+          - { name: "arm64v8", docker_platform: "linux/arm64",  s6_platform: "aarch64", os: "ubuntu-24.04-arm" }
+          - { name: "armv7",   docker_platform: "linux/arm/v7", s6_platform: "armhf",   os: "ubuntu-24.04-arm" }
+          - { name: "i386",    docker_platform: "linux/386",    s6_platform: "i686",    os: "ubuntu-24.04" }
 
     steps:
 
@@ -288,7 +288,7 @@ jobs:
 
     name: Docker manifest
     needs: docker
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
 
     steps:
 
@@ -339,14 +339,14 @@ jobs:
 
     name: Docker push - ${{ matrix.job.name }}
     needs: build
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.job.os }}
     strategy:
       fail-fast: false
       matrix:
         job:
-          - { name: "amd64",   docker_platform: "linux/amd64" }
-          - { name: "arm64v8", docker_platform: "linux/arm64" }
-          - { name: "armv7",   docker_platform: "linux/arm/v7" }
+          - { name: "amd64",   docker_platform: "linux/amd64",  os: "ubuntu-24.04" }
+          - { name: "arm64v8", docker_platform: "linux/arm64",  os: "ubuntu-24.04-arm" }
+          - { name: "armv7",   docker_platform: "linux/arm/v7", os: "ubuntu-24.04-arm" }
 
     steps:
 
@@ -407,7 +407,7 @@ jobs:
 
     name: Docker manifest
     needs: docker
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
 
     steps:
 
@@ -457,15 +457,15 @@ jobs:
 
     name: debian package - ${{ matrix.job.name }}
     needs: build
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.job.os }}
     strategy:
       fail-fast: false
       matrix:
         job:
-          - { name: "amd64",   debian_platform: "amd64",   crossbuild_package: "" }
-          - { name: "arm64v8", debian_platform: "arm64",   crossbuild_package: "crossbuild-essential-arm64" }
-          - { name: "armv7",   debian_platform: "armhf",   crossbuild_package: "crossbuild-essential-armhf" }
-          - { name: "i386",    debian_platform: "i386",    crossbuild_package: "crossbuild-essential-i386" }
+          - { name: "amd64",   debian_platform: "amd64",   crossbuild_package: "",                           os: "ubuntu-24.04" }
+          - { name: "arm64v8", debian_platform: "arm64",   crossbuild_package: "",                           os: "ubuntu-24.04-arm" }
+          - { name: "armv7",   debian_platform: "armhf",   crossbuild_package: "crossbuild-essential-armhf", os: "ubuntu-24.04-arm" }
+          - { name: "i386",    debian_platform: "i386",    crossbuild_package: "crossbuild-essential-i386",  os: "ubuntu-24.04" }
 
     steps:
 
