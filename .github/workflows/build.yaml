@@ -26,16 +26,16 @@ jobs:
   build:
 
     name: Build - ${{ matrix.job.name }}
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.job.os }}
     strategy:
       fail-fast: false
       matrix:
         job:
-          - { name: "amd64",   target: "x86_64-unknown-linux-musl" }
-          - { name: "arm64v8", target: "aarch64-unknown-linux-musl" }
-          - { name: "armv7",   target: "armv7-unknown-linux-musleabihf" }
-          - { name: "i386",    target: "i686-unknown-linux-musl" }
-          - { name: "amd64fb",    target: "x86_64-unknown-freebsd" }
+          - { name: "amd64",   target: "x86_64-unknown-linux-musl",      os: "ubuntu-24.04" }
+          - { name: "arm64v8", target: "aarch64-unknown-linux-musl",     os: "ubuntu-24.04-arm" }
+          - { name: "armv7",   target: "armv7-unknown-linux-musleabihf", os: "ubuntu-24.04-arm" }
+          - { name: "i386",    target: "i686-unknown-linux-musl",        os: "ubuntu-24.04" }
+          - { name: "amd64fb", target: "x86_64-unknown-freebsd",         os: "ubuntu-24.04" }
 
     steps:
       
