@@ -18,10 +18,10 @@ lazy_static::lazy_static! {
     pub(crate) static ref USER_STATUS: RwLock<UserStatusMap> = Default::default();
     pub(crate) static ref IP_CHANGES: Mutex<IpChangesMap> = Default::default();
 }
-pub static IP_CHANGE_DUR: u64 = 180;
-pub static IP_CHANGE_DUR_X2: u64 = IP_CHANGE_DUR * 2;
-pub static DAY_SECONDS: u64 = 3600 * 24;
-pub static IP_BLOCK_DUR: u64 = 60;
+pub const IP_CHANGE_DUR: u64 = 180;
+pub const IP_CHANGE_DUR_X2: u64 = IP_CHANGE_DUR * 2;
+pub const DAY_SECONDS: u64 = 3600 * 24;
+pub const IP_BLOCK_DUR: u64 = 60;
 
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]
 pub(crate) struct PeerInfo {
