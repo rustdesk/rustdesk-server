@@ -394,8 +394,8 @@ jobs:
         run: |
           # --recursive for multiarch tags will sign all the images it referenced
           ghcr-digest=$(skopeo inspect docker://${{ env.GHCR_IMAGE_NAME }}:latest --format '{{.Digest}}')
-          cosign sign --yes --recursive ${{ steps.manifest-latest-docker.outputs.images }} \
-                                        ${{ env.GHCR_IMAGE_NAME }}:latest@${ghcr-digest}
+          cosign sign --yes --recursive "${{ steps.manifest-latest-docker.outputs.images }}" \
+                                        "${{ env.GHCR_IMAGE_NAME }}:latest@${ghcr-digest}"
 
   # docker build and push of single-arch images
   docker-classic:
@@ -569,8 +569,8 @@ jobs:
         run: |
           # --recursive for multiarch tags will sign all the images it referenced
           ghcr-digest=$(skopeo inspect docker://${{ env.GHCR_IMAGE_NAME }}:latest --format '{{.Digest}}')
-          cosign sign --yes --recursive ${{ steps.manifest-latest-docker.outputs.images }} \
-                                        ${{ env.GHCR_IMAGE_NAME }}:latest@${ghcr-digest}
+          cosign sign --yes --recursive "${{ steps.manifest-latest-docker.outputs.images }}" \
+                                        "${{ env.GHCR_IMAGE_NAME }}:latest@${ghcr-digest}"
 
   deb-package:
 
