@@ -23,6 +23,7 @@ env:
   GHCR_IMAGE_CLASSIC_NAME: ghcr.io/${{ github.repository }}
 
 permissions:
+  contents: write
   packages: write
   id-token: write
   attestations: write
@@ -185,8 +186,6 @@ jobs:
       - build
       - build-win
     runs-on: ubuntu-24.04-arm
-    permissions:
-      contents: write
     strategy:
       fail-fast: false
       matrix:
