@@ -80,7 +80,9 @@ jobs:
         uses: actions/attest@v2
         with:
           subject-path: |
-            target/${{ matrix.job.target }}/release/*
+            target/${{ matrix.job.target }}/release/hbbr
+            target/${{ matrix.job.target }}/release/hbbs
+            target/${{ matrix.job.target }}/release/rustdesk-utils
 
       - name: Publish Artifacts
         uses: actions/upload-artifact@v4
