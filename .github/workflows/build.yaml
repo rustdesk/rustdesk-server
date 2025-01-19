@@ -249,9 +249,6 @@ jobs:
       - name: Make binaries executable
         run: chmod -v a+x docker/rootfs/usr/bin/*
 
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@v3.7.0
-
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
       
@@ -325,6 +322,11 @@ jobs:
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3.7.0
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y skopeo
 
       - name: Get git tag
         id: vars
@@ -424,9 +426,6 @@ jobs:
       - name: Make binaries executable
         run: chmod -v a+x docker-classic/*
 
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@v3.7.0
-
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
       
@@ -498,6 +497,11 @@ jobs:
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3.7.0
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y skopeo
 
       - name: Get git tag
         id: vars
