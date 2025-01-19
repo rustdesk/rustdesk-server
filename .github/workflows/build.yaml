@@ -250,11 +250,11 @@ jobs:
         run: chmod -v a+x docker/rootfs/usr/bin/*
 
       - name: Set up QEMU
-        if: ${{ !contains( matrix.job.name , 'arm64v8') }} || ${{ !contains( matrix.job.name , 'amd64') }}
+        if: ${{ matrix.job.name != 'arm64v8' || matrix.job.name != 'amd64' }}
         uses: docker/setup-qemu-action@v3
       
       - name: Set up Docker Buildx
-        if: ${{ !contains( matrix.job.name , 'arm64v8') }} || ${{ !contains( matrix.job.name , 'amd64') }}
+        if: ${{ matrix.job.name != 'arm64v8' || matrix.job.name != 'amd64' }}
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to Docker Hub
@@ -424,11 +424,11 @@ jobs:
         run: chmod -v a+x docker-classic/*
 
       - name: Set up QEMU
-        if: ${{ !contains( matrix.job.name , 'arm64v8') }} || ${{ !contains( matrix.job.name , 'amd64') }}
+        if: ${{ matrix.job.name != 'arm64v8' || matrix.job.name != 'amd64' }}
         uses: docker/setup-qemu-action@v3
       
       - name: Set up Docker Buildx
-        if: ${{ !contains( matrix.job.name , 'arm64v8') }} || ${{ !contains( matrix.job.name , 'amd64') }}
+        if: ${{ matrix.job.name != 'arm64v8' || matrix.job.name != 'amd64' }}
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to Docker Hub
