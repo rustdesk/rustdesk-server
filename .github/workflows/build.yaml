@@ -76,6 +76,12 @@ jobs:
       - name: Exec chmod
         run: chmod -v a+x target/${{ matrix.job.target }}/release/*
 
+      - name: GitHub Attestations for binaries
+        uses: actions/attest@v2
+        with:
+          subject-path: |
+            target/${{ matrix.job.target }}/release/*
+
       - name: Publish Artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -166,6 +172,15 @@ jobs:
           certificatesha1: '${{ secrets.WINDOWS_PFX_SHA1_THUMBPRINT }}'
           folder: './ui/SignOutput'
           recursive: false
+
+      - name: GitHub Attestations for binaries
+        uses: actions/attest@v2
+        with:
+          subject-path: |
+            ui\SignOutput\hbbr.exe
+            ui\SignOutput\hbbs.exe
+            ui\SignOutput\rustdesk-utils.exe
+            ui\SignOutput\RustDeskServer.Setup.exe        
 
       - name: Publish Artifacts
         uses: actions/upload-artifact@v4
