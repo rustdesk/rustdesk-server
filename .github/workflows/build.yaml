@@ -299,32 +299,6 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-      - name: Sign the images with GitHub OIDC Token
-        if: false
-        env:
-          DIGEST: ${{ steps.build-and-push.outputs.digest }}
-          TAGS: ${{ steps.meta.outputs.tags }}
-        run: |
-          images=""
-          for tag in ${TAGS}; do
-            images+="${tag}@${DIGEST} "
-          done
-          cosign sign --yes ${images}
-
-      - name: GitHub Attestations (Docker Hub)
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-name: index.docker.io/${{ secrets.DOCKER_IMAGE }}
-          subject-digest: ${{ steps.build-and-push.outputs.digest }}
-          push-to-registry: true
-
-      - name: GitHub Attestations (ghcr.io)
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-name: ghcr.io/${{ github.repository }}-s6
-          subject-digest: ${{ steps.build-and-push.outputs.digest }}
-          push-to-registry: true
-
   # docker build and push of multiarch images
   docker-manifest:
 
@@ -364,7 +338,6 @@ jobs:
       #  this has to run only if invoked by a new tag
       - name: Create and push manifest (:ve.rs.ion) (Docker Hub)
         uses: Noelware/docker-manifest-action@master
-        id: manifest-ver-docker
         if: github.event_name != 'workflow_dispatch'
         with:
           base-image: ${{ secrets.DOCKER_IMAGE }}:${{ env.GIT_TAG }}
@@ -373,7 +346,6 @@ jobs:
 
       - name: Create and push manifest (:ve.rs.ion) (ghcr.io)
         uses: Noelware/docker-manifest-action@master
-        id: manifest-ver-ghcr
         if: github.event_name != 'workflow_dispatch'
         with:
           base-image: ${{ env.GHCR_IMAGE_NAME }}:${{ env.GIT_TAG }}
@@ -383,7 +355,6 @@ jobs:
       # manifest for :1 tag (major release)
       - name: Create and push manifest (:major) (Docker Hub)
         uses: Noelware/docker-manifest-action@master
-        id: manifest-major-docker
         if: github.event_name != 'workflow_dispatch'
         with:
           base-image: ${{ secrets.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}
@@ -392,7 +363,6 @@ jobs:
 
       - name: Create and push manifest (:major) (ghcr.io)
         uses: Noelware/docker-manifest-action@master
-        id: manifest-major-ghcr
         if: github.event_name != 'workflow_dispatch'
         with:
           base-image: ${{ env.GHCR_IMAGE_NAME }}:${{ env.MAJOR_TAG }}
@@ -411,50 +381,19 @@ jobs:
 
       - name: Create and push manifest (:latest) (ghcr.io)
         uses: Noelware/docker-manifest-action@master
-        id: manifest-latest-ghcr
         if: github.event_name != 'workflow_dispatch'
         with:
           base-image: ${{ env.GHCR_IMAGE_NAME }}:${{ env.LATEST_TAG }}
           extra-images: ${{ env.GHCR_IMAGE_NAME }}:${{ env.LATEST_TAG }}-amd64,${{ env.GHCR_IMAGE_NAME }}:${{ env.LATEST_TAG }}-arm64v8,${{ env.GHCR_IMAGE_NAME }}:${{ env.LATEST_TAG }}-armv7,${{ env.GHCR_IMAGE_NAME }}:${{ env.LATEST_TAG }}-i386
           push: true
-      # SIGN >>>>>>>>      
+ 
       - name: Sign the images with GitHub OIDC Token
+        if: github.event_name != 'workflow_dispatch'
         run: |
-          cosign sign --yes --recursive ${{ steps.manifest-ver-docker.outputs.images }} \
-                                        ${{ steps.manifest-ver-ghcr.outputs.images }} \
-                                        ${{ steps.manifest-major-docker.outputs.images }} \
-                                        ${{ steps.manifest-major-ghcr.outputs.images }} \
-                                        ${{ steps.manifest-latest-docker.outputs.images }} \
-                                        ${{ steps.manifest-latest-ghcr.outputs.images }}
-
-      - name: "Image:Digest -> Digest"
-        id: get-digest
-        shell: bash
-        run: |
-          all_images-docker="${{ steps.manifest-ver-docker.outputs.images }} \
-                             ${{ steps.manifest-major-docker.outputs.images }} \
-                             ${{ steps.manifest-latest-docker.outputs.images }} \
-          all_images-ghcr="${{ steps.manifest-ver-ghcr.outputs.images }} \
-                           ${{ steps.manifest-major-ghcr.outputs.images }} \
-                           ${{ steps.manifest-latest-ghcr.outputs.images }}"            
-          digests-docker=$(echo "$all_images-docker" | tr ' ' '\n' | awk -F'@' '{if (NF > 1) print $2}' | sort -u | tr '\n' ' ')
-          echo "digest-docker=$digests" >> $GITHUB_OUTPUT
-          digests-ghcr=$(echo "$all_images-ghcr" | tr ' ' '\n' | awk -F'@' '{if (NF > 1) print $2}' | sort -u | tr '\n' ' ')
-          echo "digest-ghcr=$digests" >> $GITHUB_OUTPUT
-
-      - name: GitHub Attestations (Tag resign) (Docker Hub)
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-name: index.docker.io/${{ secrets.DOCKER_IMAGE }}
-          subject-digest: ${{ steps.get-digest.outputs.digests-docker }}
-          push-to-registry: true          
-
-      - name: GitHub Attestations (Tag resign) (ghcr.io)
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-name: ${{ env.GHCR_IMAGE_NAME }}
-          subject-digest: ${{ steps.get-digest.outputs.digests-ghcr }}
-          push-to-registry: true
+          # --recursive for multiarch tags will sign all the images it referenced
+          ghcr-digest=$(skopeo inspect docker://${{ env.GHCR_IMAGE_NAME }}:latest --format '{{.Digest}}')
+          cosign sign --yes --recursive ${{ steps.manifest-latest-docker.outputs.images }} \
+                                        ${{ env.GHCR_IMAGE_NAME }}:latest@${ghcr-digest}
 
   # docker build and push of single-arch images
   docker-classic:
@@ -533,32 +472,6 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-      - name: Sign the images with GitHub OIDC Token
-        if: false
-        env:
-          DIGEST: ${{ steps.build-and-push.outputs.digest }}
-          TAGS: ${{ steps.meta.outputs.tags }}
-        run: |
-          images=""
-          for tag in ${TAGS}; do
-            images+="${tag}@${DIGEST} "
-          done
-          cosign sign --yes ${images}
-
-      - name: GitHub Attestations (Docker Hub)
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-name: index.docker.io/${{ secrets.DOCKER_IMAGE_CLASSIC }}
-          subject-digest: ${{ steps.build-and-push.outputs.digest }}
-          push-to-registry: true
-
-      - name: GitHub Attestations (ghcr.io)
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-name: ghcr.io/${{ github.repository }}
-          subject-digest: ${{ steps.build-and-push.outputs.digest }}
-          push-to-registry: true
-
   # docker build and push of multiarch images
   docker-manifest-classic:
 
@@ -598,7 +511,6 @@ jobs:
       #  this has to run only if invoked by a new tag
       - name: Create and push manifest (:ve.rs.ion) (Docker Hub)
         uses: Noelware/docker-manifest-action@master
-        id: manifest-ver-docker
         if: github.event_name != 'workflow_dispatch'
         with:
           base-image: ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}
@@ -607,7 +519,6 @@ jobs:
 
       - name: Create and push manifest (:ve.rs.ion) (ghcr.io)
         uses: Noelware/docker-manifest-action@master
-        id: manifest-ver-ghcr
         if: github.event_name != 'workflow_dispatch'
         with:
           base-image: ${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.GIT_TAG }}
@@ -617,7 +528,6 @@ jobs:
       # manifest for :1 tag (major release)
       - name: Create and push manifest (:major) (Docker Hub)
         uses: Noelware/docker-manifest-action@master
-        id: manifest-major-docker
         if: github.event_name != 'workflow_dispatch'
         with:
           base-image: ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}
@@ -626,7 +536,6 @@ jobs:
 
       - name: Create and push manifest (:major) (ghcr.io)
         uses: Noelware/docker-manifest-action@master
-        id: manifest-major-ghcr
         if: github.event_name != 'workflow_dispatch'
         with:
           base-image: ${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.MAJOR_TAG }}
@@ -645,12 +554,19 @@ jobs:
 
       - name: Create and push manifest (:latest) (ghcr.io)
         uses: Noelware/docker-manifest-action@master
-        id: manifest-latest-ghcr
         if: github.event_name != 'workflow_dispatch'
         with:
           base-image: ${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.LATEST_TAG }}
           extra-images: ${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.LATEST_TAG }}-amd64,${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.LATEST_TAG }}-arm64v8,${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.LATEST_TAG }}-armv7,${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.LATEST_TAG }}-i386
           push: true
+
+      - name: Sign the images with GitHub OIDC Token
+        if: github.event_name != 'workflow_dispatch'
+        run: |
+          # --recursive for multiarch tags will sign all the images it referenced
+          ghcr-digest=$(skopeo inspect docker://${{ env.GHCR_IMAGE_NAME }}:latest --format '{{.Digest}}')
+          cosign sign --yes --recursive ${{ steps.manifest-latest-docker.outputs.images }} \
+                                        ${{ env.GHCR_IMAGE_NAME }}:latest@${ghcr-digest}
 
   deb-package:
 
