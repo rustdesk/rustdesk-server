@@ -79,7 +79,8 @@ jobs:
       - name: GitHub Attestations for binaries
         uses: actions/attest@v2
         with:
-          predicate-type: 'https://slsa.dev/provenance/v1'
+          predicate-type: 'https://in-toto.io/attestation/release'
+          predicate: '{}'
           subject-path: |
             target/${{ matrix.job.target }}/release/hbbr
             target/${{ matrix.job.target }}/release/hbbs
@@ -179,7 +180,8 @@ jobs:
       - name: GitHub Attestations for binaries
         uses: actions/attest@v2
         with:
-          predicate-type: 'https://slsa.dev/provenance/v1'
+          predicate-type: 'https://in-toto.io/attestation/release'
+          predicate: '{}'
           subject-path: |
             ui\SignOutput\hbbr.exe
             ui\SignOutput\hbbs.exe
