@@ -80,7 +80,6 @@ jobs:
         uses: actions/attest@v2
         with:
           predicate-type: 'https://slsa.dev/provenance/v1'
-          predicate: '{}'
           subject-path: |
             target/${{ matrix.job.target }}/release/hbbr
             target/${{ matrix.job.target }}/release/hbbs
@@ -181,7 +180,6 @@ jobs:
         uses: actions/attest@v2
         with:
           predicate-type: 'https://slsa.dev/provenance/v1'
-          predicate: '{}'
           subject-path: |
             ui\SignOutput\hbbr.exe
             ui\SignOutput\hbbs.exe
