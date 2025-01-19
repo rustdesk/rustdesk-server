@@ -391,13 +391,10 @@ jobs:
  
       - name: Sign the images with GitHub OIDC Token
         if: github.event_name != 'workflow_dispatch'
-        env:
-          ghcr_image: ${{ env.GHCR_IMAGE_NAME }}
         run: |
           # --recursive for multiarch tags will sign all the images it referenced
-          ghcr_digest=$(skopeo inspect docker://${{ env.GHCR_IMAGE_NAME }}:latest --format '{{.Digest}}')
-          ghcr_image_digest="$ghcr_image:latest@${ghcr_digest}"
-          cosign sign --yes --recursive ${{ steps.manifest-latest-docker.outputs.images }} ${ghcr_image_digest}
+          GHCR_DIGEST=$(skopeo inspect docker://${{ env.GHCR_IMAGE_NAME }}:latest --format '{{.Digest}}')
+          cosign sign --yes --recursive ${{ steps.manifest-latest-docker.outputs.images }} ghcr.io/${{ github.repository }}-s6:latest@${GHCR_DIGEST}
 
   # docker build and push of single-arch images
   docker-classic:
@@ -568,13 +565,10 @@ jobs:
 
       - name: Sign the images with GitHub OIDC Token
         if: github.event_name != 'workflow_dispatch'
-        env:
-          ghcr_image: ${{ env.GHCR_IMAGE_NAME }}
         run: |
           # --recursive for multiarch tags will sign all the images it referenced
-          ghcr_digest=$(skopeo inspect docker://${{ env.GHCR_IMAGE_NAME }}:latest --format '{{.Digest}}')
-          ghcr_image_digest="$ghcr_image:latest@${ghcr_digest}"
-          cosign sign --yes --recursive ${{ steps.manifest-latest-docker.outputs.images }} ${ghcr_image_digest}
+          GHCR_DIGEST=$(skopeo inspect docker://${{ env.GHCR_IMAGE_NAME }}:latest --format '{{.Digest}}')
+          cosign sign --yes --recursive ${{ steps.manifest-latest-docker.outputs.images }} ghcr.io/${{ github.repository }}-s6:latest@${GHCR_DIGEST}
 
   deb-package:
 
