@@ -64,7 +64,7 @@ jobs:
       
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: ${{ matrix.job.os }}
+          prefix-key: linux-binary-build-${{ matrix.job.name }}
 
       - name: Build
         uses: actions-rs/cargo@v1
@@ -107,7 +107,7 @@ jobs:
       
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: ${{ matrix.job.os }}
+          prefix-key: windows-build
 
       - name: Build
         uses: actions-rs/cargo@v1
@@ -250,9 +250,11 @@ jobs:
         run: chmod -v a+x docker/rootfs/usr/bin/*
 
       - name: Set up QEMU
+        if: ${{ !contains( matrix.job.name , 'arm64v8') }} || ${{ !contains( matrix.job.name , 'amd64') }}
         uses: docker/setup-qemu-action@v3
       
       - name: Set up Docker Buildx
+        if: ${{ !contains( matrix.job.name , 'arm64v8') }} || ${{ !contains( matrix.job.name , 'amd64') }}
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to Docker Hub
@@ -276,7 +278,7 @@ jobs:
         with:
           images: |
             ${{ secrets.DOCKER_IMAGE }}
-            ghcr.io/${{ github.repository }}-s6
+            ${{ env.GHCR_IMAGE_NAME }}
           tags: |
             type=raw,value=latest-${{ matrix.job.name }}
             type=semver,pattern={{raw}}-${{ matrix.job.name }}
@@ -322,11 +324,6 @@ jobs:
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3.7.0
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y skopeo
 
       - name: Get git tag
         id: vars
@@ -382,6 +379,7 @@ jobs:
           push: true
 
       - name: Create and push manifest (:latest) (ghcr.io)
+        id: manifest-latest-ghcr
         uses: Noelware/docker-manifest-action@master
         if: github.event_name != 'workflow_dispatch'
         with:
@@ -392,10 +390,9 @@ jobs:
       - name: Sign the images with GitHub OIDC Token
         if: github.event_name != 'workflow_dispatch'
         run: |
-          # --recursive for multiarch tags will sign all the images it referenced
-          GHCR_DIGEST=$(skopeo inspect docker://${{ env.GHCR_IMAGE_NAME }}:latest --format '{{.Digest}}')
+          # --recursive for multiarch tags will sign all the images that it referenced
           cosign sign --yes --recursive ${{ steps.manifest-latest-docker.outputs.images }}
-          cosign sign --yes --recursive ghcr.io/${{ github.repository }}-s6:latest@${GHCR_DIGEST}
+          cosign sign --yes --recursive ${{ steps.manifest-latest-ghcr.outputs.images }}
 
   # docker build and push of single-arch images
   docker-classic:
@@ -427,9 +424,11 @@ jobs:
         run: chmod -v a+x docker-classic/*
 
       - name: Set up QEMU
+        if: ${{ !contains( matrix.job.name , 'arm64v8') }} || ${{ !contains( matrix.job.name , 'amd64') }}
         uses: docker/setup-qemu-action@v3
       
       - name: Set up Docker Buildx
+        if: ${{ !contains( matrix.job.name , 'arm64v8') }} || ${{ !contains( matrix.job.name , 'amd64') }}
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to Docker Hub
@@ -453,7 +452,7 @@ jobs:
         with:
           images: |
             ${{ secrets.DOCKER_IMAGE_CLASSIC }}
-            ghcr.io/${{ github.repository }}
+            ${{ env.GHCR_IMAGE_CLASSIC_NAME }}
           tags: |
             type=raw,value=latest-${{ matrix.job.name }}
             type=semver,pattern={{raw}}-${{ matrix.job.name }}
@@ -497,11 +496,6 @@ jobs:
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3.7.0
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y skopeo
 
       - name: Get git tag
         id: vars
@@ -557,6 +551,7 @@ jobs:
           push: true
 
       - name: Create and push manifest (:latest) (ghcr.io)
+        id: manifest-latest-ghcr
         uses: Noelware/docker-manifest-action@master
         if: github.event_name != 'workflow_dispatch'
         with:
@@ -567,10 +562,9 @@ jobs:
       - name: Sign the images with GitHub OIDC Token
         if: github.event_name != 'workflow_dispatch'
         run: |
-          # --recursive for multiarch tags will sign all the images it referenced
-          GHCR_DIGEST=$(skopeo inspect docker://${{ env.GHCR_IMAGE_CLASSIC_NAME }}:latest --format '{{.Digest}}')
+          # --recursive for multiarch tags will sign all the images that it referenced
           cosign sign --yes --recursive ${{ steps.manifest-latest-docker.outputs.images }}
-          cosign sign --yes --recursive ghcr.io/${{ github.repository }}:latest@${GHCR_DIGEST}
+          cosign sign --yes --recursive ${{ steps.manifest-latest-ghcr.outputs.images }}
 
   deb-package:
 
