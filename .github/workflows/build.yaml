@@ -23,7 +23,6 @@ env:
   GHCR_IMAGE_CLASSIC_NAME: ghcr.io/${{ github.repository }}
 
 permissions:
-  contents: read
   packages: write
   id-token: write
   attestations: write
