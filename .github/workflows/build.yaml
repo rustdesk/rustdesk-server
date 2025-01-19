@@ -620,6 +620,16 @@ jobs:
           cd debian-build/${{ matrix.job.name }}/
           debuild -i -us -uc -b -a${{ matrix.job.debian_platform }}
 
+      - name: GitHub Attestations for binaries
+        uses: actions/attest@v2
+        with:
+          predicate-type: 'https://in-toto.io/attestation/release'
+          predicate: '{}'
+          subject-path: |
+            debian-build/rustdesk-server-hbbr_*_${{ matrix.job.debian_platform }}.deb
+            debian-build/rustdesk-server-hbbs_*_${{ matrix.job.debian_platform }}.deb
+            debian-build/rustdesk-server-utils_*_${{ matrix.job.debian_platform }}.deb
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
