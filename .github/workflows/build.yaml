@@ -47,7 +47,7 @@ jobs:
       - name: Install toolchain
         uses: actions-rs/toolchain@v1
         with:
-          toolchain: "1.70.0"
+          toolchain: "1.81"
           override: true
           default: true
           components: rustfmt
@@ -88,7 +88,7 @@ jobs:
       - name: Install toolchain
         uses: actions-rs/toolchain@v1
         with:
-          toolchain: "1.70.0"
+          toolchain: "1.81"
           override: true
           default: true
           components: rustfmt
