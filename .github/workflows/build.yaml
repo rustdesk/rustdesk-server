@@ -41,6 +41,8 @@ jobs:
       
       - name: Checkout
         uses: actions/checkout@v3
+        with:
+          submodules: recursive
 
       - name: Install toolchain
         uses: actions-rs/toolchain@v1
@@ -80,6 +82,8 @@ jobs:
       
       - name: Checkout
         uses: actions/checkout@v3
+        with:
+          submodules: recursive
 
       - name: Install toolchain
         uses: actions-rs/toolchain@v1
@@ -222,6 +226,8 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@v3
+        with:
+          submodules: recursive
         
       - name: Download binaries
         uses: actions/download-artifact@v3
@@ -343,6 +349,8 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@v3
+        with:
+          submodules: recursive
         
       - name: Download binaries
         uses: actions/download-artifact@v3
@@ -462,7 +470,9 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@v3
-        
+        with:
+          submodules: recursive
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v2
 

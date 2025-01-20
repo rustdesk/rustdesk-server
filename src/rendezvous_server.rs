@@ -1319,7 +1319,7 @@ async fn create_udp_listener(port: i32, rmem: usize) -> ResultType<FramedSocket>
 
 #[inline]
 async fn create_tcp_listener(port: i32) -> ResultType<TcpListener> {
-    let s = listen_any(port as _, true).await?;
+    let s = listen_any(port as _).await?;
     log::debug!("listen on tcp {:?}", s.local_addr());
     Ok(s)
 }
