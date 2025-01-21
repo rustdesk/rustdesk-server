@@ -1,3 +1,6 @@
+rustdesk-server (1.1.13) UNRELEASED; urgency=medium
+  * Version check and refactor hbb_common to share with rustdesk client
+
 rustdesk-server (1.1.12) UNRELEASED; urgency=medium
   * WS real ip
   * Bump s6-overlay to v3.2.0.0 and fix env warnings

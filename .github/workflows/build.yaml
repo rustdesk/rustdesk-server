@@ -43,12 +43,18 @@ jobs:
           - { name: "arm64v8", target: "aarch64-unknown-linux-musl",     os: "ubuntu-24.04-arm", cross-build: false }
           - { name: "armv7",   target: "armv7-unknown-linux-musleabihf", os: "ubuntu-24.04",     cross-build: true } # No cross build toolkit for armv8 -> armv7
           - { name: "i386",    target: "i686-unknown-linux-musl",        os: "ubuntu-24.04",     cross-build: true }
-          - { name: "amd64fb", target: "x86_64-unknown-freebsd",         os: "ubuntu-24.04",     cross-build: true }
+          #- { name: "amd64fb", target: "x86_64-unknown-freebsd",         os: "ubuntu-24.04",     cross-build: true }
 
     steps:
       
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+        uses: actions/checkout@v3
+        with:
+          submodules: recursive
 
       - name: Install dependencies
         run: |
@@ -58,7 +64,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@v1
         with:
-          toolchain: "1.84.0"
+          toolchain: "1.81"
           targets: ${{ matrix.job.target }}
           components: "rustfmt"
       
@@ -104,11 +110,17 @@ jobs:
       
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+        uses: actions/checkout@v3
+        with:
+          submodules: recursive
 
       - name: Install toolchain # Can't switch to "dtolnay/rust-toolchain", it will cause "Build UI setup file" error.
         uses: actions-rs/toolchain@v1
         with:
-          toolchain: "1.70.0"
+          toolchain: "1.81"
           override: true
           default: true
           components: rustfmt
@@ -215,7 +227,7 @@ jobs:
           - { os: "linux", name: "arm64v8", suffix: "" }
           - { os: "linux", name: "armv7", suffix: "" }
           - { os: "linux", name: "i386", suffix: "" }
-          - { os: "linux", name: "amd64fb", suffix: "" }
+          #- { os: "linux", name: "amd64fb", suffix: "" }
           - { os: "windows", name: "x86_64", suffix: "-unsigned" }
           
     steps:
@@ -259,7 +271,7 @@ jobs:
     steps:
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4 # Just for getting Dockerfile, not need download submodules
         
       - name: Download binaries
         uses: actions/download-artifact@v4
@@ -430,7 +442,7 @@ jobs:
     steps:
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4 # Just for getting Dockerfile, not need download submodules
         
       - name: Download binaries
         uses: actions/download-artifact@v4
@@ -599,6 +611,9 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
 
       - name: Create packaging env
         run: |
