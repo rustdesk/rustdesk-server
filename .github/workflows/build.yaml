@@ -52,10 +52,6 @@ jobs:
         with:
           submodules: recursive
 
-        uses: actions/checkout@v3
-        with:
-          submodules: recursive
-
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -110,10 +106,6 @@ jobs:
       
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-        uses: actions/checkout@v3
         with:
           submodules: recursive
 
