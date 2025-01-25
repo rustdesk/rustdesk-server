@@ -1,3 +1,6 @@
+rustdesk-server (1.1.14) UNRELEASED; urgency=medium
+  * Fix windows crash
+
 rustdesk-server (1.1.13) UNRELEASED; urgency=medium
   * Version check and refactor hbb_common to share with rustdesk client
 
