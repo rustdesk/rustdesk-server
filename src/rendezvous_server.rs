@@ -1056,7 +1056,8 @@ impl RendezvousServer {
 
     async fn handle_listener2(&self, stream: TcpStream, addr: SocketAddr) {
         let mut rs = self.clone();
-        if addr.ip().is_loopback() {
+        let ip = try_into_v4(addr).ip();
+        if ip.is_loopback() {
             tokio::spawn(async move {
                 let mut stream = stream;
                 let mut buffer = [0; 1024];
