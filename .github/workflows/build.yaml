@@ -617,6 +617,7 @@ jobs:
           - { name: "armv7",   debian_platform: "armhf",   crossbuild_package: "crossbuild-essential-armhf", os: "ubuntu-24.04-arm" }
           - { name: "i386",    debian_platform: "i386",    crossbuild_package: "crossbuild-essential-i386",  os: "ubuntu-24.04" }
     permissions:
+      contents: write
       id-token: write
       attestations: write
 
