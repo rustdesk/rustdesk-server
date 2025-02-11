@@ -23,11 +23,8 @@ env:
   GHCR_IMAGE_CLASSIC_NAME: ghcr.io/${{ github.repository }}
 
 permissions:
-  contents: write
-  packages: write
-  id-token: write
-  attestations: write
-  
+  contents: read
+
 jobs:
 
   # binary build
@@ -44,7 +41,9 @@ jobs:
           - { name: "armv7",   target: "armv7-unknown-linux-musleabihf", os: "ubuntu-24.04",     cross-build: true } # No cross build toolkit for armv8 -> armv7
           - { name: "i386",    target: "i686-unknown-linux-musl",        os: "ubuntu-24.04",     cross-build: true }
           #- { name: "amd64fb", target: "x86_64-unknown-freebsd",         os: "ubuntu-24.04",     cross-build: true }
-
+    permissions:
+      id-token: write
+      attestations: write
     steps:
       
       - name: Checkout
@@ -102,6 +101,9 @@ jobs:
   build-win:
     name: Build - windows
     runs-on: windows-2022
+    permissions:
+      id-token: write
+      attestations: write
 
     steps:
       
@@ -223,7 +225,9 @@ jobs:
           - { os: "linux", name: "i386", suffix: "" }
           #- { os: "linux", name: "amd64fb", suffix: "" }
           - { os: "windows", name: "x86_64", suffix: "-unsigned" }
-          
+    permissions:
+      contents: write
+     
     steps:
 
       - name: Download binaries (${{ matrix.job.os }} - ${{ matrix.job.name }})
@@ -259,6 +263,8 @@ jobs:
           - { name: "arm64v8", docker_platform: "linux/arm64",  s6_platform: "aarch64", os: "ubuntu-24.04-arm" }
           - { name: "armv7",   docker_platform: "linux/arm/v7", s6_platform: "armhf",   os: "ubuntu-24.04-arm" }
           - { name: "i386",    docker_platform: "linux/386",    s6_platform: "i686",    os: "ubuntu-24.04" }
+    permissions:
+      packages: write
 
     steps:
 
@@ -328,6 +334,9 @@ jobs:
     name: Docker manifest (s6)
     needs: docker
     runs-on: ubuntu-24.04-arm
+    permissions:
+      packages: write
+      id-token: write
 
     steps:
 
@@ -432,6 +441,8 @@ jobs:
           - { name: "arm64v8", docker_platform: "linux/arm64",  os: "ubuntu-24.04-arm" }
           - { name: "armv7",   docker_platform: "linux/arm/v7", os: "ubuntu-24.04-arm" }
           - { name: "i386",    docker_platform: "linux/386",    os: "ubuntu-24.04" }
+    permissions:
+      packages: write
 
     steps:
 
@@ -499,6 +510,9 @@ jobs:
     name: Docker manifest (Classic)
     needs: docker
     runs-on: ubuntu-24.04-arm
+    permissions:
+      packages: write
+      id-token: write
 
     steps:
 
@@ -602,6 +616,9 @@ jobs:
           - { name: "arm64v8", debian_platform: "arm64",   crossbuild_package: "",                           os: "ubuntu-24.04-arm" }
           - { name: "armv7",   debian_platform: "armhf",   crossbuild_package: "crossbuild-essential-armhf", os: "ubuntu-24.04-arm" }
           - { name: "i386",    debian_platform: "i386",    crossbuild_package: "crossbuild-essential-i386",  os: "ubuntu-24.04" }
+    permissions:
+      id-token: write
+      attestations: write
 
     steps:
 
