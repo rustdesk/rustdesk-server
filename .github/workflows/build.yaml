@@ -422,10 +422,13 @@ jobs:
  
       - name: Sign the images with GitHub OIDC Token
         if: github.event_name != 'workflow_dispatch'
+        env:
+          DOCKER_DIGEST: ${{ steps.manifest-latest-docker.outputs.images }}
+          GHCR_DIGEST: ${{ steps.manifest-latest-ghcr.outputs.images }}
         run: |
           # --recursive for multiarch tags will sign all the images that it referenced
-          cosign sign --yes --recursive ${{ steps.manifest-latest-docker.outputs.images }}
-          cosign sign --yes --recursive ${{ steps.manifest-latest-ghcr.outputs.images }}
+          cosign sign --yes --recursive ${DOCKER_DIGEST}
+          cosign sign --yes --recursive ${GHCR_DIGEST}
 
   # docker build and push of single-arch images
   docker-classic:
@@ -598,10 +601,13 @@ jobs:
 
       - name: Sign the images with GitHub OIDC Token
         if: github.event_name != 'workflow_dispatch'
+        env:
+          DOCKER_DIGEST: ${{ steps.manifest-latest-docker.outputs.images }}
+          GHCR_DIGEST: ${{ steps.manifest-latest-ghcr.outputs.images }}
         run: |
           # --recursive for multiarch tags will sign all the images that it referenced
-          cosign sign --yes --recursive ${{ steps.manifest-latest-docker.outputs.images }}
-          cosign sign --yes --recursive ${{ steps.manifest-latest-ghcr.outputs.images }}
+          cosign sign --yes --recursive ${DOCKER_DIGEST}
+          cosign sign --yes --recursive ${GHCR_DIGEST}
 
   deb-package:
 
