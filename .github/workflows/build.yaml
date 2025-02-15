@@ -372,16 +372,16 @@ jobs:
         uses: Noelware/docker-manifest-action@master
         if: github.event_name != 'workflow_dispatch'
         with:
-          base-image: ${{ secrets.DOCKER_IMAGE }}:${{ env.GIT_TAG }}
-          extra-images: ${{ secrets.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-amd64,${{ secrets.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-arm64v8,${{ secrets.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-armv7,${{ secrets.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-i386
+          inputs: ${{ secrets.DOCKER_IMAGE }}:${{ env.GIT_TAG }}
+          images: ${{ secrets.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-amd64,${{ secrets.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-arm64v8,${{ secrets.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-armv7,${{ secrets.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-i386
           push: true
 
       - name: Create and push manifest (:ve.rs.ion) (ghcr.io)
         uses: Noelware/docker-manifest-action@master
         if: github.event_name != 'workflow_dispatch'
         with:
-          base-image: ${{ env.GHCR_IMAGE_NAME }}:${{ env.GIT_TAG }}
-          extra-images: ${{ env.GHCR_IMAGE_NAME }}:${{ env.GIT_TAG }}-amd64,${{ env.GHCR_IMAGE_NAME }}:${{ env.GIT_TAG }}-arm64v8,${{ env.GHCR_IMAGE_NAME }}:${{ env.GIT_TAG }}-armv7,${{ env.GHCR_IMAGE_NAME }}:${{ env.GIT_TAG }}-i386
+          inputs: ${{ env.GHCR_IMAGE_NAME }}:${{ env.GIT_TAG }}
+          images: ${{ env.GHCR_IMAGE_NAME }}:${{ env.GIT_TAG }}-amd64,${{ env.GHCR_IMAGE_NAME }}:${{ env.GIT_TAG }}-arm64v8,${{ env.GHCR_IMAGE_NAME }}:${{ env.GIT_TAG }}-armv7,${{ env.GHCR_IMAGE_NAME }}:${{ env.GIT_TAG }}-i386
           push: true
 
       # manifest for :1 tag (major release)
@@ -389,16 +389,16 @@ jobs:
         uses: Noelware/docker-manifest-action@master
         if: github.event_name != 'workflow_dispatch'
         with:
-          base-image: ${{ secrets.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}
-          extra-images: ${{ secrets.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-amd64,${{ secrets.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-arm64v8,${{ secrets.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-armv7,${{ secrets.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-i386
+          inputs: ${{ secrets.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}
+          images: ${{ secrets.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-amd64,${{ secrets.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-arm64v8,${{ secrets.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-armv7,${{ secrets.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-i386
           push: true
 
       - name: Create and push manifest (:major) (ghcr.io)
         uses: Noelware/docker-manifest-action@master
         if: github.event_name != 'workflow_dispatch'
         with:
-          base-image: ${{ env.GHCR_IMAGE_NAME }}:${{ env.MAJOR_TAG }}
-          extra-images: ${{ env.GHCR_IMAGE_NAME }}:${{ env.MAJOR_TAG }}-amd64,${{ env.GHCR_IMAGE_NAME }}:${{ env.MAJOR_TAG }}-arm64v8,${{ env.GHCR_IMAGE_NAME }}:${{ env.MAJOR_TAG }}-armv7,${{ env.GHCR_IMAGE_NAME }}:${{ env.MAJOR_TAG }}-i386
+          inputs: ${{ env.GHCR_IMAGE_NAME }}:${{ env.MAJOR_TAG }}
+          images: ${{ env.GHCR_IMAGE_NAME }}:${{ env.MAJOR_TAG }}-amd64,${{ env.GHCR_IMAGE_NAME }}:${{ env.MAJOR_TAG }}-arm64v8,${{ env.GHCR_IMAGE_NAME }}:${{ env.MAJOR_TAG }}-armv7,${{ env.GHCR_IMAGE_NAME }}:${{ env.MAJOR_TAG }}-i386
           push: true
 
       # manifest for :latest tag
@@ -407,8 +407,8 @@ jobs:
         id: manifest-latest-docker
         if: github.event_name != 'workflow_dispatch'
         with:
-          base-image: ${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}
-          extra-images: ${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-amd64,${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-arm64v8,${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-armv7,${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-i386
+          inputs: ${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}
+          images: ${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-amd64,${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-arm64v8,${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-armv7,${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-i386
           push: true
 
       - name: Create and push manifest (:latest) (ghcr.io)
@@ -416,8 +416,8 @@ jobs:
         uses: Noelware/docker-manifest-action@master
         if: github.event_name != 'workflow_dispatch'
         with:
-          base-image: ${{ env.GHCR_IMAGE_NAME }}:${{ env.LATEST_TAG }}
-          extra-images: ${{ env.GHCR_IMAGE_NAME }}:${{ env.LATEST_TAG }}-amd64,${{ env.GHCR_IMAGE_NAME }}:${{ env.LATEST_TAG }}-arm64v8,${{ env.GHCR_IMAGE_NAME }}:${{ env.LATEST_TAG }}-armv7,${{ env.GHCR_IMAGE_NAME }}:${{ env.LATEST_TAG }}-i386
+          inputs: ${{ env.GHCR_IMAGE_NAME }}:${{ env.LATEST_TAG }}
+          images: ${{ env.GHCR_IMAGE_NAME }}:${{ env.LATEST_TAG }}-amd64,${{ env.GHCR_IMAGE_NAME }}:${{ env.LATEST_TAG }}-arm64v8,${{ env.GHCR_IMAGE_NAME }}:${{ env.LATEST_TAG }}-armv7,${{ env.GHCR_IMAGE_NAME }}:${{ env.LATEST_TAG }}-i386
           push: true
  
       - name: Sign the images with GitHub OIDC Token
@@ -551,16 +551,16 @@ jobs:
         uses: Noelware/docker-manifest-action@master
         if: github.event_name != 'workflow_dispatch'
         with:
-          base-image: ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}
-          extra-images: ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-amd64,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-arm64v8,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-armv7,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-i386
+          inputs: ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}
+          images: ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-amd64,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-arm64v8,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-armv7,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-i386
           push: true
 
       - name: Create and push manifest (:ve.rs.ion) (ghcr.io)
         uses: Noelware/docker-manifest-action@master
         if: github.event_name != 'workflow_dispatch'
         with:
-          base-image: ${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.GIT_TAG }}
-          extra-images: ${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.GIT_TAG }}-amd64,${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.GIT_TAG }}-arm64v8,${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.GIT_TAG }}-armv7,${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.GIT_TAG }}-i386
+          inputs: ${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.GIT_TAG }}
+          images: ${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.GIT_TAG }}-amd64,${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.GIT_TAG }}-arm64v8,${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.GIT_TAG }}-armv7,${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.GIT_TAG }}-i386
           push: true
 
       # manifest for :1 tag (major release)
@@ -568,16 +568,16 @@ jobs:
         uses: Noelware/docker-manifest-action@master
         if: github.event_name != 'workflow_dispatch'
         with:
-          base-image: ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}
-          extra-images: ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-amd64,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-arm64v8,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-armv7,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-i386
+          inputs: ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}
+          images: ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-amd64,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-arm64v8,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-armv7,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-i386
           push: true
 
       - name: Create and push manifest (:major) (ghcr.io)
         uses: Noelware/docker-manifest-action@master
         if: github.event_name != 'workflow_dispatch'
         with:
-          base-image: ${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.MAJOR_TAG }}
-          extra-images: ${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.MAJOR_TAG }}-amd64,${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.MAJOR_TAG }}-arm64v8,${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.MAJOR_TAG }}-armv7,${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.MAJOR_TAG }}-i386
+          inputs: ${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.MAJOR_TAG }}
+          images: ${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.MAJOR_TAG }}-amd64,${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.MAJOR_TAG }}-arm64v8,${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.MAJOR_TAG }}-armv7,${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.MAJOR_TAG }}-i386
           push: true
 
       # manifest for :latest tag
@@ -586,8 +586,8 @@ jobs:
         if: github.event_name != 'workflow_dispatch'
         uses: Noelware/docker-manifest-action@master
         with:
-          base-image: ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}
-          extra-images: ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-amd64,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-arm64v8,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-armv7,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-i386
+          inputs: ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}
+          images: ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-amd64,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-arm64v8,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-armv7,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-i386
           push: true
 
       - name: Create and push manifest (:latest) (ghcr.io)
@@ -595,8 +595,8 @@ jobs:
         uses: Noelware/docker-manifest-action@master
         if: github.event_name != 'workflow_dispatch'
         with:
-          base-image: ${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.LATEST_TAG }}
-          extra-images: ${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.LATEST_TAG }}-amd64,${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.LATEST_TAG }}-arm64v8,${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.LATEST_TAG }}-armv7,${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.LATEST_TAG }}-i386
+          inputs: ${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.LATEST_TAG }}
+          images: ${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.LATEST_TAG }}-amd64,${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.LATEST_TAG }}-arm64v8,${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.LATEST_TAG }}-armv7,${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.LATEST_TAG }}-i386
           push: true
 
       - name: Sign the images with GitHub OIDC Token
