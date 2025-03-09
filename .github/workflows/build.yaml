@@ -19,50 +19,74 @@ on:
 env:
   CARGO_TERM_COLOR: always
   LATEST_TAG: latest
-  
+  GHCR_IMAGE_NAME: ghcr.io/${{ github.repository }}-s6
+  GHCR_IMAGE_CLASSIC_NAME: ghcr.io/${{ github.repository }}
+
+permissions:
+  contents: read
+
 jobs:
 
   # binary build
   build:
 
     name: Build - ${{ matrix.job.name }}
-    runs-on: ubuntu-20.04
+    runs-on: ${{ matrix.job.os }}
     strategy:
       fail-fast: false
       matrix:
         job:
-          - { name: "amd64",   target: "x86_64-unknown-linux-musl" }
-          - { name: "arm64v8", target: "aarch64-unknown-linux-musl" }
-          - { name: "armv7",   target: "armv7-unknown-linux-musleabihf" }
-          - { name: "i386",    target: "i686-unknown-linux-musl" }
-          #- { name: "amd64fb",    target: "x86_64-unknown-freebsd" }
-
+          - { name: "amd64",   target: "x86_64-unknown-linux-musl",      os: "ubuntu-24.04",     cross-build: false }
+          - { name: "arm64v8", target: "aarch64-unknown-linux-musl",     os: "ubuntu-24.04-arm", cross-build: false }
+          - { name: "armv7",   target: "armv7-unknown-linux-musleabihf", os: "ubuntu-24.04",     cross-build: true } # No cross build toolkit for armv8 -> armv7
+          - { name: "i386",    target: "i686-unknown-linux-musl",        os: "ubuntu-24.04",     cross-build: true }
+          #- { name: "amd64fb", target: "x86_64-unknown-freebsd",         os: "ubuntu-24.04",     cross-build: true }
+    permissions:
+      id-token: write
+      attestations: write
     steps:
       
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           submodules: recursive
+          persist-credentials: false
 
-      - name: Install toolchain
-        uses: actions-rs/toolchain@v1
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: "1.81"
-          override: true
-          default: true
-          components: rustfmt
-          profile: minimal
-          target: ${{ matrix.job.target }}
+          targets: ${{ matrix.job.target }}
+          components: "rustfmt"
+      
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: linux-binary-build-${{ matrix.job.name }}
 
       - name: Build
         uses: actions-rs/cargo@v1
         with:
           command: build
           args: --release --all-features --target=${{ matrix.job.target }}
-          use-cross: true  
+          use-cross: ${{ matrix.job.cross-build }}  
 
       - name: Exec chmod
         run: chmod -v a+x target/${{ matrix.job.target }}/release/*
+
+      - name: GitHub Attestations for binaries
+        uses: actions/attest@v2
+        with:
+          predicate-type: 'https://in-toto.io/attestation/release'
+          predicate: '{}'
+          subject-path: |
+            target/${{ matrix.job.target }}/release/hbbr
+            target/${{ matrix.job.target }}/release/hbbs
+            target/${{ matrix.job.target }}/release/rustdesk-utils
 
       - name: Publish Artifacts
         uses: actions/upload-artifact@v4
@@ -76,16 +100,20 @@ jobs:
 
   build-win:
     name: Build - windows
-    runs-on: windows-2019
+    runs-on: windows-2022
+    permissions:
+      id-token: write
+      attestations: write
 
     steps:
       
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           submodules: recursive
+          persist-credentials: false
 
-      - name: Install toolchain
+      - name: Install toolchain # Can't switch to "dtolnay/rust-toolchain", it will cause "Build UI setup file" error.
         uses: actions-rs/toolchain@v1
         with:
           toolchain: "1.81"
@@ -94,13 +122,16 @@ jobs:
           components: rustfmt
           profile: minimal
           target: x86_64-pc-windows-msvc
+      
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: windows-build
 
       - name: Build
         uses: actions-rs/cargo@v1
         with:
           command: build
           args: --release --all-features --target=x86_64-pc-windows-msvc
-          use-cross: true
 
       - name: Install NSIS
         run: |
@@ -111,7 +142,7 @@ jobs:
           scoop install nsis
 
       - name: Install Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: 16
 
@@ -154,6 +185,17 @@ jobs:
           folder: './ui/SignOutput'
           recursive: false
 
+      - name: GitHub Attestations for binaries
+        uses: actions/attest@v2
+        with:
+          predicate-type: 'https://in-toto.io/attestation/release'
+          predicate: '{}'
+          subject-path: |
+            ui\SignOutput\hbbr.exe
+            ui\SignOutput\hbbs.exe
+            ui\SignOutput\rustdesk-utils.exe
+            ui\SignOutput\RustDeskServer.Setup.exe        
+
       - name: Publish Artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -168,11 +210,11 @@ jobs:
   # github (draft) release with all binaries
   release:
 
-    name: Github release
+    name: GitHub release
     needs: 
       - build
       - build-win
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04-arm
     strategy:
       fail-fast: false
       matrix:
@@ -183,7 +225,9 @@ jobs:
           - { os: "linux", name: "i386", suffix: "" }
           #- { os: "linux", name: "amd64fb", suffix: "" }
           - { os: "windows", name: "x86_64", suffix: "-unsigned" }
-          
+    permissions:
+      contents: write
+     
     steps:
 
       - name: Download binaries (${{ matrix.job.os }} - ${{ matrix.job.name }})
@@ -197,12 +241,10 @@ jobs:
 
       - name: Pack files (${{ matrix.job.os }} - ${{ matrix.job.name }})
         run: |
-          sudo apt update
-          DEBIAN_FRONTEND=noninteractive sudo apt install -y zip
           zip ${{ matrix.job.name }}/rustdesk-server-${{ matrix.job.os }}-${{ matrix.job.name }}${{ matrix.job.suffix }}.zip ${{ matrix.job.name }}/*
 
       - name: Create Release (${{ matrix.job.os }} - (${{ matrix.job.name }})
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           draft: true
           files: ${{ matrix.job.name }}/rustdesk-server-${{ matrix.job.os }}-${{ matrix.job.name }}${{ matrix.job.suffix }}.zip
@@ -210,24 +252,26 @@ jobs:
   # docker build and push of single-arch images
   docker:
 
-    name: Docker push - ${{ matrix.job.name }}
+    name: Docker (s6) push - ${{ matrix.job.name }}
     needs: build
-    runs-on: ubuntu-22.04
+    runs-on: ${{ matrix.job.os }}
     strategy:
       fail-fast: false
       matrix:
         job:
-          - { name: "amd64",   docker_platform: "linux/amd64",  s6_platform: "x86_64" }
-          - { name: "arm64v8", docker_platform: "linux/arm64",  s6_platform: "aarch64" }
-          - { name: "armv7",   docker_platform: "linux/arm/v7", s6_platform: "armhf" }
-          - { name: "i386",    docker_platform: "linux/386",    s6_platform: "i686" }
+          - { name: "amd64",   docker_platform: "linux/amd64",  s6_platform: "x86_64",  os: "ubuntu-24.04" }
+          - { name: "arm64v8", docker_platform: "linux/arm64",  s6_platform: "aarch64", os: "ubuntu-24.04-arm" }
+          - { name: "armv7",   docker_platform: "linux/arm/v7", s6_platform: "armhf",   os: "ubuntu-24.04-arm" }
+          - { name: "i386",    docker_platform: "linux/386",    s6_platform: "i686",    os: "ubuntu-24.04" }
+    permissions:
+      packages: write
 
     steps:
 
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4 # Just for getting Dockerfile, not need download submodules
         with:
-          submodules: recursive
+          persist-credentials: false
         
       - name: Download binaries
         uses: actions/download-artifact@v4
@@ -239,62 +283,80 @@ jobs:
         run: chmod -v a+x docker/rootfs/usr/bin/*
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v2
+        uses: docker/setup-qemu-action@v3
       
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3
 
       - name: Log in to Docker Hub
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
         
       - name: Extract metadata (tags, labels) for Docker
         id: meta
-        uses: docker/metadata-action@v4
+        uses: docker/metadata-action@v5
         with:
-          images: registry.hub.docker.com/${{ secrets.DOCKER_IMAGE }}
-
-      - name: Get git tag
-        id: vars
-        run: |
-          T=${GITHUB_REF#refs/*/}
-          M=${T%%.*}
-          echo "GIT_TAG=$T" >> $GITHUB_ENV
-          echo "MAJOR_TAG=$M" >> $GITHUB_ENV
+          images: |
+            ${{ secrets.DOCKER_IMAGE }}
+            ${{ env.GHCR_IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest-${{ matrix.job.name }}
+            type=semver,pattern={{raw}}-${{ matrix.job.name }}
+            type=semver,pattern={{major}}-${{ matrix.job.name }}
+          # pattern={{raw}} = git tag
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: "./docker"
           platforms: ${{ matrix.job.docker_platform }}
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           provenance: false
           build-args: |
             S6_ARCH=${{ matrix.job.s6_platform }}
-          tags: |
-            ${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-${{ matrix.job.name }}
-            ${{ secrets.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-${{ matrix.job.name }}
-            ${{ secrets.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-${{ matrix.job.name }}
+          tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
   # docker build and push of multiarch images
   docker-manifest:
 
-    name: Docker manifest
+    name: Docker manifest (s6)
     needs: docker
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      packages: write
+      id-token: write
 
     steps:
 
       - name: Log in to Docker Hub
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
+  
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.7.0
 
       - name: Get git tag
         id: vars
@@ -306,51 +368,91 @@ jobs:
 
       # manifest for :1.2.3 tag
       #  this has to run only if invoked by a new tag
-      - name: Create and push manifest (:ve.rs.ion)
+      - name: Create and push manifest (:ve.rs.ion) (Docker Hub)
         uses: Noelware/docker-manifest-action@master
         if: github.event_name != 'workflow_dispatch'
         with:
-          base-image: ${{ secrets.DOCKER_IMAGE }}:${{ env.GIT_TAG }}
-          extra-images: ${{ secrets.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-amd64,${{ secrets.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-arm64v8,${{ secrets.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-armv7,${{ secrets.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-i386
+          inputs: ${{ secrets.DOCKER_IMAGE }}:${{ env.GIT_TAG }}
+          images: ${{ secrets.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-amd64,${{ secrets.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-arm64v8,${{ secrets.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-armv7,${{ secrets.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-i386
+          push: true
+
+      - name: Create and push manifest (:ve.rs.ion) (ghcr.io)
+        uses: Noelware/docker-manifest-action@master
+        if: github.event_name != 'workflow_dispatch'
+        with:
+          inputs: ${{ env.GHCR_IMAGE_NAME }}:${{ env.GIT_TAG }}
+          images: ${{ env.GHCR_IMAGE_NAME }}:${{ env.GIT_TAG }}-amd64,${{ env.GHCR_IMAGE_NAME }}:${{ env.GIT_TAG }}-arm64v8,${{ env.GHCR_IMAGE_NAME }}:${{ env.GIT_TAG }}-armv7,${{ env.GHCR_IMAGE_NAME }}:${{ env.GIT_TAG }}-i386
           push: true
 
       # manifest for :1 tag (major release)
-      - name: Create and push manifest (:major)
+      - name: Create and push manifest (:major) (Docker Hub)
         uses: Noelware/docker-manifest-action@master
+        if: github.event_name != 'workflow_dispatch'
         with:
-          base-image: ${{ secrets.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}
-          extra-images: ${{ secrets.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-amd64,${{ secrets.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-arm64v8,${{ secrets.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-armv7,${{ secrets.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-i386
+          inputs: ${{ secrets.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}
+          images: ${{ secrets.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-amd64,${{ secrets.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-arm64v8,${{ secrets.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-armv7,${{ secrets.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-i386
+          push: true
+
+      - name: Create and push manifest (:major) (ghcr.io)
+        uses: Noelware/docker-manifest-action@master
+        if: github.event_name != 'workflow_dispatch'
+        with:
+          inputs: ${{ env.GHCR_IMAGE_NAME }}:${{ env.MAJOR_TAG }}
+          images: ${{ env.GHCR_IMAGE_NAME }}:${{ env.MAJOR_TAG }}-amd64,${{ env.GHCR_IMAGE_NAME }}:${{ env.MAJOR_TAG }}-arm64v8,${{ env.GHCR_IMAGE_NAME }}:${{ env.MAJOR_TAG }}-armv7,${{ env.GHCR_IMAGE_NAME }}:${{ env.MAJOR_TAG }}-i386
           push: true
 
       # manifest for :latest tag
-      - name: Create and push manifest (:latest)
+      - name: Create and push manifest (:latest) (Docker Hub)
         uses: Noelware/docker-manifest-action@master
+        id: manifest-latest-docker
+        if: github.event_name != 'workflow_dispatch'
         with:
-          base-image: ${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}
-          extra-images: ${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-amd64,${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-arm64v8,${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-armv7,${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-i386
+          inputs: ${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}
+          images: ${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-amd64,${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-arm64v8,${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-armv7,${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-i386
           push: true
 
-            
+      - name: Create and push manifest (:latest) (ghcr.io)
+        id: manifest-latest-ghcr
+        uses: Noelware/docker-manifest-action@master
+        if: github.event_name != 'workflow_dispatch'
+        with:
+          inputs: ${{ env.GHCR_IMAGE_NAME }}:${{ env.LATEST_TAG }}
+          images: ${{ env.GHCR_IMAGE_NAME }}:${{ env.LATEST_TAG }}-amd64,${{ env.GHCR_IMAGE_NAME }}:${{ env.LATEST_TAG }}-arm64v8,${{ env.GHCR_IMAGE_NAME }}:${{ env.LATEST_TAG }}-armv7,${{ env.GHCR_IMAGE_NAME }}:${{ env.LATEST_TAG }}-i386
+          push: true
+ 
+      - name: Sign the images with GitHub OIDC Token
+        if: github.event_name != 'workflow_dispatch'
+        env:
+          DOCKER_DIGEST: ${{ steps.manifest-latest-docker.outputs.images }}
+          GHCR_DIGEST: ${{ steps.manifest-latest-ghcr.outputs.images }}
+        run: |
+          # --recursive for multiarch tags will sign all the images that it referenced
+          cosign sign --yes --recursive ${DOCKER_DIGEST}
+          cosign sign --yes --recursive ${GHCR_DIGEST}
+
   # docker build and push of single-arch images
   docker-classic:
 
-    name: Docker push - ${{ matrix.job.name }}
+    name: Docker (Classic) push - ${{ matrix.job.name }}
     needs: build
-    runs-on: ubuntu-22.04
+    runs-on: ${{ matrix.job.os }}
     strategy:
       fail-fast: false
       matrix:
         job:
-          - { name: "amd64",   docker_platform: "linux/amd64" }
-          - { name: "arm64v8", docker_platform: "linux/arm64" }
-          - { name: "armv7",   docker_platform: "linux/arm/v7" }
+          - { name: "amd64",   docker_platform: "linux/amd64",  os: "ubuntu-24.04" }
+          - { name: "arm64v8", docker_platform: "linux/arm64",  os: "ubuntu-24.04-arm" }
+          - { name: "armv7",   docker_platform: "linux/arm/v7", os: "ubuntu-24.04-arm" }
+          - { name: "i386",    docker_platform: "linux/386",    os: "ubuntu-24.04" }
+    permissions:
+      packages: write
 
     steps:
 
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4 # Just for getting Dockerfile, not need download submodules
         with:
-          submodules: recursive
+          persist-credentials: false
         
       - name: Download binaries
         uses: actions/download-artifact@v4
@@ -362,31 +464,38 @@ jobs:
         run: chmod -v a+x docker-classic/*
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v2
+        uses: docker/setup-qemu-action@v3
       
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3
 
       - name: Log in to Docker Hub
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
-        
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Extract metadata (tags, labels) for Docker
         id: meta
-        uses: docker/metadata-action@v4
+        uses: docker/metadata-action@v5
         with:
-          images: registry.hub.docker.com/${{ secrets.DOCKER_IMAGE_CLASSIC }}
-
-      - name: Get git tag
-        id: vars
-        run: |
-          T=${GITHUB_REF#refs/*/}
-          M=${T%%.*}
-          echo "GIT_TAG=$T" >> $GITHUB_ENV
-          echo "MAJOR_TAG=$M" >> $GITHUB_ENV
+          images: |
+            ${{ secrets.DOCKER_IMAGE_CLASSIC }}
+            ${{ env.GHCR_IMAGE_CLASSIC_NAME }}
+          tags: |
+            type=raw,value=latest-${{ matrix.job.name }}
+            type=semver,pattern={{raw}}-${{ matrix.job.name }}
+            type=semver,pattern={{major}}-${{ matrix.job.name }}
+          # pattern={{raw}} = git tag
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
@@ -395,27 +504,38 @@ jobs:
           platforms: ${{ matrix.job.docker_platform }}
           push: true
           provenance: false
-          tags: |
-            ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-${{ matrix.job.name }}
-            ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-${{ matrix.job.name }}
-            ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-${{ matrix.job.name }}
+          tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
   # docker build and push of multiarch images
   docker-manifest-classic:
 
-    name: Docker manifest
+    name: Docker manifest (Classic)
     needs: docker
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      packages: write
+      id-token: write
 
     steps:
 
       - name: Log in to Docker Hub
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.7.0
 
       - name: Get git tag
         id: vars
@@ -427,59 +547,100 @@ jobs:
 
       # manifest for :1.2.3 tag
       #  this has to run only if invoked by a new tag
-      - name: Create and push manifest (:ve.rs.ion)
+      - name: Create and push manifest (:ve.rs.ion) (Docker Hub)
         uses: Noelware/docker-manifest-action@master
         if: github.event_name != 'workflow_dispatch'
         with:
-          base-image: ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}
-          extra-images: ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-amd64,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-arm64v8,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-armv7
+          inputs: ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}
+          images: ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-amd64,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-arm64v8,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-armv7,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-i386
+          push: true
+
+      - name: Create and push manifest (:ve.rs.ion) (ghcr.io)
+        uses: Noelware/docker-manifest-action@master
+        if: github.event_name != 'workflow_dispatch'
+        with:
+          inputs: ${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.GIT_TAG }}
+          images: ${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.GIT_TAG }}-amd64,${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.GIT_TAG }}-arm64v8,${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.GIT_TAG }}-armv7,${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.GIT_TAG }}-i386
           push: true
 
       # manifest for :1 tag (major release)
-      - name: Create and push manifest (:major)
+      - name: Create and push manifest (:major) (Docker Hub)
         uses: Noelware/docker-manifest-action@master
+        if: github.event_name != 'workflow_dispatch'
         with:
-          base-image: ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}
-          extra-images: ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-amd64,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-arm64v8,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-armv7
+          inputs: ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}
+          images: ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-amd64,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-arm64v8,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-armv7,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-i386
+          push: true
+
+      - name: Create and push manifest (:major) (ghcr.io)
+        uses: Noelware/docker-manifest-action@master
+        if: github.event_name != 'workflow_dispatch'
+        with:
+          inputs: ${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.MAJOR_TAG }}
+          images: ${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.MAJOR_TAG }}-amd64,${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.MAJOR_TAG }}-arm64v8,${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.MAJOR_TAG }}-armv7,${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.MAJOR_TAG }}-i386
           push: true
 
       # manifest for :latest tag
-      - name: Create and push manifest (:latest)
+      - name: Create and push manifest (:latest) (Docker Hub)
+        id: manifest-latest-docker
+        if: github.event_name != 'workflow_dispatch'
         uses: Noelware/docker-manifest-action@master
         with:
-          base-image: ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}
-          extra-images: ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-amd64,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-arm64v8,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-armv7
+          inputs: ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}
+          images: ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-amd64,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-arm64v8,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-armv7,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-i386
           push: true
 
+      - name: Create and push manifest (:latest) (ghcr.io)
+        id: manifest-latest-ghcr
+        uses: Noelware/docker-manifest-action@master
+        if: github.event_name != 'workflow_dispatch'
+        with:
+          inputs: ${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.LATEST_TAG }}
+          images: ${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.LATEST_TAG }}-amd64,${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.LATEST_TAG }}-arm64v8,${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.LATEST_TAG }}-armv7,${{ env.GHCR_IMAGE_CLASSIC_NAME }}:${{ env.LATEST_TAG }}-i386
+          push: true
+
+      - name: Sign the images with GitHub OIDC Token
+        if: github.event_name != 'workflow_dispatch'
+        env:
+          DOCKER_DIGEST: ${{ steps.manifest-latest-docker.outputs.images }}
+          GHCR_DIGEST: ${{ steps.manifest-latest-ghcr.outputs.images }}
+        run: |
+          # --recursive for multiarch tags will sign all the images that it referenced
+          cosign sign --yes --recursive ${DOCKER_DIGEST}
+          cosign sign --yes --recursive ${GHCR_DIGEST}
 
   deb-package:
 
-    name: debian package - ${{ matrix.job.name }}
+    name: Debian package - ${{ matrix.job.name }}
     needs: build
-    runs-on: ubuntu-22.04
+    runs-on: ${{ matrix.job.os }}
     strategy:
       fail-fast: false
       matrix:
         job:
-          - { name: "amd64",   debian_platform: "amd64",   crossbuild_package: "" }
-          - { name: "arm64v8", debian_platform: "arm64",   crossbuild_package: "crossbuild-essential-arm64" }
-          - { name: "armv7",   debian_platform: "armhf",   crossbuild_package: "crossbuild-essential-armhf" }
-          - { name: "i386",    debian_platform: "i386",    crossbuild_package: "crossbuild-essential-i386" }
+          - { name: "amd64",   debian_platform: "amd64",   crossbuild_package: "",                           os: "ubuntu-24.04" }
+          - { name: "arm64v8", debian_platform: "arm64",   crossbuild_package: "",                           os: "ubuntu-24.04-arm" }
+          - { name: "armv7",   debian_platform: "armhf",   crossbuild_package: "crossbuild-essential-armhf", os: "ubuntu-24.04-arm" }
+          - { name: "i386",    debian_platform: "i386",    crossbuild_package: "crossbuild-essential-i386",  os: "ubuntu-24.04" }
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
 
     steps:
 
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
-          submodules: recursive
+          persist-credentials: false
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v2
 
       - name: Create packaging env
         run: |
-          sudo apt update
-          DEBIAN_FRONTEND=noninteractive sudo apt install -y devscripts build-essential debhelper pkg-config ${{ matrix.job.crossbuild_package }}
+          sudo apt-get update
+          DEBIAN_FRONTEND=noninteractive sudo apt-get install -y devscripts build-essential debhelper pkg-config ${{ matrix.job.crossbuild_package }}
           mkdir -p debian-build/${{ matrix.job.name }}/bin
 
       - name: Download binaries
@@ -496,8 +657,18 @@ jobs:
           cd debian-build/${{ matrix.job.name }}/
           debuild -i -us -uc -b -a${{ matrix.job.debian_platform }}
 
+      - name: GitHub Attestations for binaries
+        uses: actions/attest@v2
+        with:
+          predicate-type: 'https://in-toto.io/attestation/release'
+          predicate: '{}'
+          subject-path: |
+            debian-build/rustdesk-server-hbbr_*_${{ matrix.job.debian_platform }}.deb
+            debian-build/rustdesk-server-hbbs_*_${{ matrix.job.debian_platform }}.deb
+            debian-build/rustdesk-server-utils_*_${{ matrix.job.debian_platform }}.deb
+
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           draft: true
           files: |
