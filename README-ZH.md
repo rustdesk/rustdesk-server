@@ -337,7 +337,7 @@ Secret Key:  egAVd44u33ZEUIDTtksGcHeVeAwywarEdHmf99KM5ajwEsuG3NQFT9coAfiZ6nen4hf
 |-----------------------|---------------|--------------------------------------------------|
 | ALWAYS_USE_RELAY      | hbbs          | 如果设定为 **"Y"**，将关闭直接点对点连接功能                       |
 | DB_URL                | hbbs          | 数据库配置                                            |
-| DOWNGRADE_START_CHECK | hbbr          | 降级检查之前的延迟是啊尽（以秒为单位）                              |
+| DOWNGRADE_START_CHECK | hbbr          | 降级检查之前的延迟时间（以秒为单位）                              |
 | DOWNGRADE_THRESHOLD   | hbbr          | 降级检查的阈值（bit/ms）                                  |
 | KEY                   | hbbs/hbbr     | 如果设置了此参数，将强制使用指定密钥对，如果设为 **"_"**，则强制使用任意密钥       |
 | LIMIT_SPEED           | hbbr          | 速度限制（以Mb/s为单位）                                   |
