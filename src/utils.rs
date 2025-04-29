@@ -10,7 +10,7 @@ use std::{
 fn print_help() {
     println!(
         "Usage:
-    rustdesk-util [command]\n
+    rustdesk-utils [command]\n
 Available Commands:
     genkeypair                                   Generate a new keypair
     validatekeypair [public key] [secret key]    Validate an existing keypair
