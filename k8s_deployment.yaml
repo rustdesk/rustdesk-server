@@ -1,0 +1,100 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rustdesk-config
+  namespace: rustdesk
+data:
+  RELAY: rustdesk.example.com
+  ENCRYPTED_ONLY: "1"
+  #KEY_PUB:
+  #KEY_PRIV:
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rustdesk-data-pvc
+  namespace: rustdesk
+spec:
+  storageClassName: nfs-provisioner-storage  # Change to your storageClassName
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 5Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rustdesk-deploy
+  namespace: rustdesk
+  labels:
+    app: rustdesk-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rustdesk-app
+  template:
+    metadata:
+      labels:
+        app: rustdesk-app
+    spec:
+      containers:
+        - name: rustdesk-container
+          image: rustdesk/rustdesk-server-s6:1.1.10-3
+          envFrom:
+          - configMapRef:
+              name: rustdesk-config
+          resources: {}
+          ports:
+            - containerPort: 21115
+            - containerPort: 21116
+            - containerPort: 21118
+            - containerPort: 21117
+            - containerPort: 21119
+          volumeMounts:
+            - name: rustdesk-data
+              mountPath: /data
+      volumes:
+        - name: rustdesk-data
+          persistentVolumeClaim:
+            claimName: rustdesk-data-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rustdesk-tcp-ports
+  namespace: rustdesk
+spec:
+  selector:
+    app: rustdesk-app
+  ports:
+    - name: tcp-port-1
+      port: 21115
+      targetPort: 21115
+    - name: tcp-port-2
+      port: 21116
+      targetPort: 21116
+    - name: tcp-port-3
+      port: 21117
+      targetPort: 21117
+  type: LoadBalancer
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rustdesk-udp-ports
+  namespace: rustdesk
+spec:
+  selector:
+    app: rustdesk-app
+  ports:
+    - name: udp-port-1
+      port: 21116
+      targetPort: 21116
+      protocol: UDP
+  type: LoadBalancer
