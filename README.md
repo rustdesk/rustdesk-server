@@ -198,6 +198,8 @@ For this container image, you can use these environment variables, **in addition
 | ENCRYPTED_ONLY | yes | if set to **"1"** unencrypted connection will not be accepted |
 | KEY_PUB | yes | public part of the key pair |
 | KEY_PRIV | yes | private part of the key pair |
+| PUID | yes | user ID that hbbr/hbbs will use (1000 by default) |
+| PGID | yes | group ID that hbbr/hbbs will use (1000 by default) |
 
 ### Secret management in S6-overlay based images
 

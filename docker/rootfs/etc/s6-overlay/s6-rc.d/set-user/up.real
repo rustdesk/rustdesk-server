@@ -1,0 +1,15 @@
+#!/command/with-contenv sh
+
+if [ "$(id -u)" -ne 0 ] ; then
+  # if the container is running unprivileged, we cannot manage users
+  exit
+fi
+
+PUID=${PUID:-1000}
+PGID=${PGID:-1000}
+
+# usermod/groupmod is not present in this image, so we use this dirty trick
+sed -i "s/^rustdesk\:.*/rustdesk:x:${PGID}:rustdesk/" /etc/group
+sed -i "s/^rustdesk\:.*/rustdesk:x:${PUID}:${PGID}:Linux User,,,:\/data:\/bin\/sh/" /etc/passwd
+
+chown "${PUID}:${PGID}" "/data"

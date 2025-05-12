@@ -14,6 +14,12 @@ COPY rootfs /
 
 ENV RELAY=relay.example.com
 ENV ENCRYPTED_ONLY=0
+ENV PGID=1000
+ENV PUID=1000
+
+RUN \
+  addgroup -g "${PGID}" rustdesk && \
+  adduser -D -h /data -u "${PUID}" -G rustdesk rustdesk
 
 EXPOSE 21115 21116 21116/udp 21117 21118 21119
 
@@ -22,5 +28,7 @@ HEALTHCHECK --interval=10s --timeout=5s CMD /usr/bin/healthcheck.sh
 WORKDIR /data
 
 VOLUME /data
+
+USER rustdesk
 
 ENTRYPOINT ["/init"]
