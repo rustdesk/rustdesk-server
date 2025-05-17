@@ -1,15 +1,16 @@
 use clap::App;
 use hbb_common::{
-    allow_err, anyhow::{Context, Result}, get_version_number, log, tokio, ResultType
+    allow_err, anyhow::{Context, Result}, get_version_number, bail, log, tokio, ResultType
 };
 use ini::Ini;
 use sodiumoxide::crypto::sign;
 use std::{
     io::prelude::*,
     io::Read,
-    net::SocketAddr,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     time::{Instant, SystemTime},
 };
+use tokio::net::{TcpListener, TcpSocket};
 
 #[allow(dead_code)]
 pub(crate) fn get_expired_time() -> Instant {
@@ -215,4 +216,76 @@ async fn check_software_update_() -> hbb_common::ResultType<()> {
        log::info!("new version is available: {}", latest_release_version);
     }
     Ok(())
+}
+
+const DEFAULT_BACKLOG: u32 = 128;
+pub async fn listen_any(port: u16) -> ResultType<TcpListener> {
+    let enable_ipv6 = get_arg("enable-ipv6").to_lowercase() == "y";
+    let ipv4_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port);
+
+    // Try IPv4 first
+    {
+        let mut socket = TcpSocket::new_v4()?;
+        #[cfg(unix)]
+        {
+            socket.set_reuseaddr(true).ok();
+            #[cfg(not(target_os = "illumos"))]
+            socket.set_reuseport(true).ok();
+        }
+        if socket.bind(ipv4_addr).is_ok() {
+            log::debug!("Binding to IPv4 TCP {}", ipv4_addr);
+            match socket.listen(DEFAULT_BACKLOG) {
+                Ok(listener) => {
+                    log::debug!("Listening on TCP {:?}", listener.local_addr());
+                    return Ok(listener);
+                }
+                Err(e) => {
+                    log::warn!("Failed to listen on IPv4 TCP {}: {}", ipv4_addr, e);
+                }
+            }
+        } else {
+            log::warn!("Failed to bind to IPv4 TCP {}", ipv4_addr);
+        }
+    }
+
+    // Try IPv6 if enabled
+    if enable_ipv6 {
+        let ipv6_addr = SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), port);
+        let mut socket = TcpSocket::new_v6()?;
+        #[cfg(unix)]
+        {
+            socket.set_reuseaddr(true).ok();
+            #[cfg(not(target_os = "illumos"))]
+            socket.set_reuseport(true).ok();
+            use std::os::unix::io::{FromRawFd, IntoRawFd};
+            let raw_fd = socket.into_raw_fd();
+            let sock2 = unsafe { socket2::Socket::from_raw_fd(raw_fd) };
+            sock2.set_only_v6(false).ok(); // Attempt dual-stack
+            socket = unsafe { TcpSocket::from_raw_fd(sock2.into_raw_fd()) };
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::prelude::{FromRawSocket, IntoRawSocket};
+            let raw_socket = socket.into_raw_socket();
+            let sock2 = unsafe { socket2::Socket::from_raw_socket(raw_socket) };
+            sock2.set_only_v6(false).ok(); // Attempt dual-stack
+            socket = unsafe { TcpSocket::from_raw_socket(sock2.into_raw_socket()) };
+        }
+        if socket.bind(ipv6_addr).is_ok() {
+            log::debug!("Binding to IPv6 TCP {}", ipv6_addr);
+            match socket.listen(DEFAULT_BACKLOG) {
+                Ok(listener) => {
+                    log::debug!("Listening on TCP {:?}", listener.local_addr());
+                    return Ok(listener);
+                }
+                Err(e) => {
+                    log::warn!("Failed to listen on IPv6 TCP {}: {}", ipv6_addr, e);
+                }
+            }
+        } else {
+            log::warn!("Failed to bind to IPv6 TCP {}", ipv6_addr);
+        }
+    }
+
+    bail!("Failed to create TCP listener on port {}", port);
 }

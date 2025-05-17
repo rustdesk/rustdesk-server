@@ -1,5 +1,9 @@
 use async_speed_limit::Limiter;
 use async_trait::async_trait;
+use hbbs::common::{
+    get_arg,
+    listen_any
+};
 use hbb_common::{
     allow_err, bail,
     bytes::{Bytes, BytesMut},
@@ -8,7 +12,7 @@ use hbb_common::{
     protobuf::Message as _,
     rendezvous_proto::*,
     sleep,
-    tcp::{listen_any, FramedStream},
+    tcp::{FramedStream},
     timeout,
     tokio::{
         self,
@@ -45,6 +49,7 @@ static SINGLE_BANDWIDTH: AtomicUsize = AtomicUsize::new(16 * 1024 * 1024); // in
 const BLACKLIST_FILE: &str = "blacklist.txt";
 const BLOCKLIST_FILE: &str = "blocklist.txt";
 
+
 #[tokio::main(flavor = "multi_thread")]
 pub async fn start(port: &str, key: &str) -> ResultType<()> {
     let key = get_server_sk(key);
@@ -79,6 +84,8 @@ pub async fn start(port: &str, key: &str) -> ResultType<()> {
         BLOCKLIST.read().await.len()
     );
     let port: u16 = port.parse()?;
+    let enable_ipv6 = get_arg("enable-ipv6").to_lowercase() == "y";
+    log::info!("IPv6 support enabled: {}", if enable_ipv6 { "Y" } else { "N" });
     log::info!("Listening on tcp :{}", port);
     let port2 = port + 2;
     log::info!("Listening on websocket :{}", port2);
@@ -330,25 +337,25 @@ async fn io_loop(listener: TcpListener, listener2: TcpListener, key: &str) {
         tokio::select! {
             res = listener.accept() => {
                 match res {
-                    Ok((stream, addr))  => {
+                    Ok((stream, addr)) => {
                         stream.set_nodelay(true).ok();
                         handle_connection(stream, addr, &limiter, key, false).await;
                     }
                     Err(err) => {
-                       log::error!("listener.accept failed: {}", err);
-                       break;
+                        log::error!("TCP listener on port {} failed: {}", listener.local_addr().map_or("unknown".to_string(), |a| a.to_string()), err);
+                        break;
                     }
                 }
             }
             res = listener2.accept() => {
                 match res {
-                    Ok((stream, addr))  => {
+                    Ok((stream, addr)) => {
                         stream.set_nodelay(true).ok();
                         handle_connection(stream, addr, &limiter, key, true).await;
                     }
                     Err(err) => {
-                       log::error!("listener2.accept failed: {}", err);
-                       break;
+                        log::error!("WebSocket listener on port {} failed: {}", listener2.local_addr().map_or("unknown".to_string(), |a| a.to_string()), err);
+                        break;
                     }
                 }
             }
