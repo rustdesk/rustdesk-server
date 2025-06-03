@@ -1,0 +1,48 @@
+name: Trigger auto deployment for comansrustdesk1
+
+# When this action will be executed
+on:
+  # Automatically trigger it when detected changes in repo
+  push:
+    branches: 
+      [ Azure ]
+    paths:
+    - '**'
+    - '.github/workflows/comansrustdesk1-AutoDeployTrigger-135cb9c8-621d-4b32-ba33-d6752611b1f9.yml'
+
+  # Allow manual trigger 
+  workflow_dispatch:      
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions: 
+      id-token: write #This is required for requesting the OIDC JWT Token
+      contents: read #Required when GH token is used to authenticate with private repo
+
+    steps:
+      - name: Checkout to the branch
+        uses: actions/checkout@v2
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.COMANSRUSTDESK1_AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.COMANSRUSTDESK1_AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.COMANSRUSTDESK1_AZURE_SUBSCRIPTION_ID }}
+
+      - name: Build and push container image to registry
+        uses: azure/container-apps-deploy-action@v2
+        with:
+          appSourcePath: ${{ github.workspace }}
+          _dockerfilePathKey_: _dockerfilePath_
+          registryUrl: 
+          registryUsername: ${{ secrets.COMANSRUSTDESK1_REGISTRY_USERNAME }}
+          registryPassword: ${{ secrets.COMANSRUSTDESK1_REGISTRY_PASSWORD }}
+          containerAppName: comansrustdesk1
+          resourceGroup: ComansRustdesk
+          imageToBuild: default/[parameters('containerAppName')]:${{ github.sha }}
+          _buildArgumentsKey_: |
+            _buildArgumentsValues_
+
+
