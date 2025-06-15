@@ -216,10 +216,10 @@ docker run --name rustdesk-server \
   --net=host \
   -e "RELAY=rustdeskrelay.example.com" \
   -e "ENCRYPTED_ONLY=1" \
-  -e "DB_URL=/db/db_v2.sqlite3" \
+  -e "DB_URL=/data/db_v2.sqlite3" \
   -e "KEY_PRIV=FR2j78IxfwJNR+HjLluQ2Nh7eEryEeIZCwiQDPVe+PaITKyShphHAsPLn7So0OqRs92nGvSRdFJnE2MSyrKTIQ==" \
   -e "KEY_PUB=iEyskoaYRwLDy5+0qNDqkbPdpxr0kXRSZxNjEsqykyE=" \
-  -v "$PWD/db:/db" -d rustdesk/rustdesk-server-s6:latest
+  -v "$PWD/data:/data" -d rustdesk/rustdesk-server-s6:latest
 ```
 
 ```yaml
@@ -239,11 +239,11 @@ services:
     environment:
       - "RELAY=rustdesk.example.com:21117"
       - "ENCRYPTED_ONLY=1"
-      - "DB_URL=/db/db_v2.sqlite3"
+      - "DB_URL=/data/db_v2.sqlite3"
       - "KEY_PRIV=FR2j78IxfwJNR+HjLluQ2Nh7eEryEeIZCwiQDPVe+PaITKyShphHAsPLn7So0OqRs92nGvSRdFJnE2MSyrKTIQ=="
       - "KEY_PUB=iEyskoaYRwLDy5+0qNDqkbPdpxr0kXRSZxNjEsqykyE="
     volumes:
-      - ./db:/db
+      - ./data:/data
     restart: unless-stopped
 ```
 
@@ -261,8 +261,8 @@ docker service create --name rustdesk-server \
   --net=host \
   -e "RELAY=rustdeskrelay.example.com" \
   -e "ENCRYPTED_ONLY=1" \
-  -e "DB_URL=/db/db_v2.sqlite3" \
-  --mount "type=bind,source=$PWD/db,destination=/db" \
+  -e "DB_URL=/data/db_v2.sqlite3" \
+  --mount "type=bind,source=$PWD/data,destination=/data" \
   rustdesk/rustdesk-server-s6:latest
 ```
 
@@ -283,9 +283,9 @@ services:
     environment:
       - "RELAY=rustdesk.example.com:21117"
       - "ENCRYPTED_ONLY=1"
-      - "DB_URL=/db/db_v2.sqlite3"
+      - "DB_URL=/data/db_v2.sqlite3"
     volumes:
-      - ./db:/db
+      - ./data:/data
     restart: unless-stopped
     secrets:
       - key_pub
