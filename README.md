@@ -8,6 +8,8 @@
 
 [**FAQ**](https://github.com/rustdesk/rustdesk/wiki/FAQ)
 
+[**How to migrate OSS to Pro**](https://rustdesk.com/docs/en/self-host/rustdesk-server-pro/installscript/#convert-from-open-source)
+
 Self-host your own RustDesk server, it is free and open source.
 
 ## How to build manually
