@@ -1024,40 +1024,18 @@ rf.id = id; // Убираем токен из ID
                 for (id, peer) in peers {
                     let peer = peer.read().await;
                     let online = peer.last_reg_time.elapsed().as_millis() < REG_TIMEOUT as u128;
-                    let _ = writeln!(
-        res,
-        "ID: {}
-  IP: {}
-  Local IP: {}
-  Hostname: {}
-  OS: {}
-  Version: {}
-  Platform: {}
-  CPU: {}
-  Memory: {}
-  Online: {}
-  PublicKey Present: {}
-",
-        id,
-        peer.info.ip,
-        peer.info.local_ip,
-        if peer.info.hostname.is_empty() { "<unknown>" } else { &peer.info.hostname },
-        if peer.info.os.is_empty() { "<unknown>" } else { &peer.info.os },
-        if peer.info.version.is_empty() { "<unknown>" } else { &peer.info.version },
-        if peer.info.platform.is_empty() { "<unknown>" } else { &peer.info.platform },
-        if peer.info.cpu.is_empty() { "<unknown>" } else { &peer.info.cpu },
-        if peer.info.memory.is_empty() { "<unknown>" } else { &peer.info.memory },
-        if online { "Yes" } else { "No" },
-        if peer.pk.is_empty() { "No" } else { "Yes" },
-    )
+                    writeln!(
+                        res,
+                        "ID: {}\n  IP: {}\n  Local IP: {}\n  Hostname: {}\n  OS: {}\n  Version: {}\n  Platform: {}\n  CPU: {}\n  Memory: {}\n  Online: {}\n  PublicKey Present: {}\n",
                         id,
-                        hex::encode(&peer.uuid),
-                        if peer.info.hostname.is_empty() { "<unknown>" } else { &peer.info.hostname },
                         peer.info.ip,
-                        peer.socket_addr,
-                        if peer.info.platform.is_empty() { "<unknown>" } else { &peer.info.platform },
-                        if peer.info.os.is_empty() { "" } else { &peer.info.os },
+                        peer.info.local_ip,
+                        if peer.info.hostname.is_empty() { "<unknown>" } else { &peer.info.hostname },
+                        if peer.info.os.is_empty() { "<unknown>" } else { &peer.info.os },
                         if peer.info.version.is_empty() { "<unknown>" } else { &peer.info.version },
+                        if peer.info.platform.is_empty() { "<unknown>" } else { &peer.info.platform },
+                        if peer.info.cpu.is_empty() { "<unknown>" } else { &peer.info.cpu },
+                        if peer.info.memory.is_empty() { "<unknown>" } else { &peer.info.memory },
                         if online { "Yes" } else { "No" },
                         if peer.pk.is_empty() { "No" } else { "Yes" },
                     );
