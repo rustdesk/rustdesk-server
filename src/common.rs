@@ -3,6 +3,7 @@ use hbb_common::{
     anyhow::{Context, Result},
     get_version_number, log, tokio, ResultType,
 };
+use clap::App;
 use ini::Ini;
 use sodiumoxide::crypto::sign;
 use std::{
