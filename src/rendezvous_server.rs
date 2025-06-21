@@ -1,4 +1,3 @@
-use whoami::{hostname, platform, arch, distro, os_version};
 use crate::common::*;
 use crate::peer::*;
 use tokio::sync::RwLock;
@@ -102,7 +101,8 @@ impl RendezvousServer {
         let ws_port = port + 2;
         let pm = PeerMap::new().await?;
         log::info!("serial={}", serial);
-        let rendezvous_servers = get_servers(&get_arg("rendezvous-servers"), "rendezvous-servers");discovery_info: Arc::new(RwLock::new(HashMap::new())),
+        let rendezvous_servers = get_servers(&get_arg("rendezvous-servers"), "rendezvous-servers");
+        discovery_info: Arc::new(RwLock::new(HashMap::new())),
         log::info!("Listening on tcp/udp :{}", port);
         log::info!("Listening on tcp :{}, extra port for NAT test", nat_port);
         log::info!("Listening on websocket :{}", ws_port);
@@ -342,13 +342,16 @@ impl RendezvousServer {
     }
 
     let peer_info = PeerInfo {
-        hostname: pd.hostname.clone(),
-        os: pd.misc.clone(),        // временно misc как OS, если не передаётся os
-        platform: pd.platform.clone(),
-        cpu: String::new(),         // пусто, если cpu не приходит
-        version: String::new(),
-        ip: socket.get_ref().local_addr().unwrap().ip().to_string(),
-    };
+    id: client_id.clone(),
+    ip: socket.local_addr().unwrap().ip().to_string(),
+    local_ip: "127.0.0.1".to_string(),
+    hostname: whoami::hostname(),
+    os: whoami::distro(),
+    version: "10".to_string(),
+    platform: whoami::platform().to_string(),
+    cpu: whoami::arch().to_string(),
+    memory: "3.9GB".to_string(),
+};
 
     self.discovery_info.write().await.insert(pd.id.clone(), peer_info.clone());
 
@@ -439,23 +442,17 @@ impl RendezvousServer {
     addr,
     rk.uuid,
     rk.pk,
-
-    let hostname = hostname();
-    let os = distro();
-    let version = os_version();
-    let platform = platform();
-    let cpu = arch();
-
     PeerInfo {
-    ip,
-    hostname,
-    os,
-    version,
-    platform,
-    cpu,
-
-        local_ip: "127.0.0.1".to_string(),
-    },
+    id: client_id.clone(),
+    ip: socket.local_addr().unwrap().ip().to_string(),
+    local_ip: "127.0.0.1".to_string(),
+    hostname: whoami::hostname(),
+    os: whoami::distro(),
+    version: "10".to_string(),
+    platform: whoami::platform().to_string(),
+    cpu: whoami::arch().to_string(),
+    memory: "3.9GB".to_string(),
+},
 ).await;
                     }
                     let mut msg_out = RendezvousMessage::new();
