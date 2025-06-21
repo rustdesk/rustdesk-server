@@ -1,17 +1,3 @@
-
-use serde::{Serialize, Deserialize};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PeerInfo {
-    pub ip: String,
-    pub local_ip: String,
-    pub hostname: String,
-    pub os: String,
-    pub version: String,
-    pub platform: String,
-    pub cpu: String,
-}
-
 use crate::common::*;
 use crate::database;
 use hbb_common::{
