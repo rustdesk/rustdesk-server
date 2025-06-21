@@ -493,6 +493,38 @@ impl RendezvousServer {
                     return true;
                 }
                 Some(rendezvous_message::Union::RequestRelay(mut rf)) => {
+                    let mut id = rf.id.clone();
+let mut token: Option<String> = None;
+if let Some((real_id, tok)) = rf.id.split_once('/') {
+    id = real_id.to_string();
+    token = Some(tok.to_string());
+}
+
+// Загрузка allowlist
+let allowlist_path = "/opt/rustdesk/outgoing_allowlist.txt";
+let allowlist = std::fs::read_to_string(allowlist_path)
+    .unwrap_or_default()
+    .lines()
+    .map(|x| x.trim().to_string())
+    .collect::<std::collections::HashSet<_>>();
+
+// Проверка allowlist или токена
+if !allowlist.contains(&id) {
+    let token_file = std::fs::read_to_string("/opt/rustdesk/temp_token.txt").unwrap_or_default();
+    let valid_tokens: std::collections::HashSet<_> = token_file.lines().map(|x| x.trim()).collect();
+    if let Some(tok) = token {
+        if !valid_tokens.contains(tok.as_str()) {
+            log::warn!("Invalid token attempt from ID: {}", id);
+            return true;
+        }
+        log::info!("Temporary token accepted for ID: {}", id);
+    } else {
+        log::warn!("Blocked outgoing connection from ID without token: {}", id);
+        return true;
+    }
+}
+rf.id = id; // Убираем токен из ID
+
                     // there maybe several attempt, so sink can be none
                     if let Some(sink) = sink.take() {
                         self.tcp_punch.lock().await.insert(try_into_v4(addr), sink);
