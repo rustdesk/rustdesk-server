@@ -427,19 +427,24 @@ async fn make_pair_(stream: impl StreamTrait, addr: SocketAddr, key: &str, limit
     if let Ok(Some(Ok(bytes))) = timeout(30_000, stream.recv()).await {
         if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(&bytes) {
             if let Some(rendezvous_message::Union::RequestRelay(rf)) = msg_in.union {
-                if !key.is_empty() && rf.licence_key != key {
-                    return;
-                }
-                 let allowlist = std::fs::read_to_string("/opt/outgoing_allowlist.txt")
+                // Загрузка allowlist по ID
+                let allowlist_path = "/opt/rustdesk/outgoing_allowlist.txt";
+                let allowlist = std::fs::read_to_string(allowlist_path)
                     .unwrap_or_default()
                     .lines()
                     .map(|x| x.trim().to_string())
                     .collect::<std::collections::HashSet<_>>();
 
-                log::info!("Loaded {} entries from outgoing_allowlist.txt", allowlist.len());
-                
-                if !allowlist.contains(&rf.uuid) {
-                    log::warn!("Blocked outgoing connection from unauthorized ID: {}", rf.uuid);
+                // Проверка: разрешено ли этому ID инициировать исходящее соединение
+                if !allowlist.contains(&rf.id) {
+                    log::warn!(
+                        "Blocked outgoing connection from unauthorized ID: {}",
+                        rf.id
+                    );
+                    return;
+                }
+
+                if !key.is_empty() && rf.licence_key != key {
                     return;
                 }
                 if !rf.uuid.is_empty() {
