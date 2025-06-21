@@ -75,6 +75,7 @@ struct Inner {
 
 #[derive(Clone)]
 pub struct RendezvousServer {
+    discovery_info: Arc<RwLock<HashMap<String, PeerInfo>>>,
     tcp_punch: Arc<Mutex<HashMap<SocketAddr, Sink>>>,
     pm: PeerMap,
     tx: Sender,
@@ -100,6 +101,7 @@ impl RendezvousServer {
         let pm = PeerMap::new().await?;
         log::info!("serial={}", serial);
         let rendezvous_servers = get_servers(&get_arg("rendezvous-servers"), "rendezvous-servers");
+        discovery_info: Arc::new(RwLock::new(HashMap::new())),
         log::info!("Listening on tcp/udp :{}", port);
         log::info!("Listening on tcp :{}, extra port for NAT test", nat_port);
         log::info!("Listening on websocket :{}", ws_port);
