@@ -71,14 +71,7 @@ message RegisterPk {
   bytes pk = 3;
   string old_id = 4;
   bool no_register_device = 5;
-  
-  string hostname = 10;
-  string local_ip = 11;
-  string os = 12;
-  string version = 13;
-  string platform = 14;
-  string cpu = 15;
-  
+
 }
 
 message RegisterPkResponse {
