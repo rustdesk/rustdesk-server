@@ -62,7 +62,10 @@ impl DerefMut for DynTcpStream {
     }
 }
 
-pub(crate) fn new_socket(addr: std::net::SocketAddr, reuse: bool) -> Result<TcpSocket, std::io::Error> {
+pub(crate) fn new_socket(
+    addr: std::net::SocketAddr,
+    reuse: bool,
+) -> Result<TcpSocket, std::io::Error> {
     let socket = match addr {
         std::net::SocketAddr::V4(..) => TcpSocket::new_v4()?,
         std::net::SocketAddr::V6(..) => TcpSocket::new_v6()?,
