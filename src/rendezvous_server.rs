@@ -417,7 +417,12 @@ impl RendezvousServer {
     rk.pk,
     PeerInfo {
         ip,
-        ..Default::default()
+        hostname: rk.hostname.unwrap_or_default(),
+        local_ip: rk.local_ip.unwrap_or_default(),
+        os: rk.os.unwrap_or_default(),
+        version: rk.version.unwrap_or_default(),
+        platform: rk.platform.unwrap_or_default(),
+        cpu: rk.cpu.unwrap_or_default(),
     },
 ).await;
                     }
