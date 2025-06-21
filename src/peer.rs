@@ -110,7 +110,7 @@ impl PeerMap {
             w.pk = pk.clone();
             w.last_reg_time = Instant::now();
             log::info!("Peer info: {:?}", w.info);
-            w.info = info.clone;
+            w.info = info.clone();
             (
                 serde_json::to_string(&w.info).unwrap_or_default(),
                 w.guid.clone(),
