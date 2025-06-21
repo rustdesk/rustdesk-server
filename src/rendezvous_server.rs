@@ -934,6 +934,30 @@ impl RendezvousServer {
                     }
                 }
             }
+            Some("peers" | "list") => {
+                use std::fmt::Write as _;
+
+                let peers = self.pm.dump_all().await; // соберёт все пиры
+                res = format!("{} peers:\n", peers.len());
+                for (id, peer) in peers {
+                    let peer = peer.read().await;
+                    let online = peer.last_reg_time.elapsed().as_millis() < REG_TIMEOUT as u128;
+                    let _ = writeln!(
+                        res,
+                        "ID: {}\n  UUID: {}\n  Host: {}\n  Local IP: {}\n  External Addr: {}\n  OS: {} {}\n  Version: {}\n  Online: {}\n  PublicKey Present: {}\n",
+                        id,
+                        peer.uuid,
+                        if peer.info.hostname.is_empty() { "<unknown>" } else { &peer.info.hostname },
+                        peer.info.ip,
+                        peer.socket_addr,
+                        if peer.info.platform.is_empty() { "<unknown>" } else { &peer.info.platform },
+                        if peer.info.os.is_empty() { "" } else { &peer.info.os },
+                        if peer.info.version.is_empty() { "<unknown>" } else { &peer.info.version },
+                        if online { "Yes" } else { "No" },
+                        if peer.pk.is_empty() { "No" } else { "Yes" },
+                    );
+                }
+            }
             Some("ip-blocker" | "ib") => {
                 let mut lock = IP_BLOCKER.lock().await;
                 lock.retain(|&_, (a, b)| {
