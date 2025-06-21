@@ -342,16 +342,13 @@ impl RendezvousServer {
     }
 
     let peer_info = PeerInfo {
-    id: client_id.clone(),
-    ip: socket.local_addr().unwrap().ip().to_string(),
-    local_ip: "127.0.0.1".to_string(),
-    hostname: whoami::hostname(),
-    os: whoami::distro(),
-    version: "10".to_string(),
-    platform: whoami::platform().to_string(),
-    cpu: whoami::arch().to_string(),
-    memory: "3.9GB".to_string(),
-};
+        hostname: pd.hostname.clone(),
+        os: pd.misc.clone(),        // временно misc как OS, если не передаётся os
+        platform: pd.platform.clone(),
+        cpu: String::new(),         // пусто, если cpu не приходит
+        version: String::new(),
+        ip: socket.ip().to_string(),
+    };
 
     self.discovery_info.write().await.insert(pd.id.clone(), peer_info.clone());
 
@@ -443,16 +440,13 @@ impl RendezvousServer {
     rk.uuid,
     rk.pk,
     PeerInfo {
-    id: client_id.clone(),
-    ip: socket.local_addr().unwrap().ip().to_string(),
-    local_ip: "127.0.0.1".to_string(),
-    hostname: whoami::hostname(),
-    os: whoami::distro(),
-    version: "10".to_string(),
-    platform: whoami::platform().to_string(),
-    cpu: whoami::arch().to_string(),
-    memory: "3.9GB".to_string(),
-},
+    ip,
+    hostname,
+    os,
+    version,
+    platform,
+    cpu,
+    },
 ).await;
                     }
                     let mut msg_out = RendezvousMessage::new();
@@ -1031,8 +1025,31 @@ rf.id = id; // Убираем токен из ID
                     let peer = peer.read().await;
                     let online = peer.last_reg_time.elapsed().as_millis() < REG_TIMEOUT as u128;
                     let _ = writeln!(
-                        res,
-                        "ID: {}\n  UUID: {}\n  Host: {}\n  Local IP: {}\n  External Addr: {}\n  OS: {} {}\n  Version: {}\n  Online: {}\n  PublicKey Present: {}\n",
+        res,
+        "ID: {}
+  IP: {}
+  Local IP: {}
+  Hostname: {}
+  OS: {}
+  Version: {}
+  Platform: {}
+  CPU: {}
+  Memory: {}
+  Online: {}
+  PublicKey Present: {}
+",
+        id,
+        peer.info.ip,
+        peer.info.local_ip,
+        if peer.info.hostname.is_empty() { "<unknown>" } else { &peer.info.hostname },
+        if peer.info.os.is_empty() { "<unknown>" } else { &peer.info.os },
+        if peer.info.version.is_empty() { "<unknown>" } else { &peer.info.version },
+        if peer.info.platform.is_empty() { "<unknown>" } else { &peer.info.platform },
+        if peer.info.cpu.is_empty() { "<unknown>" } else { &peer.info.cpu },
+        if peer.info.memory.is_empty() { "<unknown>" } else { &peer.info.memory },
+        if online { "Yes" } else { "No" },
+        if peer.pk.is_empty() { "No" } else { "Yes" },
+    )
                         id,
                         hex::encode(&peer.uuid),
                         if peer.info.hostname.is_empty() { "<unknown>" } else { &peer.info.hostname },
