@@ -15,7 +15,6 @@ use std::{
     time::Instant,
 };
 
-use hex;
 
 pub const IP_CHANGE_DUR: u64 = 180;
 pub const IP_CHANGE_DUR_X2: u64 = IP_CHANGE_DUR * 2;
