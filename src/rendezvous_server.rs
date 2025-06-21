@@ -337,10 +337,10 @@ impl RendezvousServer {
                     }
                     let id = rk.id;
                     let allowlist: Vec<String> = std::fs::read_to_string("allowlist.txt")
-                    .unwrap_or_default()
-                    .lines()
-                    .map(|x| x.trim().to_string())
-                    .collect();
+                        .unwrap_or_default()
+                        .lines()
+                        .map(|x| x.trim().to_string())
+                        .collect();
 
                 if !allowlist.contains(&id) {
                     log::warn!("Blocked ID not in allowlist: {}", id);
