@@ -137,6 +137,7 @@ impl RendezvousServer {
                 sk,
                 mask,
                 local_ip,
+                discovery_info: Arc::new(RwLock::new(HashMap::new())),
             }),
         };
         log::info!("mask: {:?}", rs.inner.mask);
@@ -346,7 +347,7 @@ impl RendezvousServer {
         platform: pd.platform.clone(),
         cpu: String::new(),         // пусто, если cpu не приходит
         version: String::new(),
-        ip: socket.ip().to_string(),
+        ip: socket.get_ref().local_addr().unwrap().ip().to_string(),
     };
 
     self.discovery_info.write().await.insert(pd.id.clone(), peer_info.clone());
@@ -438,7 +439,13 @@ impl RendezvousServer {
     addr,
     rk.uuid,
     rk.pk,
+    let hostname = whoami::hostname();
+    let os = whoami::distro();
+    let version = "10".to_string();
+    let platform = whoami::platform().to_string();
+    let cpu = whoami::arch().to_string();
     PeerInfo {
+        local_ip: "127.0.0.1".to_string(),
     ip,
     hostname,
     os,
