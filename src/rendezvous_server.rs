@@ -40,6 +40,8 @@ use std::{
     time::Instant,
 };
 
+use hex;
+
 #[derive(Clone, Debug)]
 enum Data {
     Msg(Box<RendezvousMessage>, SocketAddr),
@@ -946,7 +948,7 @@ impl RendezvousServer {
                         res,
                         "ID: {}\n  UUID: {}\n  Host: {}\n  Local IP: {}\n  External Addr: {}\n  OS: {} {}\n  Version: {}\n  Online: {}\n  PublicKey Present: {}\n",
                         id,
-                        peer.uuid,
+                        hex::encode(&peer.uuid),
                         if peer.info.hostname.is_empty() { "<unknown>" } else { &peer.info.hostname },
                         peer.info.ip,
                         peer.socket_addr,
