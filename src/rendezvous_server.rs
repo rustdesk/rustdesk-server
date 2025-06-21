@@ -335,6 +335,28 @@ impl RendezvousServer {
                         }
                     }
                 }
+                Some(rendezvous_message::Union::PeerDiscovery(pd)) => {
+    if pd.id.len() < 6 {
+        return Ok(());
+    }
+
+    let peer_info = PeerInfo {
+        hostname: pd.hostname.clone(),
+        os: pd.misc.clone(),        // временно misc как OS, если не передаётся os
+        platform: pd.platform.clone(),
+        cpu: String::new(),         // пусто, если cpu не приходит
+        local_ip: socket.ip().to_string(),
+        version: String::new(),
+        ip: socket.ip().to_string(),
+    };
+
+    self.discovery_info.write().await.insert(pd.id.clone(), peer_info.clone());
+
+    let peer = self.pm.get_or(&pd.id).await;
+    peer.write().await.info = peer_info;
+
+    return Ok(());
+}
                 Some(rendezvous_message::Union::RegisterPk(rk)) => {
                     if rk.uuid.is_empty() || rk.pk.is_empty() {
                         return Ok(());
