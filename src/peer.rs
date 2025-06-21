@@ -9,11 +9,10 @@ use hbb_common::{
 };
 use serde_derive::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     net::SocketAddr,
     sync::Arc,
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 use hex;
@@ -45,6 +44,8 @@ pub(crate) struct PeerInfo {
     pub(crate) os: String,
     #[serde(default)]
     pub(crate) version: String,
+    #[serde(default)]
+    pub(crate) platform: String,
 }
 
 pub(crate) struct Peer {
@@ -182,24 +183,8 @@ impl PeerMap {
         map.keys().cloned().collect()
     }
 
-    pub(crate) async fn dump_all(&self) -> Vec<(String, Peer)> {
+    pub(crate) async fn dump_all(&self) -> Vec<(String, LockPeer)> {
         let map = self.map.read().await;
-        let mut result = Vec::new();
-        for (id, peer_lock) in map.iter() {
-            let peer = peer_lock.read().await;
-            result.push((
-                id.clone(),
-                Peer {
-                    socket_addr: peer.socket_addr,
-                    last_reg_time: peer.last_reg_time,
-                    guid: peer.guid.clone(),
-                    uuid: peer.uuid.clone(),
-                    pk: peer.pk.clone(),
-                    info: peer.info.clone(),
-                    reg_pk: peer.reg_pk,
-                },
-            ));
-        }
-        result
+        map.iter().map(|(id, peer)| (id.clone(), peer.clone())).collect()
     }
 }
