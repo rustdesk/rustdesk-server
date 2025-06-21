@@ -43,7 +43,7 @@ jobs:
         uses: actions/checkout@v3
         with:
           submodules: recursive
-          
+          fetch-depth: 0 
       - name: Manually init submodules
         run: |
          git submodule update --init --recursive
@@ -88,7 +88,7 @@ jobs:
         uses: actions/checkout@v3
         with:
           submodules: recursive
-          
+          fetch-depth: 0 
       - name: Manually init submodules
         run: |
          git submodule update --init --recursive
@@ -236,7 +236,7 @@ jobs:
         uses: actions/checkout@v3
         with:
           submodules: recursive
-               
+          fetch-depth: 0      
       - name: Manually init submodules
         run: |
          git submodule update --init --recursive
@@ -363,7 +363,7 @@ jobs:
         uses: actions/checkout@v3
         with:
           submodules: recursive
-                  
+          fetch-depth: 0         
       - name: Manually init submodules
         run: |
          git submodule update --init --recursive
@@ -488,7 +488,7 @@ jobs:
         uses: actions/checkout@v3
         with:
           submodules: recursive
-          
+          fetch-depth: 0 
       - name: Manually init submodules
         run: |
          git submodule update --init --recursive
