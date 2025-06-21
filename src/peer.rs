@@ -99,7 +99,7 @@ impl PeerMap {
         addr: SocketAddr,
         uuid: Bytes,
         pk: Bytes,
-        ip: String,
+        info: PeerInfo,
     ) -> register_pk_response::Result {
         log::info!("update_pk {} {:?} {:?} {:?}", id, addr, uuid, pk);
         let (info_str, guid) = {
@@ -108,7 +108,8 @@ impl PeerMap {
             w.uuid = uuid.clone();
             w.pk = pk.clone();
             w.last_reg_time = Instant::now();
-            w.info.ip = ip;
+            log::info!("Peer info: {:?}", w.info);
+            w.info = info;
             (
                 serde_json::to_string(&w.info).unwrap_or_default(),
                 w.guid.clone(),
