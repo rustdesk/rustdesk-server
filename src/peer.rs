@@ -1,5 +1,4 @@
 use crate::common::*;
-use hex;
 use crate::database;
 use hbb_common::{
     bytes::Bytes,
@@ -10,11 +9,19 @@ use hbb_common::{
 };
 use serde_derive::{Deserialize, Serialize};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
+    collections::HashSet,
     net::SocketAddr,
     sync::Arc,
-    time::Instant,
+    time::{Duration, Instant},
 };
+
+use hex;
+
+pub const IP_CHANGE_DUR: u64 = 180;
+pub const IP_CHANGE_DUR_X2: u64 = IP_CHANGE_DUR * 2;
+pub const DAY_SECONDS: u64 = 3600 * 24;
+pub const IP_BLOCK_DUR: u64 = 60;
 
 type IpBlockMap = HashMap<String, ((u32, Instant), (HashSet<String>, Instant))>;
 type UserStatusMap = HashMap<Vec<u8>, Arc<(Option<Vec<u8>>, bool)>>;
@@ -26,11 +33,6 @@ lazy_static::lazy_static! {
     pub(crate) static ref IP_CHANGES: Mutex<IpChangesMap> = Default::default();
 }
 
-pub const IP_CHANGE_DUR: u64 = 180;
-pub const IP_CHANGE_DUR_X2: u64 = IP_CHANGE_DUR * 2;
-pub const DAY_SECONDS: u64 = 3600 * 24;
-pub const IP_BLOCK_DUR: u64 = 60;
-
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]
 pub(crate) struct PeerInfo {
     #[serde(default)]
@@ -40,9 +42,9 @@ pub(crate) struct PeerInfo {
     #[serde(default)]
     pub(crate) local_ip: String,
     #[serde(default)]
-    pub(crate) version: String,
-    #[serde(default)]
     pub(crate) os: String,
+    #[serde(default)]
+    pub(crate) version: String,
 }
 
 pub(crate) struct Peer {
@@ -79,7 +81,7 @@ pub(crate) struct PeerMap {
 
 impl PeerMap {
     pub(crate) async fn new() -> ResultType<Self> {
-        let db = std::env::var("DB_URL").unwrap_or_else(|_| "db_v2.sqlite3".to_owned());
+        let db = std::env::var("DB_URL").unwrap_or_else(|_| "./db_v2.sqlite3".to_string());
         log::info!("DB_URL={}", db);
         let pm = Self {
             map: Default::default(),
@@ -180,24 +182,23 @@ impl PeerMap {
         map.keys().cloned().collect()
     }
 
-    pub(crate) async fn dump_all(&self) -> Vec<String> {
+    pub(crate) async fn dump_all(&self) -> Vec<(String, Peer)> {
         let map = self.map.read().await;
         let mut result = Vec::new();
-        result.push(format!("{} peers:", map.len()));
-        for (id, peer) in map.iter() {
-            let peer = peer.read().await;
-            let line = format!(
-                "ID: {}\n  UUID: {}\n  Host: {}\n  Local IP: {}\n  External Addr: {}\n  OS: {}\n  Version: {}\n  Online: Yes\n  PublicKey Present: {}\n",
-                id,
-                hex::encode(&peer.uuid),
-                peer.info.hostname,
-                peer.info.local_ip,
-                peer.socket_addr,
-                peer.info.os,
-                peer.info.version,
-                !peer.pk.is_empty(),
-            );
-            result.push(line);
+        for (id, peer_lock) in map.iter() {
+            let peer = peer_lock.read().await;
+            result.push((
+                id.clone(),
+                Peer {
+                    socket_addr: peer.socket_addr,
+                    last_reg_time: peer.last_reg_time,
+                    guid: peer.guid.clone(),
+                    uuid: peer.uuid.clone(),
+                    pk: peer.pk.clone(),
+                    info: peer.info.clone(),
+                    reg_pk: peer.reg_pk,
+                },
+            ));
         }
         result
     }
