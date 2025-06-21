@@ -1,5 +1,6 @@
 use crate::common::*;
 use crate::peer::*;
+use tokio::sync::RwLock;
 use hbb_common::{
     allow_err, bail,
     bytes::{Bytes, BytesMut},
@@ -345,7 +346,6 @@ impl RendezvousServer {
         os: pd.misc.clone(),        // временно misc как OS, если не передаётся os
         platform: pd.platform.clone(),
         cpu: String::new(),         // пусто, если cpu не приходит
-        local_ip: socket.ip().to_string(),
         version: String::new(),
         ip: socket.ip().to_string(),
     };
@@ -442,7 +442,6 @@ impl RendezvousServer {
     PeerInfo {
     ip,
     hostname,
-    local_ip: rk.local_ip.unwrap_or_default(),
     os,
     version,
     platform,
@@ -526,7 +525,7 @@ impl RendezvousServer {
                 Some(rendezvous_message::Union::PeerDiscovery(pd)) => {
     let id = pd.id.clone();
     if id.len() < 6 {
-        return Ok(());
+        return true;
     }
     let peer = self.pm.get_or(&id).await;
     peer.write().await.info.hostname = pd.hostname;
