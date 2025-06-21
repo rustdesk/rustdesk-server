@@ -433,11 +433,6 @@ impl RendezvousServer {
                         }
                     }
                     if changed {
-                        let hostname = rk.hostname.unwrap_or_default();
-let platform = rk.platform.unwrap_or_default();
-let os = rk.os.unwrap_or_default();
-let version = rk.version.unwrap_or_default();
-let cpu = rk.cpu.unwrap_or_default();
                         self.pm.update_pk(
     id,
     peer,
