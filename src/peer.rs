@@ -1,4 +1,5 @@
 use crate::common::*;
+use hex;
 use crate::database;
 use hbb_common::{
     bytes::Bytes,
