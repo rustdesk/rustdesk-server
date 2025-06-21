@@ -57,8 +57,8 @@ pub use toml;
 pub use uuid;
 pub mod fingerprint;
 pub use flexi_logger;
-pub mod websocket;
 pub mod stream;
+pub mod websocket;
 pub use stream::Stream;
 pub use whoami;
 
