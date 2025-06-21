@@ -347,7 +347,7 @@ impl RendezvousServer {
         platform: pd.platform.clone(),
         cpu: String::new(),         // пусто, если cpu не приходит
         version: String::new(),
-        ip: socket.ip().to_string(),
+        ip: socket.get_ref().local_addr().unwrap().ip().to_string(),
     };
 
     self.discovery_info.write().await.insert(pd.id.clone(), peer_info.clone());
@@ -439,6 +439,13 @@ impl RendezvousServer {
     addr,
     rk.uuid,
     rk.pk,
+
+    let hostname = whoami::hostname();
+    let os = whoami::distro();
+    let version = "10".to_string();
+    let platform = whoami::platform().to_string();
+    let cpu = whoami::arch().to_string();
+
     PeerInfo {
     ip,
     hostname,
@@ -1024,18 +1031,17 @@ rf.id = id; // Убираем токен из ID
                 for (id, peer) in peers {
                     let peer = peer.read().await;
                     let online = peer.last_reg_time.elapsed().as_millis() < REG_TIMEOUT as u128;
-                    writeln!(
+                    let _ = writeln!(
                         res,
-                        "ID: {}\n  IP: {}\n  Local IP: {}\n  Hostname: {}\n  OS: {}\n  Version: {}\n  Platform: {}\n  CPU: {}\n  Memory: {}\n  Online: {}\n  PublicKey Present: {}\n",
+                        "ID: {}\n  UUID: {}\n  Host: {}\n  Local IP: {}\n  External Addr: {}\n  OS: {} {}\n  Version: {}\n  Online: {}\n  PublicKey Present: {}\n",
                         id,
-                        peer.info.ip,
-                        peer.info.local_ip,
+                        hex::encode(&peer.uuid),
                         if peer.info.hostname.is_empty() { "<unknown>" } else { &peer.info.hostname },
-                        if peer.info.os.is_empty() { "<unknown>" } else { &peer.info.os },
-                        if peer.info.version.is_empty() { "<unknown>" } else { &peer.info.version },
+                        peer.info.ip,
+                        peer.socket_addr,
                         if peer.info.platform.is_empty() { "<unknown>" } else { &peer.info.platform },
-                        if peer.info.cpu.is_empty() { "<unknown>" } else { &peer.info.cpu },
-                        if peer.info.memory.is_empty() { "<unknown>" } else { &peer.info.memory },
+                        if peer.info.os.is_empty() { "" } else { &peer.info.os },
+                        if peer.info.version.is_empty() { "<unknown>" } else { &peer.info.version },
                         if online { "Yes" } else { "No" },
                         if peer.pk.is_empty() { "No" } else { "Yes" },
                     );
