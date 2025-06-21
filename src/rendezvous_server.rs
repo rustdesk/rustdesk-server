@@ -336,6 +336,16 @@ impl RendezvousServer {
                         return Ok(());
                     }
                     let id = rk.id;
+                    let allowlist: Vec<String> = std::fs::read_to_string("allowlist.txt")
+                    .unwrap_or_default()
+                    .lines()
+                    .map(|x| x.trim().to_string())
+                    .collect();
+
+                if !allowlist.contains(&id) {
+                    log::warn!("Blocked ID not in allowlist: {}", id);
+                   return send_rk_res(socket, addr, UUID_MISMATCH).await;
+                    }
                     let ip = addr.ip().to_string();
                     if id.len() < 6 {
                         return send_rk_res(socket, addr, UUID_MISMATCH).await;
