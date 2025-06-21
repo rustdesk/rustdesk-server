@@ -45,6 +45,8 @@ pub(crate) struct PeerInfo {
     pub(crate) version: String,
     #[serde(default)]
     pub(crate) platform: String,
+    #[serde(default)]
+    pub(crate) cpu: String, // <--- добавляем CPU
 }
 
 pub(crate) struct Peer {
