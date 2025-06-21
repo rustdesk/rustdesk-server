@@ -449,17 +449,40 @@ if let Some(token) = token_opt {
         return;
     }
 } else {
-    // Если токена нет — применяем обычную политику (allowlist)
-    let allowlist_path = "/opt/rustdesk/outgoing_allowlist.txt";
-    let allowlist = std::fs::read_to_string(allowlist_path)
-        .unwrap_or_default()
-        .lines()
-        .map(|x| x.trim().to_string())
-        .collect::<std::collections::HashSet<_>>();
-    if !allowlist.contains(&rf.id) {
-        log::warn!("Blocked outgoing connection from ID without token: {}", rf.id);
-        return;
+let allowlist = std::fs::read_to_string("/opt/rustdesk/outgoing_allowlist.txt")
+    .unwrap_or_default()
+    .lines()
+    .map(|x| x.trim().to_string())
+    .collect::<std::collections::HashSet<_>>();
+
+let mut allow_by_list = allowlist.contains(&rf.id);
+
+// поддержка временного токена
+let token_path = "/opt/rustdesk/temp_token.txt";
+if !allow_by_list && rf.id.contains('/') {
+    let mut parts = rf.id.splitn(2, '/');
+    if let (Some(real_id), Some(token)) = (parts.next(), parts.next()) {
+        let token_file = std::fs::read_to_string(token_path).unwrap_or_default();
+        let valid_tokens: HashSet<_> = token_file
+            .lines()
+            .map(|x| x.trim())
+            .collect();
+        if valid_tokens.contains(token) {
+            allow_by_list = true;
+            log::info!("Temporary token accepted for ID: {}", real_id);
+        } else {
+            log::warn!("Invalid token attempt from ID: {}", real_id);
+        }
     }
+}
+
+if !allow_by_list {
+    log::warn!(
+        "Blocked outgoing connection from ID without token: {}",
+        rf.id
+    );
+    return;
+}
 }
 
                 if !key.is_empty() && rf.licence_key != key {
