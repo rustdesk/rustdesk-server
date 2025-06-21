@@ -8,16 +8,23 @@ use hbb_common::{
     ResultType,
 };
 use serde_derive::{Deserialize, Serialize};
-use std::{collections::HashMap, collections::HashSet, net::SocketAddr, sync::Arc, time::Instant};
+use std::{
+    collections::{HashMap, HashSet},
+    net::SocketAddr,
+    sync::Arc,
+    time::Instant,
+};
 
 type IpBlockMap = HashMap<String, ((u32, Instant), (HashSet<String>, Instant))>;
 type UserStatusMap = HashMap<Vec<u8>, Arc<(Option<Vec<u8>>, bool)>>;
 type IpChangesMap = HashMap<String, (Instant, HashMap<String, i32>)>;
+
 lazy_static::lazy_static! {
     pub(crate) static ref IP_BLOCKER: Mutex<IpBlockMap> = Default::default();
     pub(crate) static ref USER_STATUS: RwLock<UserStatusMap> = Default::default();
     pub(crate) static ref IP_CHANGES: Mutex<IpChangesMap> = Default::default();
 }
+
 pub const IP_CHANGE_DUR: u64 = 180;
 pub const IP_CHANGE_DUR_X2: u64 = IP_CHANGE_DUR * 2;
 pub const DAY_SECONDS: u64 = 3600 * 24;
@@ -27,6 +34,14 @@ pub const IP_BLOCK_DUR: u64 = 60;
 pub(crate) struct PeerInfo {
     #[serde(default)]
     pub(crate) ip: String,
+    #[serde(default)]
+    pub(crate) hostname: String,
+    #[serde(default)]
+    pub(crate) local_ip: String,
+    #[serde(default)]
+    pub(crate) version: String,
+    #[serde(default)]
+    pub(crate) os: String,
 }
 
 pub(crate) struct Peer {
@@ -35,10 +50,8 @@ pub(crate) struct Peer {
     pub(crate) guid: Vec<u8>,
     pub(crate) uuid: Bytes,
     pub(crate) pk: Bytes,
-    // pub(crate) user: Option<Vec<u8>>,
     pub(crate) info: PeerInfo,
-    // pub(crate) disabled: bool,
-    pub(crate) reg_pk: (u32, Instant), // how often register_pk
+    pub(crate) reg_pk: (u32, Instant),
 }
 
 impl Default for Peer {
@@ -50,8 +63,6 @@ impl Default for Peer {
             uuid: Bytes::new(),
             pk: Bytes::new(),
             info: Default::default(),
-            // user: None,
-            // disabled: false,
             reg_pk: (0, get_expired_time()),
         }
     }
@@ -67,20 +78,7 @@ pub(crate) struct PeerMap {
 
 impl PeerMap {
     pub(crate) async fn new() -> ResultType<Self> {
-        let db = std::env::var("DB_URL").unwrap_or({
-            let mut db = "db_v2.sqlite3".to_owned();
-            #[cfg(all(windows, not(debug_assertions)))]
-            {
-                if let Some(path) = hbb_common::config::Config::icon_path().parent() {
-                    db = format!("{}\\{}", path.to_str().unwrap_or("."), db);
-                }
-            }
-            #[cfg(not(windows))]
-            {
-                db = format!("./{db}");
-            }
-            db
-        });
+        let db = std::env::var("DB_URL").unwrap_or_else(|_| "db_v2.sqlite3".to_owned());
         log::info!("DB_URL={}", db);
         let pm = Self {
             map: Default::default(),
@@ -142,9 +140,7 @@ impl PeerMap {
                 guid: v.guid,
                 uuid: v.uuid.into(),
                 pk: v.pk.into(),
-                // user: v.user,
                 info: serde_json::from_str::<PeerInfo>(&v.info).unwrap_or_default(),
-                // disabled: v.status == Some(0),
                 ..Default::default()
             };
             let peer = Arc::new(RwLock::new(peer));
@@ -177,9 +173,31 @@ impl PeerMap {
     pub(crate) async fn is_in_memory(&self, id: &str) -> bool {
         self.map.read().await.contains_key(id)
     }
-    
+
     pub(crate) async fn get_all_ids(&self) -> Vec<String> {
         let map = self.map.read().await;
         map.keys().cloned().collect()
+    }
+
+    pub(crate) async fn dump_all(&self) -> Vec<String> {
+        let map = self.map.read().await;
+        let mut result = Vec::new();
+        result.push(format!("{} peers:", map.len()));
+        for (id, peer) in map.iter() {
+            let peer = peer.read().await;
+            let line = format!(
+                "ID: {}\n  UUID: {}\n  Host: {}\n  Local IP: {}\n  External Addr: {}\n  OS: {}\n  Version: {}\n  Online: Yes\n  PublicKey Present: {}\n",
+                id,
+                hex::encode(&peer.uuid),
+                peer.info.hostname,
+                peer.info.local_ip,
+                peer.socket_addr,
+                peer.info.os,
+                peer.info.version,
+                !peer.pk.is_empty(),
+            );
+            result.push(line);
+        }
+        result
     }
 }
