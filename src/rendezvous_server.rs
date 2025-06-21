@@ -102,7 +102,6 @@ impl RendezvousServer {
         let pm = PeerMap::new().await?;
         log::info!("serial={}", serial);
         let rendezvous_servers = get_servers(&get_arg("rendezvous-servers"), "rendezvous-servers");
-        let discovery_info: Arc::new(RwLock::new(HashMap::new())),
         log::info!("Listening on tcp/udp :{}", port);
         log::info!("Listening on tcp :{}, extra port for NAT test", nat_port);
         log::info!("Listening on websocket :{}", ws_port);
