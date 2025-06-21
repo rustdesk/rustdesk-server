@@ -1,6 +1,7 @@
-use clap::App;
 use hbb_common::{
-    allow_err, anyhow::{Context, Result}, get_version_number, log, tokio, ResultType
+    allow_err,
+    anyhow::{Context, Result},
+    get_version_number, log, tokio, ResultType,
 };
 use ini::Ini;
 use sodiumoxide::crypto::sign;
@@ -188,7 +189,6 @@ pub async fn listen_signal() -> Result<()> {
     let () = std::future::pending().await;
     unreachable!();
 }
-
 
 pub fn check_software_update() {
     const ONE_DAY_IN_SECONDS: u64 = 60 * 60 * 24;
