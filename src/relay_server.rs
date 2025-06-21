@@ -427,22 +427,40 @@ async fn make_pair_(stream: impl StreamTrait, addr: SocketAddr, key: &str, limit
     if let Ok(Some(Ok(bytes))) = timeout(30_000, stream.recv()).await {
         if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(&bytes) {
             if let Some(rendezvous_message::Union::RequestRelay(rf)) = msg_in.union {
-                // Загрузка allowlist по ID
-                let allowlist_path = "/opt/rustdesk/outgoing_allowlist.txt";
-                let allowlist = std::fs::read_to_string(allowlist_path)
-                    .unwrap_or_default()
-                    .lines()
-                    .map(|x| x.trim().to_string())
-                    .collect::<std::collections::HashSet<_>>();
+let allow_token_path = "/opt/rustdesk/temp_token.txt";
+let tokens = std::fs::read_to_string(allow_token_path)
+    .unwrap_or_default()
+    .lines()
+    .map(|x| x.trim().to_string())
+    .collect::<std::collections::HashSet<_>>();
 
-                // Проверка: разрешено ли этому ID инициировать исходящее соединение
-                if !allowlist.contains(&rf.id) {
-                    log::warn!(
-                        "Blocked outgoing connection from unauthorized ID: {}",
-                        rf.id
-                    );
-                    return;
-                }
+// Парсим id и токен из строки, если есть "/"
+let parts: Vec<&str> = rf.id.splitn(2, '/').collect();
+let (id, token_opt) = (parts[0], parts.get(1));
+
+// Если указан токен и он разрешён — пускаем
+if let Some(token) = token_opt {
+    if tokens.contains(*token) {
+        log::info!("Temporary token accepted: {}", token);
+        // Можно опционально удалить токен после использования
+        // или пометить как использованный
+    } else {
+        log::warn!("Invalid token used: {}", token);
+        return;
+    }
+} else {
+    // Если токена нет — применяем обычную политику (allowlist)
+    let allowlist_path = "/opt/rustdesk/outgoing_allowlist.txt";
+    let allowlist = std::fs::read_to_string(allowlist_path)
+        .unwrap_or_default()
+        .lines()
+        .map(|x| x.trim().to_string())
+        .collect::<std::collections::HashSet<_>>();
+    if !allowlist.contains(&rf.id) {
+        log::warn!("Blocked outgoing connection from ID without token: {}", rf.id);
+        return;
+    }
+}
 
                 if !key.is_empty() && rf.licence_key != key {
                     return;
