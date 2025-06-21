@@ -409,6 +409,11 @@ impl RendezvousServer {
                         }
                     }
                     if changed {
+                        let hostname = rk.hostname.unwrap_or_default();
+let platform = rk.platform.unwrap_or_default();
+let os = rk.os.unwrap_or_default();
+let version = rk.version.unwrap_or_default();
+let cpu = rk.cpu.unwrap_or_default();
                         self.pm.update_pk(
     id,
     peer,
@@ -416,13 +421,13 @@ impl RendezvousServer {
     rk.uuid,
     rk.pk,
     PeerInfo {
-        ip,
-        hostname: rk.hostname.unwrap_or_default(),
-        local_ip: rk.local_ip.unwrap_or_default(),
-        os: rk.os.unwrap_or_default(),
-        version: rk.version.unwrap_or_default(),
-        platform: rk.platform.unwrap_or_default(),
-        cpu: rk.cpu.unwrap_or_default(),
+    ip,
+    hostname,
+    local_ip: rk.local_ip.unwrap_or_default(),
+    os,
+    version,
+    platform,
+    cpu,
     },
 ).await;
                     }
@@ -499,6 +504,16 @@ impl RendezvousServer {
     ) -> bool {
         if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(bytes) {
             match msg_in.union {
+                Some(rendezvous_message::Union::PeerDiscovery(pd)) => {
+    let id = pd.id.clone();
+    if id.len() < 6 {
+        return Ok(());
+    }
+    let peer = self.pm.get_or(&id).await;
+    peer.write().await.info.hostname = pd.hostname;
+    peer.write().await.info.platform = pd.platform;
+    peer.write().await.info.os = pd.misc; // если os не приходит — можно временно сюда
+}
                 Some(rendezvous_message::Union::PunchHoleRequest(ph)) => {
                     // there maybe several attempt, so sink can be none
                     if let Some(sink) = sink.take() {
