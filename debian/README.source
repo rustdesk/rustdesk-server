@@ -1,3 +1,18 @@
 
 https://github.com/rustdesk/rustdesk-server/issues/569
 
+#
+# to be run after `cargo --release`
+# see build.yaml from github workflow for better understanding
+
+mkdir -p debian-build/bin/
+
+# mimick 'Download binaries'
+cp -p hbbr hbbs rustdesk-utils debian-build/bin/*
+
+# Build package
+chmod -v a+x debian-build/bin/*
+cp -vr debian systemd debian-build/
+cat debian/control.tpl | sed 's/{{ ARCH }}//' > debian-build/debian/control
+cd debian-build/
+debuild -i -us -uc -b
