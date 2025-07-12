@@ -1,5 +1,5 @@
 
-https://github.com/rustdesk/rustdesk-server/issues/569
+# https://github.com/rustdesk/rustdesk-server/issues/569
 
 #
 # to be run after `cargo --release`
@@ -8,11 +8,16 @@ https://github.com/rustdesk/rustdesk-server/issues/569
 mkdir -p debian-build/bin/
 
 # mimick 'Download binaries'
-cp -p hbbr hbbs rustdesk-utils debian-build/bin/*
+cp -p \
+   target/release/hbbr \
+   target/release/hbbs \
+   target/release/rustdesk-utils \
+debian-build/bin/
+
 
 # Build package
 chmod -v a+x debian-build/bin/*
 cp -vr debian systemd debian-build/
 cat debian/control.tpl | sed 's/{{ ARCH }}//' > debian-build/debian/control
 cd debian-build/
-debuild -i -us -uc -b
+debuild -i -us -uc
