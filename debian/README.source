@@ -1,11 +1,13 @@
 
 # https://github.com/rustdesk/rustdesk-server/issues/569
 
+VERSION=$(dpkg-parsechangelog -S Version | awk -F- '{print $1}')
+git archive HEAD \
+   --prefix=rustdesk-server-${VERSION} \
+   --output=../rustdesk-server_${VERSION}.orig.tar.bz2
 #
 # to be run after `cargo --release`
 # see build.yaml from github workflow for better understanding
-
-echo git archive -o ../mvp.tar HEAD
 
 mkdir -p debian-build/bin/
 
