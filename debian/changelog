@@ -15,7 +15,7 @@ rustdesk-server (1.1.12) UNRELEASED; urgency=medium
   * WS real ip
   * Bump s6-overlay to v3.2.0.0 and fix env warnings
 
- -- rustdesk <info@rustdesk.com>  Mon Oct 7 16:21:36 2024 +0800
+ -- rustdesk <info@rustdesk.com>  Mon, 7 Oct 2024 16:21:36 +0800
 
 rustdesk-server (1.1.11-1) UNRELEASED; urgency=medium
 
