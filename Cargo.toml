@@ -51,6 +51,7 @@ ipnetwork = "0.20"
 local-ip-address = "0.5.1"
 dns-lookup = "1.0.8"
 ping = "0.4.0"
+flate2 = "1.0"
 
 [target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
 # https://github.com/rustdesk/rustdesk-server-pro/issues/189, using native-tls for better tls support

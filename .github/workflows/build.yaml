@@ -26,7 +26,7 @@ jobs:
   build:
 
     name: Build - ${{ matrix.job.name }}
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
@@ -47,7 +47,7 @@ jobs:
       - name: Install toolchain
         uses: actions-rs/toolchain@v1
         with:
-          toolchain: "1.81"
+          toolchain: "1.88"
           override: true
           default: true
           components: rustfmt
@@ -88,7 +88,7 @@ jobs:
       - name: Install toolchain
         uses: actions-rs/toolchain@v1
         with:
-          toolchain: "1.81"
+          toolchain: "1.88"
           override: true
           default: true
           components: rustfmt
@@ -172,7 +172,7 @@ jobs:
     needs: 
       - build
       - build-win
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
@@ -414,8 +414,8 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v2
         with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_PASSWORD }}
 
       - name: Get git tag
         id: vars
