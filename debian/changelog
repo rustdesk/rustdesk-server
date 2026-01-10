@@ -1,3 +1,13 @@
+rustdesk-server (1.1.15) UNRELEASED; urgency=medium
+
+  * Fix: 127.0.0.1 is not loopback (#515)
+  * Higher default bandwidth
+  * Define the HOME env to allow running rootless (#612)
+  * Add option to log (failed) authentication attempts to enable the usage of tools like fail2ban and crowdsec (#435)
+  * Connection log query
+ 
+ -- rustdesk <info@rustdesk.com>  Sat, 10 Jan 2026 16:04:19 +0800
+
 rustdesk-server (1.1.14) UNRELEASED; urgency=medium
 
   * Fix windows crash
