@@ -4,8 +4,8 @@ name: build
 # please setup some secrets before running this workflow:
 # DOCKER_IMAGE should be the target image name on docker hub (e.g. "rustdesk/rustdesk-server-s6" )
 # DOCKER_IMAGE_CLASSIC should be the target image name on docker hub for the old build (e.g. "rustdesk/rustdesk-server" )
-# DOCKER_USERNAME is the username you normally use to login at https://hub.docker.com/
-# DOCKER_PASSWORD is a token you should create under "account settings / security" with read/write access
+# DOCKER_HUB_USERNAME is the username you normally use to login at https://hub.docker.com/
+# DOCKER_HUB_PASSWORD is a token you should create under "account settings / security" with read/write access
 
 on:
   workflow_dispatch:
@@ -248,8 +248,8 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v2
         with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_PASSWORD }}
         
       - name: Extract metadata (tags, labels) for Docker
         id: meta
@@ -293,8 +293,8 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v2
         with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_PASSWORD }}
 
       - name: Get git tag
         id: vars
@@ -371,8 +371,8 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v2
         with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_PASSWORD }}
         
       - name: Extract metadata (tags, labels) for Docker
         id: meta
