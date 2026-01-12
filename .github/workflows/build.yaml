@@ -23,8 +23,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
   LATEST_TAG: latest
-  GHCR_IMAGE: ghcr.io/${{ github.repository_owner }}/rustdesk-server-s6
-  GHCR_IMAGE_CLASSIC: ghcr.io/${{ github.repository_owner }}/rustdesk-server
+  GHCR_IMAGE: ghcr.io/rustdesk/rustdesk-server-s6
+  GHCR_IMAGE_CLASSIC: ghcr.io/rustdesk/rustdesk-server
   
 jobs:
 
@@ -262,7 +262,7 @@ jobs:
         uses: docker/login-action@v2
         with:
           registry: ghcr.io
-          username: ${{ github.actor }}
+          username: rustdesk
           password: ${{ secrets.GITHUB_TOKEN }}
         
       - name: Extract metadata (tags, labels) for Docker
@@ -396,7 +396,7 @@ jobs:
         uses: docker/login-action@v2
         with:
           registry: ghcr.io
-          username: ${{ github.actor }}
+          username: rustdesk
           password: ${{ secrets.GITHUB_TOKEN }}
         
       - name: Extract metadata (tags, labels) for Docker
