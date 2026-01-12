@@ -1050,15 +1050,12 @@ impl RendezvousServer {
             Some("punch-requests" | "pr") => {
                 use std::fmt::Write as _;
                 let mut lock = PUNCH_REQS.lock().await;
-                // retain only recent (optional cleanup older than a day)
-                lock.retain(|e| e.tm.elapsed().as_secs() < 24*3600);
                 let arg = fds.next();
                 if let Some("-") = arg { lock.clear(); }
                 else {
                     let mut start = arg.and_then(|x| x.parse::<usize>().ok()).unwrap_or(0);
                     let mut page_size = fds.next().and_then(|x| x.parse::<usize>().ok()).unwrap_or(10);
                     if page_size == 0 { page_size = 10; }
-                    if start >= lock.len() { start = 0; }
                     for (_, e) in lock.iter().enumerate().skip(start).take(page_size) {
                         let age = e.tm.elapsed();
                         let event_system = std::time::SystemTime::now() - age;
