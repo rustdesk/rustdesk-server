@@ -29,6 +29,13 @@ pub(crate) struct PeerInfo {
     pub(crate) ip: String,
 }
 
+#[derive(Debug, Default, Serialize, Deserialize, Clone)]
+pub(crate) struct PeerRuntimeStatus {
+    pub(crate) online: bool,
+    pub(crate) last_seen_secs: u64,
+    pub(crate) ip: String,
+}
+
 pub(crate) struct Peer {
     pub(crate) socket_addr: SocketAddr,
     pub(crate) last_reg_time: Instant,
@@ -176,5 +183,29 @@ impl PeerMap {
     #[inline]
     pub(crate) async fn is_in_memory(&self, id: &str) -> bool {
         self.map.read().await.contains_key(id)
+    }
+
+    pub(crate) async fn get_runtime_status(&self) -> HashMap<String, PeerRuntimeStatus> {
+        let snapshot: Vec<(String, LockPeer)> = self
+            .map
+            .read()
+            .await
+            .iter()
+            .map(|(id, peer)| (id.clone(), peer.clone()))
+            .collect();
+        let mut out = HashMap::with_capacity(snapshot.len());
+        for (id, peer) in snapshot {
+            let p = peer.read().await;
+            let elapsed = p.last_reg_time.elapsed().as_secs();
+            out.insert(
+                id,
+                PeerRuntimeStatus {
+                    online: elapsed <= 70,
+                    last_seen_secs: elapsed,
+                    ip: p.info.ip.clone(),
+                },
+            );
+        }
+        out
     }
 }

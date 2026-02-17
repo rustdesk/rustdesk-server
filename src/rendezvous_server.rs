@@ -66,8 +66,37 @@ use once_cell::sync::Lazy;
 use tokio::sync::Mutex as TokioMutex; // differentiate if needed
 #[derive(Clone)]
 struct PunchReqEntry { tm: Instant, from_ip: String, to_ip: String, to_id: String }
+#[derive(Clone, Debug, serde::Serialize)]
+pub(crate) struct PunchReqAudit {
+    pub(crate) timestamp: String,
+    pub(crate) from_ip: String,
+    pub(crate) to_ip: String,
+    pub(crate) to_id: String,
+}
 static PUNCH_REQS: Lazy<TokioMutex<Vec<PunchReqEntry>>> = Lazy::new(|| TokioMutex::new(Vec::new()));
 const PUNCH_REQ_DEDUPE_SEC: u64 = 60;
+
+pub(crate) async fn list_punch_req_audits(offset: usize, limit: usize) -> Vec<PunchReqAudit> {
+    let lock = PUNCH_REQS.lock().await;
+    let now = std::time::SystemTime::now();
+    let cap = limit.max(1).min(200);
+    lock.iter()
+        .rev()
+        .skip(offset)
+        .take(cap)
+        .map(|e| {
+            let event_system = now - e.tm.elapsed();
+            let timestamp = chrono::DateTime::<chrono::Utc>::from(event_system)
+                .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+            PunchReqAudit {
+                timestamp,
+                from_ip: e.from_ip.clone(),
+                to_ip: e.to_ip.clone(),
+                to_id: e.to_id.clone(),
+            }
+        })
+        .collect()
+}
 
 #[derive(Clone)]
 struct Inner {
@@ -147,6 +176,10 @@ impl RendezvousServer {
         log::info!("local-ip: {:?}", rs.inner.local_ip);
         std::env::set_var("PORT_FOR_API", port.to_string());
         rs.parse_relay_servers(&get_arg("relay-servers"));
+        let api_port = get_arg_or("api-port", (port - 2).to_string())
+            .parse::<i32>()
+            .unwrap_or(port - 2);
+        crate::admin_http::spawn_admin_http(rs.pm.clone(), api_port);
         let mut listener = create_tcp_listener(port).await?;
         let mut listener2 = create_tcp_listener(nat_port).await?;
         let mut listener3 = create_tcp_listener(ws_port).await?;
@@ -1369,3 +1402,4 @@ async fn create_tcp_listener(port: i32) -> ResultType<TcpListener> {
     log::debug!("listen on tcp {:?}", s.local_addr());
     Ok(s)
 }
+
