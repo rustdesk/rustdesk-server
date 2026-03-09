@@ -1,0 +1,29 @@
+name: codex
+
+on:
+  workflow_dispatch:
+    inputs:
+      prompt:
+        description: "Tarea para Codex"
+        required: true
+        type: string
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  codex:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Run Codex
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          prompt: ${{ github.event.inputs.prompt || 'Review this PR and suggest fixes focused on rustdesk-server hbbs changes.' }}
