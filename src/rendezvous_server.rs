@@ -33,7 +33,8 @@ use hbb_common::{
 use ipnetwork::Ipv4Network;
 use sodiumoxide::crypto::sign;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
+    fs,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     sync::Arc,
@@ -88,6 +89,7 @@ pub struct RendezvousServer {
     relay_servers0: Arc<RelayServers>,
     rendezvous_servers: Arc<Vec<String>>,
     inner: Arc<Inner>,
+    outbound_whitelist: HashSet<String>,
 }
 
 enum LoopFailure {
@@ -127,6 +129,19 @@ impl RendezvousServer {
                     .unwrap_or_default(),
             )
         };
+
+        let outbound_whitelist: HashSet<String> = fs::read_to_string("whitelist.txt")
+            .unwrap_or_default()
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .collect();
+
+        log::info!(
+            "Loaded outbound whitelist entries: {}",
+            outbound_whitelist.len()
+        );
+
         let mut rs = Self {
             tcp_punch: Arc::new(Mutex::new(HashMap::new())),
             pm,
@@ -142,6 +157,7 @@ impl RendezvousServer {
                 mask,
                 local_ip,
             }),
+            outbound_whitelist,
         };
         log::info!("mask: {:?}", rs.inner.mask);
         log::info!("local-ip: {:?}", rs.inner.local_ip);
@@ -687,6 +703,7 @@ impl RendezvousServer {
         ws: bool,
     ) -> ResultType<(RendezvousMessage, Option<SocketAddr>)> {
         let mut ph = ph;
+
         if !key.is_empty() && ph.licence_key != key {
             log::warn!("Authentication failed from {} for peer {} - invalid key", addr, ph.id);
             let mut msg_out = RendezvousMessage::new();
@@ -696,6 +713,38 @@ impl RendezvousServer {
             });
             return Ok((msg_out, None));
         }
+
+        let source_id = self.pm.get_id_by_socket_addr(addr).await;
+        match source_id {
+            Some(src_id) => {
+                if !self.outbound_whitelist.contains(&src_id) {
+                    log::warn!(
+                        "Outbound connection rejected by whitelist: source_id={} remote_addr={}",
+                        src_id,
+                        addr
+                    );
+                    let mut msg_out = RendezvousMessage::new();
+                    msg_out.set_punch_hole_response(PunchHoleResponse {
+                        failure: punch_hole_response::Failure::ID_NOT_EXIST.into(),
+                        ..Default::default()
+                    });
+                    return Ok((msg_out, None));
+                }
+            }
+            None => {
+                log::warn!(
+                    "Outbound connection rejected: unable to resolve source_id for remote_addr={}",
+                    addr
+                );
+                let mut msg_out = RendezvousMessage::new();
+                msg_out.set_punch_hole_response(PunchHoleResponse {
+                    failure: punch_hole_response::Failure::ID_NOT_EXIST.into(),
+                    ..Default::default()
+                });
+                return Ok((msg_out, None));
+            }
+        }
+
         let id = ph.id;
         // punch hole request from A, relay to B,
         // check if in same intranet first,
@@ -723,7 +772,7 @@ impl RendezvousServer {
                 let to_id_clone = id.clone();
                 let mut lock = PUNCH_REQS.lock().await;
                 let mut dup = false;
-                for e in lock.iter().rev().take(30) { // only check recent tail subset for speed
+                for e in lock.iter().rev().take(30) {
                     if e.from_ip == from_ip && e.to_id == to_id_clone {
                         if e.tm.elapsed().as_secs() < PUNCH_REQ_DEDUPE_SEC { dup = true; }
                         break;
@@ -1053,7 +1102,7 @@ impl RendezvousServer {
                 let arg = fds.next();
                 if let Some("-") = arg { lock.clear(); }
                 else {
-                    let mut start = arg.and_then(|x| x.parse::<usize>().ok()).unwrap_or(0);
+                    let start = arg.and_then(|x| x.parse::<usize>().ok()).unwrap_or(0);
                     let mut page_size = fds.next().and_then(|x| x.parse::<usize>().ok()).unwrap_or(10);
                     if page_size == 0 { page_size = 10; }
                     for (_, e) in lock.iter().enumerate().skip(start).take(page_size) {
