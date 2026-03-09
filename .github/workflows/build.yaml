@@ -13,7 +13,10 @@ permissions:
 
 on:
   workflow_dispatch:
-   push:
+  pull_request:
+    branches:
+      - master
+  push:
     branches:
       - master
     tags:
