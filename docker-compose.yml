@@ -1,36 +1,25 @@
-version: '3'
-
-networks:
-  rustdesk-net:
-    external: false
+﻿version: "3.9"
 
 services:
-  hbbs:
-    container_name: hbbs
-    ports:
-      - 21115:21115
-      - 21116:21116
-      - 21116:21116/udp
-      - 21118:21118
-    image: rustdesk/rustdesk-server:latest
-    command: hbbs -r rustdesk.example.com:21117
-    volumes:
-      - ./data:/root
-    networks:
-      - rustdesk-net
-    depends_on:
-      - hbbr
+  rustdesk-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rustdesk-server
     restart: unless-stopped
-
-  hbbr:
-    container_name: hbbr
-    ports:
-      - 21117:21117
-      - 21119:21119
-    image: rustdesk/rustdesk-server:latest
-    command: hbbr
+    environment:
+      HBBS_PORT: "21116"
+      HBBR_PORT: "21117"
+      API_PORT: "21114"
+      RELAY: "127.0.0.1:21117"
+      ENCRYPTED_ONLY: "0"
+      ADMIN_USERNAME: "admin"
+      ADMIN_PASSWORD: "admin123456"
+      ADMIN_JWT_SECRET: "change-this-secret"
     volumes:
-      - ./data:/root
-    networks:
-      - rustdesk-net
-    restart: unless-stopped
+      - ./data:/data
+    ports:
+      - "21114:21114/tcp"
+      - "21116:21116/tcp"
+      - "21116:21116/udp"
+      - "21117:21117/tcp"
