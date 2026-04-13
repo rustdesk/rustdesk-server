@@ -2,14 +2,40 @@ use clap::App;
 use hbb_common::{
     allow_err, anyhow::{Context, Result}, get_version_number, log, tokio, ResultType
 };
+use http::HeaderMap;
 use ini::Ini;
+use once_cell::sync::Lazy;
 use sodiumoxide::crypto::sign;
 use std::{
+    collections::HashMap,
     io::prelude::*,
     io::Read,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
+    sync::Mutex,
     time::{Instant, SystemTime},
 };
+
+const TRUST_PROXY_HEADERS_ENV: &str = "TRUST_PROXY_HEADERS";
+const CONN_RATE_WINDOW_SECONDS_ENV: &str = "CONNECTION_RATE_WINDOW_SECONDS";
+const MAX_CONN_PER_IP_PER_WINDOW_ENV: &str = "MAX_CONNECTIONS_PER_IP_PER_WINDOW";
+const UDP_RATE_WINDOW_SECONDS_ENV: &str = "UDP_RATE_WINDOW_SECONDS";
+const MAX_UDP_PACKETS_PER_IP_PER_WINDOW_ENV: &str = "MAX_UDP_PACKETS_PER_IP_PER_WINDOW";
+const DEFAULT_CONN_RATE_WINDOW_SECONDS: usize = 60;
+const DEFAULT_MAX_CONN_PER_IP_PER_WINDOW: usize = 120;
+const DEFAULT_UDP_RATE_WINDOW_SECONDS: usize = 60;
+const DEFAULT_MAX_UDP_PACKETS_PER_IP_PER_WINDOW: usize = 240;
+
+#[derive(Clone, Copy)]
+struct ConnectionRateEntry {
+    window_started_at: Instant,
+    last_seen_at: Instant,
+    count: usize,
+}
+
+static CONNECTION_RATE_LIMITS: Lazy<Mutex<HashMap<String, ConnectionRateEntry>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+static PROTECTION_STATS: Lazy<Mutex<HashMap<&'static str, u64>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
 
 #[allow(dead_code)]
 pub(crate) fn get_expired_time() -> Instant {
@@ -93,6 +119,175 @@ pub fn get_arg(name: &str) -> String {
 #[inline]
 pub fn get_arg_or(name: &str, default: String) -> String {
     std::env::var(arg_name(name)).unwrap_or(default)
+}
+
+#[allow(dead_code)]
+pub fn trust_proxy_headers() -> bool {
+    matches!(
+        std::env::var(TRUST_PROXY_HEADERS_ENV)
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase()
+            .as_str(),
+        "y" | "yes" | "true" | "1"
+    )
+}
+
+fn env_usize_or(name: &str, default: usize) -> usize {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(default)
+}
+
+fn conn_rate_window_seconds() -> usize {
+    env_usize_or(
+        CONN_RATE_WINDOW_SECONDS_ENV,
+        DEFAULT_CONN_RATE_WINDOW_SECONDS,
+    )
+}
+
+fn max_conn_per_ip_per_window() -> usize {
+    env_usize_or(
+        MAX_CONN_PER_IP_PER_WINDOW_ENV,
+        DEFAULT_MAX_CONN_PER_IP_PER_WINDOW,
+    )
+}
+
+fn udp_rate_window_seconds() -> usize {
+    env_usize_or(
+        UDP_RATE_WINDOW_SECONDS_ENV,
+        DEFAULT_UDP_RATE_WINDOW_SECONDS,
+    )
+}
+
+fn max_udp_packets_per_ip_per_window() -> usize {
+    env_usize_or(
+        MAX_UDP_PACKETS_PER_IP_PER_WINDOW_ENV,
+        DEFAULT_MAX_UDP_PACKETS_PER_IP_PER_WINDOW,
+    )
+}
+
+fn prune_connection_rate_limits(
+    entries: &mut HashMap<String, ConnectionRateEntry>,
+    now: Instant,
+    window_secs: usize,
+) {
+    entries.retain(|_, entry| {
+        now.duration_since(entry.last_seen_at).as_secs() < (window_secs * 2) as u64
+    });
+}
+
+#[allow(dead_code)]
+fn allow_ip_activity(scope: &str, addr: SocketAddr, window_secs: usize, max_events: usize) -> bool {
+    if addr.ip().is_loopback() {
+        return true;
+    }
+    let now = Instant::now();
+    let mut lock = CONNECTION_RATE_LIMITS.lock().unwrap();
+    prune_connection_rate_limits(&mut lock, now, window_secs);
+    let key = format!("{scope}|{}", addr.ip());
+    let entry = lock.entry(key).or_insert(ConnectionRateEntry {
+        window_started_at: now,
+        last_seen_at: now,
+        count: 0,
+    });
+    if now.duration_since(entry.window_started_at).as_secs() >= window_secs as u64 {
+        entry.window_started_at = now;
+        entry.count = 0;
+    }
+    entry.last_seen_at = now;
+    if entry.count >= max_events {
+        return false;
+    }
+    entry.count += 1;
+    true
+}
+
+#[allow(dead_code)]
+pub fn allow_connection_from_ip(scope: &str, addr: SocketAddr) -> bool {
+    let allowed = allow_ip_activity(
+        scope,
+        addr,
+        conn_rate_window_seconds(),
+        max_conn_per_ip_per_window(),
+    );
+    if !allowed {
+        record_protection_event("connection_rate_limit_hits");
+    }
+    allowed
+}
+
+#[allow(dead_code)]
+pub fn allow_udp_packet_from_ip(scope: &str, addr: SocketAddr) -> bool {
+    let allowed = allow_ip_activity(
+        scope,
+        addr,
+        udp_rate_window_seconds(),
+        max_udp_packets_per_ip_per_window(),
+    );
+    if !allowed {
+        record_protection_event("udp_rate_limit_hits");
+    }
+    allowed
+}
+
+#[allow(dead_code)]
+pub fn record_protection_event(name: &'static str) {
+    let mut lock = PROTECTION_STATS.lock().unwrap();
+    *lock.entry(name).or_insert(0) += 1;
+}
+
+#[allow(dead_code)]
+pub fn protection_stats_snapshot() -> Vec<(String, u64)> {
+    let mut entries: Vec<(String, u64)> = PROTECTION_STATS
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(name, value)| ((*name).to_owned(), *value))
+        .collect();
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    entries
+}
+
+#[allow(dead_code)]
+pub fn protection_limits_summary() -> Vec<String> {
+    vec![
+        format!(
+            "connections_per_ip_per_window={}/{}s",
+            max_conn_per_ip_per_window(),
+            conn_rate_window_seconds()
+        ),
+        format!(
+            "udp_packets_per_ip_per_window={}/{}s",
+            max_udp_packets_per_ip_per_window(),
+            udp_rate_window_seconds()
+        ),
+        format!("trust_proxy_headers={}", trust_proxy_headers()),
+    ]
+}
+
+#[allow(dead_code)]
+pub fn apply_trusted_proxy_addr(addr: SocketAddr, headers: &HeaderMap) -> SocketAddr {
+    if !trust_proxy_headers() {
+        return addr;
+    }
+    let forwarded_ip = headers
+        .get("X-Real-IP")
+        .or_else(|| headers.get("X-Forwarded-For"))
+        .and_then(|header_value| header_value.to_str().ok())
+        .and_then(parse_forwarded_ip);
+    forwarded_ip.map(|ip| SocketAddr::new(ip, 0)).unwrap_or(addr)
+}
+
+fn parse_forwarded_ip(value: &str) -> Option<IpAddr> {
+    value
+        .split(',')
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|value| value.parse::<IpAddr>().ok())
 }
 
 #[allow(dead_code)]
@@ -215,4 +410,116 @@ async fn check_software_update_() -> hbb_common::ResultType<()> {
        log::info!("new version is available: {}", latest_release_version);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        allow_connection_from_ip, allow_udp_packet_from_ip, apply_trusted_proxy_addr,
+        conn_rate_window_seconds, max_conn_per_ip_per_window, max_udp_packets_per_ip_per_window,
+        protection_limits_summary, protection_stats_snapshot, record_protection_event,
+        trust_proxy_headers, udp_rate_window_seconds, CONNECTION_RATE_LIMITS,
+        CONN_RATE_WINDOW_SECONDS_ENV, MAX_CONN_PER_IP_PER_WINDOW_ENV,
+        MAX_UDP_PACKETS_PER_IP_PER_WINDOW_ENV, PROTECTION_STATS, TRUST_PROXY_HEADERS_ENV,
+        UDP_RATE_WINDOW_SECONDS_ENV,
+    };
+    use http::HeaderMap;
+    use std::{
+        net::{IpAddr, Ipv4Addr, SocketAddr},
+        sync::Mutex,
+    };
+
+    static TEST_PROXY_HEADERS_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn trusted_proxy_headers_are_disabled_by_default() {
+        let _guard = TEST_PROXY_HEADERS_LOCK.lock().unwrap();
+        std::env::remove_var(TRUST_PROXY_HEADERS_ENV);
+        assert!(!trust_proxy_headers());
+    }
+
+    #[test]
+    fn apply_trusted_proxy_addr_only_changes_addr_when_enabled() {
+        let _guard = TEST_PROXY_HEADERS_LOCK.lock().unwrap();
+        let original = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 4)), 21117);
+        let mut headers = HeaderMap::new();
+        headers.insert("X-Forwarded-For", "198.51.100.10, 10.0.0.1".parse().unwrap());
+
+        std::env::remove_var(TRUST_PROXY_HEADERS_ENV);
+        assert_eq!(apply_trusted_proxy_addr(original, &headers), original);
+
+        std::env::set_var(TRUST_PROXY_HEADERS_ENV, "Y");
+        assert_eq!(
+            apply_trusted_proxy_addr(original, &headers),
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(198, 51, 100, 10)), 0)
+        );
+
+        std::env::remove_var(TRUST_PROXY_HEADERS_ENV);
+    }
+
+    #[test]
+    fn connection_rate_limiter_enforces_per_ip_window_and_exempts_loopback() {
+        let _guard = TEST_PROXY_HEADERS_LOCK.lock().unwrap();
+        CONNECTION_RATE_LIMITS.lock().unwrap().clear();
+        PROTECTION_STATS.lock().unwrap().clear();
+        std::env::set_var(MAX_CONN_PER_IP_PER_WINDOW_ENV, "2");
+        std::env::set_var(CONN_RATE_WINDOW_SECONDS_ENV, "60");
+        std::env::set_var(MAX_UDP_PACKETS_PER_IP_PER_WINDOW_ENV, "3");
+        std::env::set_var(UDP_RATE_WINDOW_SECONDS_ENV, "60");
+
+        let remote = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(198, 51, 100, 10)), 21117);
+        assert!(allow_connection_from_ip("hbbs-main", remote));
+        assert!(allow_connection_from_ip("hbbs-main", remote));
+        assert!(!allow_connection_from_ip("hbbs-main", remote));
+        assert!(allow_udp_packet_from_ip("hbbs-udp", remote));
+        assert!(allow_udp_packet_from_ip("hbbs-udp", remote));
+        assert!(allow_udp_packet_from_ip("hbbs-udp", remote));
+        assert!(!allow_udp_packet_from_ip("hbbs-udp", remote));
+
+        let loopback = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 21117);
+        assert!(allow_connection_from_ip("hbbs-main", loopback));
+        assert!(allow_connection_from_ip("hbbs-main", loopback));
+        assert!(allow_connection_from_ip("hbbs-main", loopback));
+        assert_eq!(
+            protection_stats_snapshot(),
+            vec![
+                ("connection_rate_limit_hits".to_owned(), 1),
+                ("udp_rate_limit_hits".to_owned(), 1),
+            ]
+        );
+        record_protection_event("peer_records_pruned");
+        assert_eq!(
+            protection_stats_snapshot(),
+            vec![
+                ("connection_rate_limit_hits".to_owned(), 1),
+                ("peer_records_pruned".to_owned(), 1),
+                ("udp_rate_limit_hits".to_owned(), 1),
+            ]
+        );
+
+        std::env::remove_var(MAX_CONN_PER_IP_PER_WINDOW_ENV);
+        std::env::remove_var(CONN_RATE_WINDOW_SECONDS_ENV);
+        std::env::remove_var(MAX_UDP_PACKETS_PER_IP_PER_WINDOW_ENV);
+        std::env::remove_var(UDP_RATE_WINDOW_SECONDS_ENV);
+        CONNECTION_RATE_LIMITS.lock().unwrap().clear();
+        PROTECTION_STATS.lock().unwrap().clear();
+        assert_eq!(max_conn_per_ip_per_window(), super::DEFAULT_MAX_CONN_PER_IP_PER_WINDOW);
+        assert_eq!(conn_rate_window_seconds(), super::DEFAULT_CONN_RATE_WINDOW_SECONDS);
+        assert_eq!(
+            max_udp_packets_per_ip_per_window(),
+            super::DEFAULT_MAX_UDP_PACKETS_PER_IP_PER_WINDOW
+        );
+        assert_eq!(
+            udp_rate_window_seconds(),
+            super::DEFAULT_UDP_RATE_WINDOW_SECONDS
+        );
+        assert_eq!(
+            protection_limits_summary(),
+            vec![
+                "connections_per_ip_per_window=120/60s".to_owned(),
+                "udp_packets_per_ip_per_window=240/60s".to_owned(),
+                "trust_proxy_headers=false".to_owned(),
+            ]
+        );
+    }
 }

@@ -26,12 +26,29 @@ use std::{
     io::Error,
     net::SocketAddr,
     sync::atomic::{AtomicUsize, Ordering},
+    time::Instant,
 };
 
 type Usage = (usize, usize, usize, usize);
 
+struct PendingRelay {
+    stream: Box<dyn StreamTrait>,
+    ip: String,
+    created_at: Instant,
+}
+
+impl PendingRelay {
+    fn new(stream: Box<dyn StreamTrait>, ip: String) -> Self {
+        Self {
+            stream,
+            ip,
+            created_at: Instant::now(),
+        }
+    }
+}
+
 lazy_static::lazy_static! {
-    static ref PEERS: Mutex<HashMap<String, Box<dyn StreamTrait>>> = Default::default();
+    static ref PEERS: Mutex<HashMap<String, PendingRelay>> = Default::default();
     static ref USAGE: RwLock<HashMap<String, Usage>> = Default::default();
     static ref BLACKLIST: RwLock<HashSet<String>> = Default::default();
     static ref BLOCKLIST: RwLock<HashSet<String>> = Default::default();
@@ -42,8 +59,11 @@ static DOWNGRADE_START_CHECK: AtomicUsize = AtomicUsize::new(1_800_000); // in m
 static LIMIT_SPEED: AtomicUsize = AtomicUsize::new(32 * 1024 * 1024); // in bit/s
 static TOTAL_BANDWIDTH: AtomicUsize = AtomicUsize::new(1024 * 1024 * 1024); // in bit/s
 static SINGLE_BANDWIDTH: AtomicUsize = AtomicUsize::new(128 * 1024 * 1024); // in bit/s
+static MAX_PENDING_RELAYS: AtomicUsize = AtomicUsize::new(4096);
+static MAX_PENDING_RELAYS_PER_IP: AtomicUsize = AtomicUsize::new(64);
 const BLACKLIST_FILE: &str = "blacklist.txt";
 const BLOCKLIST_FILE: &str = "blocklist.txt";
+const PENDING_RELAY_HOLD_SECS: u64 = 30;
 
 #[tokio::main(flavor = "multi_thread")]
 pub async fn start(port: &str, key: &str) -> ResultType<()> {
@@ -146,7 +166,27 @@ fn check_params() {
     log::info!(
         "SINGLE_BANDWIDTH: {}Mb/s",
         SINGLE_BANDWIDTH.load(Ordering::SeqCst) as f64 / 1024. / 1024.
-    )
+    );
+    let tmp = std::env::var("MAX_PENDING_RELAYS")
+        .map(|x| x.parse::<usize>().unwrap_or(0))
+        .unwrap_or(0);
+    if tmp > 0 {
+        MAX_PENDING_RELAYS.store(tmp, Ordering::SeqCst);
+    }
+    log::info!(
+        "MAX_PENDING_RELAYS: {}",
+        MAX_PENDING_RELAYS.load(Ordering::SeqCst)
+    );
+    let tmp = std::env::var("MAX_PENDING_RELAYS_PER_IP")
+        .map(|x| x.parse::<usize>().unwrap_or(0))
+        .unwrap_or(0);
+    if tmp > 0 {
+        MAX_PENDING_RELAYS_PER_IP.store(tmp, Ordering::SeqCst);
+    }
+    log::info!(
+        "MAX_PENDING_RELAYS_PER_IP: {}",
+        MAX_PENDING_RELAYS_PER_IP.load(Ordering::SeqCst)
+    );
 }
 
 async fn check_cmd(cmd: &str, limiter: Limiter) -> String {
@@ -157,7 +197,7 @@ async fn check_cmd(cmd: &str, limiter: Limiter) -> String {
     match fds.next() {
         Some("h") => {
             res = format!(
-                "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n",
+                "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n",
                 "blacklist-add(ba) <ip>",
                 "blacklist-remove(br) <ip>",
                 "blacklist(b) <ip>",
@@ -169,6 +209,7 @@ async fn check_cmd(cmd: &str, limiter: Limiter) -> String {
                 "limit-speed(ls) [value(Mb/s)]",
                 "total-bandwidth(tb) [value(Mb/s)]",
                 "single-bandwidth(sb) [value(Mb/s)]",
+                "protection-stats(ps)",
                 "usage(u)"
             )
         }
@@ -318,6 +359,14 @@ async fn check_cmd(cmd: &str, limiter: Limiter) -> String {
                 );
             }
         }
+        Some("protection-stats" | "ps") => {
+            for line in crate::common::protection_limits_summary() {
+                let _ = writeln!(res, "{line}");
+            }
+            for (name, value) in crate::common::protection_stats_snapshot() {
+                let _ = writeln!(res, "{name}={value}");
+            }
+        }
         _ => {}
     }
     res
@@ -331,6 +380,10 @@ async fn io_loop(listener: TcpListener, listener2: TcpListener, key: &str) {
             res = listener.accept() => {
                 match res {
                     Ok((stream, addr))  => {
+                        if !crate::common::allow_connection_from_ip("hbbr-tcp", addr) {
+                            log::warn!("Rate limit exceeded for hbbr-tcp from {}", addr.ip());
+                            continue;
+                        }
                         stream.set_nodelay(true).ok();
                         handle_connection(stream, addr, &limiter, key, false).await;
                     }
@@ -343,6 +396,10 @@ async fn io_loop(listener: TcpListener, listener2: TcpListener, key: &str) {
             res = listener2.accept() => {
                 match res {
                     Ok((stream, addr))  => {
+                        if !crate::common::allow_connection_from_ip("hbbr-ws", addr) {
+                            log::warn!("Rate limit exceeded for hbbr-ws from {}", addr.ip());
+                            continue;
+                        }
                         stream.set_nodelay(true).ok();
                         handle_connection(stream, addr, &limiter, key, true).await;
                     }
@@ -400,18 +457,7 @@ async fn make_pair(
     if ws {
         use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
         let callback = |req: &Request, response: Response| {
-            let headers = req.headers();
-            let real_ip = headers
-                .get("X-Real-IP")
-                .or_else(|| headers.get("X-Forwarded-For"))
-                .and_then(|header_value| header_value.to_str().ok());
-            if let Some(ip) = real_ip {
-                if ip.contains('.') {
-                    addr = format!("{ip}:0").parse().unwrap_or(addr);
-                } else {
-                    addr = format!("[{ip}]:0").parse().unwrap_or(addr);
-                }
-            }
+            addr = crate::common::apply_trusted_proxy_addr(addr, req.headers());
             Ok(response)
         };
         let ws_stream = tokio_tungstenite::accept_hdr_async(stream, callback).await?;
@@ -429,14 +475,16 @@ async fn make_pair_(stream: impl StreamTrait, addr: SocketAddr, key: &str, limit
             if let Some(rendezvous_message::Union::RequestRelay(rf)) = msg_in.union {
                 if !key.is_empty() && rf.licence_key != key {
                     log::warn!("Relay authentication failed from {} - invalid key", addr);
+                    send_relay_refuse(&mut stream, "Key mismatch").await;
                     return;
                 }
                 if !rf.uuid.is_empty() {
-                    let mut peer = PEERS.lock().await.remove(&rf.uuid);
-                    if let Some(peer) = peer.as_mut() {
+                    let mut pending = PEERS.lock().await.remove(&rf.uuid);
+                    if let Some(pending) = pending.as_mut() {
                         log::info!("Relayrequest {} from {} got paired", rf.uuid, addr);
                         let id = format!("{}:{}", addr.ip(), addr.port());
                         USAGE.write().await.insert(id.clone(), Default::default());
+                        let peer = &mut pending.stream;
                         if !stream.is_ws() && !peer.is_ws() {
                             peer.set_raw();
                             stream.set_raw();
@@ -451,13 +499,57 @@ async fn make_pair_(stream: impl StreamTrait, addr: SocketAddr, key: &str, limit
                         USAGE.write().await.remove(&id);
                     } else {
                         log::info!("New relay request {} from {}", rf.uuid, addr);
-                        PEERS.lock().await.insert(rf.uuid.clone(), Box::new(stream));
-                        sleep(30.).await;
+                        let ip = addr.ip().to_string();
+                        let mut peers = PEERS.lock().await;
+                        prune_expired_pending_relays(&mut peers);
+                        let pending_for_ip = peers.values().filter(|peer| peer.ip == ip).count();
+                        if let Some(reason) =
+                            pending_relay_limit_reason(peers.len(), pending_for_ip)
+                        {
+                            crate::common::record_protection_event("relay_pending_rejected");
+                            log::warn!(
+                                "Rejecting relay request {} from {}: {}",
+                                rf.uuid,
+                                addr,
+                                reason
+                            );
+                            drop(peers);
+                            send_relay_refuse(&mut stream, reason).await;
+                            return;
+                        }
+                        peers.insert(rf.uuid.clone(), PendingRelay::new(Box::new(stream), ip));
+                        drop(peers);
+                        sleep(PENDING_RELAY_HOLD_SECS as f32).await;
                         PEERS.lock().await.remove(&rf.uuid);
                     }
                 }
             }
         }
+    }
+}
+
+fn prune_expired_pending_relays(peers: &mut HashMap<String, PendingRelay>) {
+    peers.retain(|_, pending| pending.created_at.elapsed().as_secs() < PENDING_RELAY_HOLD_SECS);
+}
+
+fn pending_relay_limit_reason(total_pending: usize, pending_for_ip: usize) -> Option<&'static str> {
+    if total_pending >= MAX_PENDING_RELAYS.load(Ordering::SeqCst) {
+        return Some("Relay server busy");
+    }
+    if pending_for_ip >= MAX_PENDING_RELAYS_PER_IP.load(Ordering::SeqCst) {
+        return Some("Too many pending relay requests");
+    }
+    None
+}
+
+async fn send_relay_refuse(stream: &mut impl StreamTrait, reason: &str) {
+    let mut msg_out = RendezvousMessage::new();
+    msg_out.set_relay_response(RelayResponse {
+        refuse_reason: reason.to_owned(),
+        ..Default::default()
+    });
+    if let Ok(bytes) = msg_out.write_to_bytes() {
+        let _ = stream.send_raw(bytes.into()).await;
     }
 }
 
@@ -644,4 +736,35 @@ impl StreamTrait for tokio_tungstenite::WebSocketStream<TcpStream> {
     }
 
     fn set_raw(&mut self) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{pending_relay_limit_reason, MAX_PENDING_RELAYS, MAX_PENDING_RELAYS_PER_IP};
+    use std::sync::{atomic::Ordering, Mutex};
+
+    static TEST_RELAY_LIMITS_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn pending_relay_limits_enforce_global_and_per_ip_caps() {
+        let _guard = TEST_RELAY_LIMITS_LOCK.lock().unwrap();
+        let saved_total = MAX_PENDING_RELAYS.load(Ordering::SeqCst);
+        let saved_per_ip = MAX_PENDING_RELAYS_PER_IP.load(Ordering::SeqCst);
+
+        MAX_PENDING_RELAYS.store(2, Ordering::SeqCst);
+        MAX_PENDING_RELAYS_PER_IP.store(1, Ordering::SeqCst);
+
+        assert_eq!(pending_relay_limit_reason(0, 0), None);
+        assert_eq!(
+            pending_relay_limit_reason(1, 1),
+            Some("Too many pending relay requests")
+        );
+        assert_eq!(
+            pending_relay_limit_reason(2, 0),
+            Some("Relay server busy")
+        );
+
+        MAX_PENDING_RELAYS.store(saved_total, Ordering::SeqCst);
+        MAX_PENDING_RELAYS_PER_IP.store(saved_per_ip, Ordering::SeqCst);
+    }
 }

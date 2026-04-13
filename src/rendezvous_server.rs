@@ -13,7 +13,9 @@ use hbb_common::{
     log,
     protobuf::{Message as _, MessageField},
     rendezvous_proto::{
-        register_pk_response::Result::{TOO_FREQUENT, UUID_MISMATCH},
+        register_pk_response::Result::{
+            INVALID_ID_FORMAT, LICENSE_MISMATCH, TOO_FREQUENT, UUID_MISMATCH,
+        },
         *,
     },
     tcp::{listen_any, FramedStream},
@@ -48,6 +50,8 @@ enum Data {
 }
 
 const REG_TIMEOUT: i32 = 30_000;
+const MIN_REGISTRATION_ID_LEN: usize = 6;
+const MAX_REGISTRATION_ID_LEN: usize = 100;
 type TcpStreamSink = SplitSink<Framed<TcpStream, BytesCodec>, Bytes>;
 type WsSink = SplitSink<tokio_tungstenite::WebSocketStream<TcpStream>, tungstenite::Message>;
 enum Sink {
@@ -68,6 +72,8 @@ use tokio::sync::Mutex as TokioMutex; // differentiate if needed
 struct PunchReqEntry { tm: Instant, from_ip: String, to_ip: String, to_id: String }
 static PUNCH_REQS: Lazy<TokioMutex<Vec<PunchReqEntry>>> = Lazy::new(|| TokioMutex::new(Vec::new()));
 const PUNCH_REQ_DEDUPE_SEC: u64 = 60;
+const PUNCH_REQ_RETENTION_SECS: u64 = 600;
+const MAX_PUNCH_REQS: usize = 8192;
 
 #[derive(Clone)]
 struct Inner {
@@ -172,12 +178,13 @@ impl RendezvousServer {
             } else {
                 test_addr.parse()?
             };
+            let test_key = key.to_owned();
             tokio::spawn(async move {
-                if let Err(err) = test_hbbs(test_addr).await {
+                if let Err(err) = test_hbbs(test_addr, test_key.clone()).await {
                     if test_addr.is_ipv6() && test_addr.ip().is_unspecified() {
                         let mut test_addr = test_addr;
                         test_addr.set_ip(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
-                        if let Err(err) = test_hbbs(test_addr).await {
+                        if let Err(err) = test_hbbs(test_addr, test_key).await {
                             log::error!("Failed to run hbbs test with {test_addr}: {err}");
                             std::process::exit(1);
                         }
@@ -259,7 +266,12 @@ impl RendezvousServer {
                 res = socket.next() => {
                     match res {
                         Some(Ok((bytes, addr))) => {
-                            if let Err(err) = self.handle_udp(&bytes, addr.into(), socket, key).await {
+                            let addr: SocketAddr = addr.into();
+                            if !crate::common::allow_udp_packet_from_ip("hbbs-udp", addr) {
+                                log::warn!("Rate limit exceeded for hbbs-udp from {}", addr.ip());
+                                continue;
+                            }
+                            if let Err(err) = self.handle_udp(&bytes, addr, socket, key).await {
                                 log::error!("udp failure: {}", err);
                                 return LoopFailure::UdpSocket;
                             }
@@ -276,8 +288,12 @@ impl RendezvousServer {
                 res = listener2.accept() => {
                     match res {
                         Ok((stream, addr))  => {
+                            if !crate::common::allow_connection_from_ip("hbbs-nat", addr) {
+                                log::warn!("Rate limit exceeded for hbbs-nat from {}", addr.ip());
+                                continue;
+                            }
                             stream.set_nodelay(true).ok();
-                            self.handle_listener2(stream, addr).await;
+                            self.handle_listener2(stream, addr, key).await;
                         }
                         Err(err) => {
                            log::error!("listener2.accept failed: {}", err);
@@ -288,6 +304,10 @@ impl RendezvousServer {
                 res = listener3.accept() => {
                     match res {
                         Ok((stream, addr))  => {
+                            if !crate::common::allow_connection_from_ip("hbbs-ws", addr) {
+                                log::warn!("Rate limit exceeded for hbbs-ws from {}", addr.ip());
+                                continue;
+                            }
                             stream.set_nodelay(true).ok();
                             self.handle_listener(stream, addr, key, true).await;
                         }
@@ -300,6 +320,10 @@ impl RendezvousServer {
                 res = listener.accept() => {
                     match res {
                         Ok((stream, addr)) => {
+                            if !crate::common::allow_connection_from_ip("hbbs-main", addr) {
+                                log::warn!("Rate limit exceeded for hbbs-main from {}", addr.ip());
+                                continue;
+                            }
                             stream.set_nodelay(true).ok();
                             self.handle_listener(stream, addr, key, false).await;
                         }
@@ -326,6 +350,27 @@ impl RendezvousServer {
                 Some(rendezvous_message::Union::RegisterPeer(rp)) => {
                     // B registered
                     if !rp.id.is_empty() {
+                        if !is_valid_server_key(key, &rp.licence_key) {
+                            log::warn!(
+                                "Authentication failed from {} for peer {} - invalid key",
+                                addr,
+                                rp.id
+                            );
+                            return Ok(());
+                        }
+                        if !is_valid_registration_id(&rp.id) {
+                            log::warn!("Invalid peer registration id from {}: {:?}", addr, rp.id);
+                            return Ok(());
+                        }
+                        let ip = addr.ip().to_string();
+                        if !self.check_ip_blocker(&ip, &rp.id).await {
+                            log::warn!(
+                                "Peer registration rate-limited from {} for id {}",
+                                addr,
+                                rp.id
+                            );
+                            return Ok(());
+                        }
                         log::trace!("New peer registered: {:?} {:?}", &rp.id, &addr);
                         self.update_addr(rp.id, addr, socket).await?;
                         if self.inner.serial > rp.serial {
@@ -343,14 +388,29 @@ impl RendezvousServer {
                     if rk.uuid.is_empty() || rk.pk.is_empty() {
                         return Ok(());
                     }
+                    if !is_valid_server_key(key, &rk.licence_key) {
+                        log::warn!(
+                            "Authentication failed from {} for peer {} - invalid key",
+                            addr,
+                            rk.id
+                        );
+                        return send_rk_res(socket, addr, LICENSE_MISMATCH).await;
+                    }
                     let id = rk.id;
                     let ip = addr.ip().to_string();
-                    if id.len() < 6 {
-                        return send_rk_res(socket, addr, UUID_MISMATCH).await;
+                    if !is_valid_registration_id(&id) {
+                        return send_rk_res(socket, addr, INVALID_ID_FORMAT).await;
                     } else if !self.check_ip_blocker(&ip, &id).await {
                         return send_rk_res(socket, addr, TOO_FREQUENT).await;
                     }
-                    let peer = self.pm.get_or(&id).await;
+                    let Some(peer) = self.pm.get_or_for_registration(&id, &ip).await else {
+                        log::warn!(
+                            "Pending registration cache limit reached from {} for id {}",
+                            addr,
+                            id
+                        );
+                        return send_rk_res(socket, addr, TOO_FREQUENT).await;
+                    };
                     let (changed, ip_changed) = {
                         let peer = peer.read().await;
                         if peer.uuid.is_empty() {
@@ -414,12 +474,14 @@ impl RendezvousServer {
                             );
                         }
                     }
-                    if changed {
-                        self.pm.update_pk(id, peer, addr, rk.uuid, rk.pk, ip).await;
-                    }
+                    let result = if changed {
+                        self.pm.update_pk(id, peer, addr, rk.uuid, rk.pk, ip).await
+                    } else {
+                        register_pk_response::Result::OK
+                    };
                     let mut msg_out = RendezvousMessage::new();
                     msg_out.set_register_pk_response(RegisterPkResponse {
-                        result: register_pk_response::Result::OK.into(),
+                        result: result.into(),
                         ..Default::default()
                     });
                     socket.send(&msg_out, addr).await?
@@ -539,6 +601,10 @@ impl RendezvousServer {
                     allow_err!(self.handle_local_addr(la, addr, None).await);
                 }
                 Some(rendezvous_message::Union::TestNatRequest(tar)) => {
+                    if !is_valid_server_key(key, &tar.licence_key) {
+                        log::warn!("Authentication failed from {} for nat probe", addr);
+                        return true;
+                    }
                     let mut msg_out = RendezvousMessage::new();
                     let mut res = TestNatResponse {
                         port: addr.port() as _,
@@ -722,6 +788,7 @@ impl RendezvousServer {
                 let to_ip = try_into_v4(peer_addr).ip().to_string();
                 let to_id_clone = id.clone();
                 let mut lock = PUNCH_REQS.lock().await;
+                prune_punch_requests(&mut lock);
                 let mut dup = false;
                 for e in lock.iter().rev().take(30) { // only check recent tail subset for speed
                     if e.from_ip == from_ip && e.to_id == to_id_clone {
@@ -729,7 +796,15 @@ impl RendezvousServer {
                         break;
                     }
                 }
-                if !dup { lock.push(PunchReqEntry { tm: Instant::now(), from_ip, to_ip, to_id: to_id_clone }); }
+                if !dup {
+                    lock.push(PunchReqEntry {
+                        tm: Instant::now(),
+                        from_ip,
+                        to_ip,
+                        to_id: to_id_clone,
+                    });
+                    prune_punch_requests(&mut lock);
+                }
             }
 
             let mut msg_out = RendezvousMessage::new();
@@ -942,13 +1017,14 @@ impl RendezvousServer {
         match fds.next() {
             Some("h") => {
                 res = format!(
-                    "{}\n{}\n{}\n{}\n{}\n{}\n{}\n",
+                    "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n",
                     "relay-servers(rs) <separated by ,>",
                     "reload-geo(rg)",
                     "ip-blocker(ib) [<ip>|<number>] [-]",
                     "ip-changes(ic) [<id>|<number>] [-]",
                     "punch-requests(pr) [<number>] [-]",
                     "always-use-relay(aur)",
+                    "protection-stats(ps)",
                     "test-geo(tg) <ip1> <ip2>"
                 )
             }
@@ -1053,6 +1129,7 @@ impl RendezvousServer {
                 let arg = fds.next();
                 if let Some("-") = arg { lock.clear(); }
                 else {
+                    prune_punch_requests(&mut lock);
                     let mut start = arg.and_then(|x| x.parse::<usize>().ok()).unwrap_or(0);
                     let mut page_size = fds.next().and_then(|x| x.parse::<usize>().ok()).unwrap_or(10);
                     if page_size == 0 { page_size = 10; }
@@ -1081,6 +1158,14 @@ impl RendezvousServer {
                     );
                 }
             }
+            Some("protection-stats" | "ps") => {
+                for line in crate::common::protection_limits_summary() {
+                    let _ = writeln!(res, "{line}");
+                }
+                for (name, value) in crate::common::protection_stats_snapshot() {
+                    let _ = writeln!(res, "{name}={value}");
+                }
+            }
             Some("test-geo" | "tg") => {
                 if let Some(rs) = fds.next() {
                     if let Ok(a) = rs.parse::<IpAddr>() {
@@ -1099,8 +1184,9 @@ impl RendezvousServer {
         res
     }
 
-    async fn handle_listener2(&self, stream: TcpStream, addr: SocketAddr) {
+    async fn handle_listener2(&self, stream: TcpStream, addr: SocketAddr, key: &str) {
         let mut rs = self.clone();
+        let key = key.to_owned();
         let ip = try_into_v4(addr).ip();
         if ip.is_loopback() {
             tokio::spawn(async move {
@@ -1121,7 +1207,11 @@ impl RendezvousServer {
             if let Some(Ok(bytes)) = stream.next_timeout(30_000).await {
                 if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(&bytes) {
                     match msg_in.union {
-                        Some(rendezvous_message::Union::TestNatRequest(_)) => {
+                        Some(rendezvous_message::Union::TestNatRequest(tar)) => {
+                            if !is_valid_server_key(&key, &tar.licence_key) {
+                                log::warn!("Authentication failed from {} for nat probe", addr);
+                                return;
+                            }
                             let mut msg_out = RendezvousMessage::new();
                             msg_out.set_test_nat_response(TestNatResponse {
                                 port: addr.port() as _,
@@ -1130,6 +1220,10 @@ impl RendezvousServer {
                             stream.send(&msg_out).await.ok();
                         }
                         Some(rendezvous_message::Union::OnlineRequest(or)) => {
+                            if !is_valid_server_key(&key, &or.licence_key) {
+                                log::warn!("Authentication failed from {} for online query", addr);
+                                return;
+                            }
                             allow_err!(rs.handle_online_request(&mut stream, or.peers).await);
                         }
                         _ => {}
@@ -1160,18 +1254,7 @@ impl RendezvousServer {
         if ws {
             use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
             let callback = |req: &Request, response: Response| {
-                let headers = req.headers();
-                let real_ip = headers
-                    .get("X-Real-IP")
-                    .or_else(|| headers.get("X-Forwarded-For"))
-                    .and_then(|header_value| header_value.to_str().ok());
-                if let Some(ip) = real_ip {
-                    if ip.contains('.') {
-                        addr = format!("{ip}:0").parse().unwrap_or(addr);
-                    } else {
-                        addr = format!("[{ip}]:0").parse().unwrap_or(addr);
-                    }
-                }
+                addr = crate::common::apply_trusted_proxy_addr(addr, req.headers());
                 Ok(response)
             };
             let ws_stream = tokio_tungstenite::accept_hdr_async(stream, callback).await?;
@@ -1300,7 +1383,7 @@ async fn check_relay_servers(rs0: Arc<RelayServers>, tx: Sender) {
 }
 
 // temp solution to solve udp socket failure
-async fn test_hbbs(addr: SocketAddr) -> ResultType<()> {
+async fn test_hbbs(addr: SocketAddr, key: String) -> ResultType<()> {
     let mut addr = addr;
     if addr.ip().is_unspecified() {
         addr.set_ip(if addr.is_ipv4() {
@@ -1314,6 +1397,7 @@ async fn test_hbbs(addr: SocketAddr) -> ResultType<()> {
     let mut msg_out = RendezvousMessage::new();
     msg_out.set_register_peer(RegisterPeer {
         id: "(:test_hbbs:)".to_owned(),
+        licence_key: key,
         ..Default::default()
     });
     let mut last_time_recv = Instant::now();
@@ -1334,6 +1418,88 @@ async fn test_hbbs(addr: SocketAddr) -> ResultType<()> {
               }
           }
         }
+    }
+}
+
+fn prune_punch_requests(entries: &mut Vec<PunchReqEntry>) {
+    let before = entries.len();
+    entries.retain(|entry| entry.tm.elapsed().as_secs() < PUNCH_REQ_RETENTION_SECS);
+    if entries.len() > MAX_PUNCH_REQS {
+        let excess = entries.len() - MAX_PUNCH_REQS;
+        entries.drain(0..excess);
+    }
+    if before > entries.len() {
+        crate::common::record_protection_event("punch_requests_pruned");
+    }
+}
+
+#[inline]
+fn is_valid_registration_id(id: &str) -> bool {
+    let len = id.chars().count();
+    (MIN_REGISTRATION_ID_LEN..=MAX_REGISTRATION_ID_LEN).contains(&len)
+}
+
+#[inline]
+fn is_valid_server_key(configured_key: &str, supplied_key: &str) -> bool {
+    configured_key.is_empty() || supplied_key == configured_key
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        is_valid_registration_id, is_valid_server_key, prune_punch_requests, PunchReqEntry,
+        MAX_PUNCH_REQS, PUNCH_REQ_RETENTION_SECS,
+    };
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn server_key_validation_accepts_open_server_or_matching_key() {
+        assert!(is_valid_server_key("", ""));
+        assert!(is_valid_server_key("", "anything"));
+        assert!(is_valid_server_key("shared-secret", "shared-secret"));
+    }
+
+    #[test]
+    fn server_key_validation_rejects_mismatched_key() {
+        assert!(!is_valid_server_key("shared-secret", ""));
+        assert!(!is_valid_server_key("shared-secret", "wrong"));
+    }
+
+    #[test]
+    fn registration_id_validation_enforces_basic_length_bounds() {
+        assert!(!is_valid_registration_id(""));
+        assert!(!is_valid_registration_id("12345"));
+        assert!(is_valid_registration_id("123456"));
+        assert!(is_valid_registration_id(&"a".repeat(100)));
+        assert!(!is_valid_registration_id(&"a".repeat(101)));
+    }
+
+    #[test]
+    fn prune_punch_requests_removes_old_entries_and_caps_growth() {
+        let now = Instant::now();
+        let old = now
+            .checked_sub(Duration::from_secs(PUNCH_REQ_RETENTION_SECS + 1))
+            .unwrap_or(now);
+        let mut entries = vec![PunchReqEntry {
+            tm: old,
+            from_ip: "192.0.2.10".to_owned(),
+            to_ip: "198.51.100.10".to_owned(),
+            to_id: "old".to_owned(),
+        }];
+        for i in 0..(MAX_PUNCH_REQS + 5) {
+            entries.push(PunchReqEntry {
+                tm: now,
+                from_ip: format!("192.0.2.{i}"),
+                to_ip: "198.51.100.10".to_owned(),
+                to_id: format!("peer-{i}"),
+            });
+        }
+
+        prune_punch_requests(&mut entries);
+
+        assert_eq!(entries.len(), MAX_PUNCH_REQS);
+        assert!(entries.iter().all(|entry| entry.tm.elapsed().as_secs() < PUNCH_REQ_RETENTION_SECS));
+        assert_eq!(entries.first().map(|entry| entry.to_id.as_str()), Some("peer-5"));
     }
 }
 
