@@ -34,7 +34,9 @@ impl Drop for ChildGuard {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
-        let _ = fs::remove_dir_all(&self.temp_dir);
+        if !self.temp_dir.as_os_str().is_empty() {
+            let _ = fs::remove_dir_all(&self.temp_dir);
+        }
     }
 }
 
@@ -49,7 +51,7 @@ fn unique_temp_dir(prefix: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
-fn reserve_hbbs_port() -> Result<u16> {
+fn pick_hbbs_port_candidate() -> Result<u16> {
     for _ in 0..64 {
         let main = TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0))?;
         let port = main.local_addr()?.port();
@@ -63,10 +65,10 @@ fn reserve_hbbs_port() -> Result<u16> {
             return Ok(port);
         }
     }
-    bail!("failed to reserve hbbs port triplet");
+    bail!("failed to find hbbs port triplet");
 }
 
-fn reserve_hbbr_port() -> Result<u16> {
+fn pick_hbbr_port_candidate() -> Result<u16> {
     for _ in 0..64 {
         let main = TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0))?;
         let port = main.local_addr()?.port();
@@ -77,7 +79,7 @@ fn reserve_hbbr_port() -> Result<u16> {
             return Ok(port);
         }
     }
-    bail!("failed to reserve hbbr port pair");
+    bail!("failed to find hbbr port pair");
 }
 
 fn wait_for_tcp_ready(child: &mut ChildGuard, addr: SocketAddr) -> Result<()> {
@@ -137,16 +139,41 @@ fn spawn_server(
     })
 }
 
-fn spawn_hbbs(port: u16, key: &str) -> Result<ChildGuard> {
-    let temp_dir = unique_temp_dir("hbbs-process-test")?;
-    spawn_hbbs_in_dir(port, key, temp_dir, &[])
+fn spawn_hbbs(key: &str) -> Result<(u16, ChildGuard)> {
+    let mut last_err = None;
+    for _ in 0..16 {
+        let port = pick_hbbs_port_candidate()?;
+        let temp_dir = unique_temp_dir("hbbs-process-test")?;
+        match spawn_hbbs_in_dir_with_port(port, key, temp_dir, &[], false) {
+            Ok(child) => return Ok((port, child)),
+            Err(err) => last_err = Some(err),
+        }
+    }
+    Err(last_err.unwrap_or_else(|| hbb_common::anyhow::anyhow!("failed to spawn hbbs")))
 }
 
 fn spawn_hbbs_in_dir(
+    key: &str,
+    temp_dir: PathBuf,
+    envs: &[(&str, &str)],
+) -> Result<(u16, ChildGuard)> {
+    let mut last_err = None;
+    for _ in 0..16 {
+        let port = pick_hbbs_port_candidate()?;
+        match spawn_hbbs_in_dir_with_port(port, key, temp_dir.clone(), envs, true) {
+            Ok(child) => return Ok((port, child)),
+            Err(err) => last_err = Some(err),
+        }
+    }
+    Err(last_err.unwrap_or_else(|| hbb_common::anyhow::anyhow!("failed to spawn hbbs")))
+}
+
+fn spawn_hbbs_in_dir_with_port(
     port: u16,
     key: &str,
     temp_dir: PathBuf,
     envs: &[(&str, &str)],
+    preserve_temp_dir_on_error: bool,
 ) -> Result<ChildGuard> {
     let args = vec![
         "--port".to_owned(),
@@ -156,34 +183,46 @@ fn spawn_hbbs_in_dir(
     ];
     let mut child_envs = vec![("TEST_HBBS", "no")];
     child_envs.extend_from_slice(envs);
-    let mut child = spawn_server(
-        "CARGO_BIN_EXE_hbbs",
-        "hbbs",
-        &args,
-        &temp_dir,
-        &child_envs,
-    )?;
-    wait_for_tcp_ready(
+    let mut child = spawn_server("CARGO_BIN_EXE_hbbs", "hbbs", &args, &temp_dir, &child_envs)?;
+    if let Err(err) = wait_for_tcp_ready(
         &mut child,
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port - 1),
-    )?;
+    ) {
+        if preserve_temp_dir_on_error {
+            child.temp_dir = PathBuf::new();
+        }
+        return Err(err);
+    }
     Ok(child)
 }
 
-fn spawn_hbbr(port: u16, key: &str) -> Result<ChildGuard> {
-    let temp_dir = unique_temp_dir("hbbr-process-test")?;
-    let args = vec![
-        "--port".to_owned(),
-        port.to_string(),
-        "--key".to_owned(),
-        key.to_owned(),
-    ];
-    let mut child = spawn_server("CARGO_BIN_EXE_hbbr", "hbbr", &args, &temp_dir, &[])?;
-    wait_for_tcp_ready(
-        &mut child,
-        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
-    )?;
-    Ok(child)
+fn spawn_hbbr(key: &str) -> Result<(u16, ChildGuard)> {
+    let mut last_err = None;
+    for _ in 0..16 {
+        let port = pick_hbbr_port_candidate()?;
+        let temp_dir = unique_temp_dir("hbbr-process-test")?;
+        let args = vec![
+            "--port".to_owned(),
+            port.to_string(),
+            "--key".to_owned(),
+            key.to_owned(),
+        ];
+        let mut child = match spawn_server("CARGO_BIN_EXE_hbbr", "hbbr", &args, &temp_dir, &[]) {
+            Ok(child) => child,
+            Err(err) => {
+                last_err = Some(err);
+                continue;
+            }
+        };
+        match wait_for_tcp_ready(
+            &mut child,
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
+        ) {
+            Ok(()) => return Ok((port, child)),
+            Err(err) => last_err = Some(err),
+        }
+    }
+    Err(last_err.unwrap_or_else(|| hbb_common::anyhow::anyhow!("failed to spawn hbbr")))
 }
 
 fn admin_command(addr: SocketAddr, command: &str) -> Result<String> {
@@ -219,7 +258,11 @@ async fn send_online_request(addr: SocketAddr, key: &str) -> Result<Option<Rende
     Ok(response)
 }
 
-async fn send_register_pk(addr: SocketAddr, id: &str, key: &str) -> Result<Option<RendezvousMessage>> {
+async fn send_register_pk(
+    addr: SocketAddr,
+    id: &str,
+    key: &str,
+) -> Result<Option<RendezvousMessage>> {
     let mut socket = FramedSocket::new((Ipv4Addr::UNSPECIFIED, 0)).await?;
     let mut message = RendezvousMessage::new();
     message.set_register_pk(RegisterPk {
@@ -320,8 +363,7 @@ async fn peer_exists(db_path: &Path, id: &str) -> Result<bool> {
 
 #[test]
 fn hbbs_admin_protection_stats_reports_limits() -> Result<()> {
-    let port = reserve_hbbs_port()?;
-    let _child = spawn_hbbs(port, "server-key")?;
+    let (port, _child) = spawn_hbbs("server-key")?;
     let output = admin_command(
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port - 1),
         "ps",
@@ -334,12 +376,8 @@ fn hbbs_admin_protection_stats_reports_limits() -> Result<()> {
 
 #[test]
 fn hbbr_admin_protection_stats_reports_limits() -> Result<()> {
-    let port = reserve_hbbr_port()?;
-    let _child = spawn_hbbr(port, "server-key")?;
-    let output = admin_command(
-        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
-        "ps",
-    )?;
+    let (port, _child) = spawn_hbbr("server-key")?;
+    let output = admin_command(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port), "ps")?;
     assert!(output.contains("connections_per_ip_per_window="));
     assert!(output.contains("udp_packets_per_ip_per_window="));
     assert!(output.contains("trust_proxy_headers="));
@@ -352,8 +390,7 @@ fn hbbs_online_request_requires_configured_key_process() -> Result<()> {
         eprintln!("skipping non-loopback hbbs auth process test: no non-loopback local IP");
         return Ok(());
     };
-    let port = reserve_hbbs_port()?;
-    let _child = spawn_hbbs(port, "server-key")?;
+    let (port, _child) = spawn_hbbs("server-key")?;
     let addr = SocketAddr::new(ip, port - 1);
 
     let runtime = runtime()?;
@@ -380,24 +417,34 @@ fn hbbs_online_request_requires_configured_key_process() -> Result<()> {
 
 #[test]
 fn hbbs_register_pk_requires_configured_key_process() -> Result<()> {
-    let port = reserve_hbbs_port()?;
-    let _child = spawn_hbbs(port, "server-key")?;
+    let (port, _child) = spawn_hbbs("server-key")?;
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
     let runtime = runtime()?;
     runtime.block_on(async move {
-        let unauthorized = send_register_pk(addr, "peeruna1", "").await?
+        let unauthorized = send_register_pk(addr, "peeruna1", "")
+            .await?
             .context("unauthorized register_pk should receive a response")?;
         match unauthorized.union {
-            Some(rendezvous_message::Union::RegisterPkResponse(RegisterPkResponse { result, .. })) => {
-                assert_eq!(result, register_pk_response::Result::LICENSE_MISMATCH.into());
+            Some(rendezvous_message::Union::RegisterPkResponse(RegisterPkResponse {
+                result,
+                ..
+            })) => {
+                assert_eq!(
+                    result,
+                    register_pk_response::Result::LICENSE_MISMATCH.into()
+                );
             }
             other => bail!("unexpected response to unauthorized register_pk: {other:?}"),
         }
 
-        let authorized = send_register_pk(addr, "peerauth1", "server-key").await?
+        let authorized = send_register_pk(addr, "peerauth1", "server-key")
+            .await?
             .context("authorized register_pk should receive a response")?;
         match authorized.union {
-            Some(rendezvous_message::Union::RegisterPkResponse(RegisterPkResponse { result, .. })) => {
+            Some(rendezvous_message::Union::RegisterPkResponse(RegisterPkResponse {
+                result,
+                ..
+            })) => {
                 assert_eq!(result, register_pk_response::Result::OK.into());
             }
             other => bail!("unexpected response to authorized register_pk: {other:?}"),
@@ -413,12 +460,12 @@ fn hbbr_request_relay_reports_key_mismatch_process() -> Result<()> {
         eprintln!("skipping non-loopback hbbr auth process test: no non-loopback local IP");
         return Ok(());
     };
-    let port = reserve_hbbr_port()?;
-    let _child = spawn_hbbr(port, "server-key")?;
+    let (port, _child) = spawn_hbbr("server-key")?;
     let addr = SocketAddr::new(ip, port);
     let runtime = runtime()?;
     runtime.block_on(async move {
-        let response = send_relay_request(addr, "").await?
+        let response = send_relay_request(addr, "")
+            .await?
             .context("relay key mismatch should receive a refusal response")?;
         match response.union {
             Some(rendezvous_message::Union::RelayResponse(response)) => {
@@ -433,33 +480,46 @@ fn hbbr_request_relay_reports_key_mismatch_process() -> Result<()> {
 
 #[test]
 fn hbbs_register_pk_reports_peer_limit_reached_process() -> Result<()> {
-    let port = reserve_hbbs_port()?;
     let temp_dir = unique_temp_dir("hbbs-peer-limit-process-test")?;
     let db_path = temp_db_path(&temp_dir);
     let db_url = db_path.to_string_lossy().to_string();
-    let _child = spawn_hbbs_in_dir(
-        port,
+    let (port, _child) = spawn_hbbs_in_dir(
         "server-key",
         temp_dir,
-        &[("DB_URL", db_url.as_str()), ("MAX_TOTAL_PEER_RECORDS", "1"), ("PEER_RECORD_RETENTION_DAYS", "3650")],
+        &[
+            ("DB_URL", db_url.as_str()),
+            ("MAX_TOTAL_PEER_RECORDS", "1"),
+            ("PEER_RECORD_RETENTION_DAYS", "3650"),
+        ],
     )?;
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
     let runtime = runtime()?;
     runtime.block_on(async move {
-        let first = send_register_pk(addr, "limitpeer1", "server-key").await?
+        let first = send_register_pk(addr, "limitpeer1", "server-key")
+            .await?
             .context("first register_pk should receive a response")?;
         match first.union {
-            Some(rendezvous_message::Union::RegisterPkResponse(RegisterPkResponse { result, .. })) => {
+            Some(rendezvous_message::Union::RegisterPkResponse(RegisterPkResponse {
+                result,
+                ..
+            })) => {
                 assert_eq!(result, register_pk_response::Result::OK.into());
             }
             other => bail!("unexpected first register_pk response: {other:?}"),
         }
 
-        let second = send_register_pk(addr, "limitpeer2", "server-key").await?
+        let second = send_register_pk(addr, "limitpeer2", "server-key")
+            .await?
             .context("second register_pk should receive a response")?;
         match second.union {
-            Some(rendezvous_message::Union::RegisterPkResponse(RegisterPkResponse { result, .. })) => {
-                assert_eq!(result, register_pk_response::Result::PEER_LIMIT_REACHED.into());
+            Some(rendezvous_message::Union::RegisterPkResponse(RegisterPkResponse {
+                result,
+                ..
+            })) => {
+                assert_eq!(
+                    result,
+                    register_pk_response::Result::PEER_LIMIT_REACHED.into()
+                );
             }
             other => bail!("unexpected second register_pk response: {other:?}"),
         }
@@ -470,24 +530,32 @@ fn hbbs_register_pk_reports_peer_limit_reached_process() -> Result<()> {
 
 #[test]
 fn hbbs_register_pk_prunes_stale_peer_before_enforcing_cap_process() -> Result<()> {
-    let port = reserve_hbbs_port()?;
     let temp_dir = unique_temp_dir("hbbs-peer-retention-process-test")?;
     let db_path = temp_db_path(&temp_dir);
     let runtime = runtime()?;
-    runtime.block_on(create_peer_schema_and_insert_stale_row(&db_path, "oldpeer1"))?;
+    runtime.block_on(create_peer_schema_and_insert_stale_row(
+        &db_path, "oldpeer1",
+    ))?;
     let db_url = db_path.to_string_lossy().to_string();
-    let _child = spawn_hbbs_in_dir(
-        port,
+    let (port, _child) = spawn_hbbs_in_dir(
         "server-key",
         temp_dir,
-        &[("DB_URL", db_url.as_str()), ("MAX_TOTAL_PEER_RECORDS", "1"), ("PEER_RECORD_RETENTION_DAYS", "1")],
+        &[
+            ("DB_URL", db_url.as_str()),
+            ("MAX_TOTAL_PEER_RECORDS", "1"),
+            ("PEER_RECORD_RETENTION_DAYS", "1"),
+        ],
     )?;
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
     runtime.block_on(async move {
-        let response = send_register_pk(addr, "newpeer1", "server-key").await?
+        let response = send_register_pk(addr, "newpeer1", "server-key")
+            .await?
             .context("register_pk should receive a response")?;
         match response.union {
-            Some(rendezvous_message::Union::RegisterPkResponse(RegisterPkResponse { result, .. })) => {
+            Some(rendezvous_message::Union::RegisterPkResponse(RegisterPkResponse {
+                result,
+                ..
+            })) => {
                 assert_eq!(result, register_pk_response::Result::OK.into());
             }
             other => bail!("unexpected register_pk response after stale prune: {other:?}"),

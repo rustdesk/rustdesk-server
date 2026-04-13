@@ -122,8 +122,7 @@ impl PeerMap {
             db
         });
         log::info!("DB_URL={}", db);
-        let max_cached_peers =
-            env_usize_or("MAX_PEER_CACHE_SIZE", DEFAULT_MAX_PEER_CACHE_SIZE);
+        let max_cached_peers = env_usize_or("MAX_PEER_CACHE_SIZE", DEFAULT_MAX_PEER_CACHE_SIZE);
         let max_pending_registrations_per_ip = env_usize_or(
             "MAX_PENDING_REGISTRATIONS_PER_IP",
             DEFAULT_MAX_PENDING_REGISTRATIONS_PER_IP,
@@ -215,13 +214,41 @@ impl PeerMap {
         if let Some(p) = self.get(id).await {
             return Some(p);
         }
-        if !self.can_cache_pending_registration(ip).await {
-            return None;
-        }
-        self.prune_cache_for_insert().await;
         let mut w = self.map.write().await;
         if let Some(p) = w.get(id) {
             return Some(p.clone());
+        }
+        let snapshot: Vec<(String, LockPeer)> = w
+            .iter()
+            .map(|(id, peer)| (id.clone(), peer.clone()))
+            .collect();
+        let mut entries = Vec::with_capacity(snapshot.len());
+        let mut pending_ids_for_ip = HashSet::new();
+        for (peer_id, peer) in snapshot {
+            let peer = peer.read().await;
+            if peer.info.ip == ip && peer.guid.is_empty() {
+                pending_ids_for_ip.insert(peer_id.clone());
+            }
+            entries.push(PeerEvictionEntry {
+                id: peer_id,
+                inactive: peer.last_reg_time.elapsed().as_millis() as i32
+                    >= PEER_CACHE_INACTIVE_TIMEOUT_MS,
+                last_reg_time: peer.last_reg_time,
+            });
+        }
+        let remove_ids = select_peer_ids_to_evict(entries, self.max_cached_peers);
+        if !remove_ids.is_empty() {
+            let remove_ids_set: HashSet<String> = remove_ids.iter().cloned().collect();
+            for id in &remove_ids {
+                w.remove(id);
+            }
+            pending_ids_for_ip.retain(|id| !remove_ids_set.contains(id));
+        }
+        if pending_registration_limit_exceeded(
+            pending_ids_for_ip.len(),
+            self.max_pending_registrations_per_ip,
+        ) {
+            return None;
         }
         let tmp = Arc::new(RwLock::new(Peer {
             info: PeerInfo { ip: ip.to_owned() },
@@ -239,21 +266,6 @@ impl PeerMap {
     #[inline]
     pub(crate) async fn is_in_memory(&self, id: &str) -> bool {
         self.map.read().await.contains_key(id)
-    }
-
-    async fn can_cache_pending_registration(&self, ip: &str) -> bool {
-        let snapshot: Vec<LockPeer> = self.map.read().await.values().cloned().collect();
-        let mut pending_for_ip = 0usize;
-        for peer in snapshot {
-            let peer = peer.read().await;
-            if peer.info.ip == ip && peer.guid.is_empty() {
-                pending_for_ip += 1;
-            }
-        }
-        !pending_registration_limit_exceeded(
-            pending_for_ip,
-            self.max_pending_registrations_per_ip,
-        )
     }
 
     async fn prune_cache_for_insert(&self) {
@@ -287,9 +299,7 @@ impl PeerMap {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        pending_registration_limit_exceeded, select_peer_ids_to_evict, PeerEvictionEntry,
-    };
+    use super::{pending_registration_limit_exceeded, select_peer_ids_to_evict, PeerEvictionEntry};
     use std::time::{Duration, Instant};
 
     #[test]
@@ -324,6 +334,9 @@ mod tests {
             ],
             2,
         );
-        assert_eq!(remove, vec!["inactive-old".to_owned(), "inactive-new".to_owned()]);
+        assert_eq!(
+            remove,
+            vec!["inactive-old".to_owned(), "inactive-new".to_owned()]
+        );
     }
 }

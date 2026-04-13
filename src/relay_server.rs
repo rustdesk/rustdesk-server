@@ -455,12 +455,22 @@ async fn make_pair(
     ws: bool,
 ) -> ResultType<()> {
     if ws {
+        let peer_addr = addr;
         use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
         let callback = |req: &Request, response: Response| {
             addr = crate::common::apply_trusted_proxy_addr(addr, req.headers());
             Ok(response)
         };
         let ws_stream = tokio_tungstenite::accept_hdr_async(stream, callback).await?;
+        if addr.ip() != peer_addr.ip()
+            && !crate::common::allow_connection_from_ip("hbbr-ws-forwarded", addr)
+        {
+            log::warn!(
+                "Rate limit exceeded for hbbr-ws-forwarded from {}",
+                addr.ip()
+            );
+            return Ok(());
+        }
         make_pair_(ws_stream, addr, key, limiter).await;
     } else {
         make_pair_(FramedStream::from(stream, addr), addr, key, limiter).await;
@@ -759,10 +769,7 @@ mod tests {
             pending_relay_limit_reason(1, 1),
             Some("Too many pending relay requests")
         );
-        assert_eq!(
-            pending_relay_limit_reason(2, 0),
-            Some("Relay server busy")
-        );
+        assert_eq!(pending_relay_limit_reason(2, 0), Some("Relay server busy"));
 
         MAX_PENDING_RELAYS.store(saved_total, Ordering::SeqCst);
         MAX_PENDING_RELAYS_PER_IP.store(saved_per_ip, Ordering::SeqCst);

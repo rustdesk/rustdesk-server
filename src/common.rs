@@ -1,6 +1,8 @@
 use clap::App;
 use hbb_common::{
-    allow_err, anyhow::{Context, Result}, get_version_number, log, tokio, ResultType
+    allow_err,
+    anyhow::{Context, Result},
+    get_version_number, log, tokio, ResultType,
 };
 use http::HeaderMap;
 use ini::Ini;
@@ -18,10 +20,12 @@ use std::{
 const TRUST_PROXY_HEADERS_ENV: &str = "TRUST_PROXY_HEADERS";
 const CONN_RATE_WINDOW_SECONDS_ENV: &str = "CONNECTION_RATE_WINDOW_SECONDS";
 const MAX_CONN_PER_IP_PER_WINDOW_ENV: &str = "MAX_CONNECTIONS_PER_IP_PER_WINDOW";
+const MAX_CONNECTION_RATE_ENTRIES_ENV: &str = "MAX_CONNECTION_RATE_ENTRIES";
 const UDP_RATE_WINDOW_SECONDS_ENV: &str = "UDP_RATE_WINDOW_SECONDS";
 const MAX_UDP_PACKETS_PER_IP_PER_WINDOW_ENV: &str = "MAX_UDP_PACKETS_PER_IP_PER_WINDOW";
 const DEFAULT_CONN_RATE_WINDOW_SECONDS: usize = 60;
 const DEFAULT_MAX_CONN_PER_IP_PER_WINDOW: usize = 120;
+const DEFAULT_MAX_CONNECTION_RATE_ENTRIES: usize = 8_192;
 const DEFAULT_UDP_RATE_WINDOW_SECONDS: usize = 60;
 const DEFAULT_MAX_UDP_PACKETS_PER_IP_PER_WINDOW: usize = 240;
 
@@ -155,11 +159,15 @@ fn max_conn_per_ip_per_window() -> usize {
     )
 }
 
-fn udp_rate_window_seconds() -> usize {
+fn max_connection_rate_entries() -> usize {
     env_usize_or(
-        UDP_RATE_WINDOW_SECONDS_ENV,
-        DEFAULT_UDP_RATE_WINDOW_SECONDS,
+        MAX_CONNECTION_RATE_ENTRIES_ENV,
+        DEFAULT_MAX_CONNECTION_RATE_ENTRIES,
     )
+}
+
+fn udp_rate_window_seconds() -> usize {
+    env_usize_or(UDP_RATE_WINDOW_SECONDS_ENV, DEFAULT_UDP_RATE_WINDOW_SECONDS)
 }
 
 fn max_udp_packets_per_ip_per_window() -> usize {
@@ -179,6 +187,18 @@ fn prune_connection_rate_limits(
     });
 }
 
+fn evict_oldest_connection_rate_entry(entries: &mut HashMap<String, ConnectionRateEntry>) -> bool {
+    let oldest_key = entries
+        .iter()
+        .min_by_key(|(_, entry)| entry.last_seen_at)
+        .map(|(key, _)| key.clone());
+    if let Some(key) = oldest_key {
+        entries.remove(&key);
+        return true;
+    }
+    false
+}
+
 #[allow(dead_code)]
 fn allow_ip_activity(scope: &str, addr: SocketAddr, window_secs: usize, max_events: usize) -> bool {
     if addr.ip().is_loopback() {
@@ -188,11 +208,28 @@ fn allow_ip_activity(scope: &str, addr: SocketAddr, window_secs: usize, max_even
     let mut lock = CONNECTION_RATE_LIMITS.lock().unwrap();
     prune_connection_rate_limits(&mut lock, now, window_secs);
     let key = format!("{scope}|{}", addr.ip());
-    let entry = lock.entry(key).or_insert(ConnectionRateEntry {
-        window_started_at: now,
-        last_seen_at: now,
-        count: 0,
-    });
+    if !lock.contains_key(&key) {
+        let max_entries = max_connection_rate_entries();
+        if max_entries > 0
+            && lock.len() >= max_entries
+            && evict_oldest_connection_rate_entry(&mut lock)
+        {
+            record_protection_event("connection_rate_entries_evicted");
+        }
+        if max_entries > 0 && lock.len() >= max_entries {
+            record_protection_event("connection_rate_entries_rejected");
+            return false;
+        }
+        lock.insert(
+            key.clone(),
+            ConnectionRateEntry {
+                window_started_at: now,
+                last_seen_at: now,
+                count: 0,
+            },
+        );
+    }
+    let entry = lock.get_mut(&key).expect("entry inserted above");
     if now.duration_since(entry.window_started_at).as_secs() >= window_secs as u64 {
         entry.window_started_at = now;
         entry.count = 0;
@@ -260,6 +297,10 @@ pub fn protection_limits_summary() -> Vec<String> {
             conn_rate_window_seconds()
         ),
         format!(
+            "connection_rate_entry_cap={}",
+            max_connection_rate_entries()
+        ),
+        format!(
             "udp_packets_per_ip_per_window={}/{}s",
             max_udp_packets_per_ip_per_window(),
             udp_rate_window_seconds()
@@ -278,7 +319,9 @@ pub fn apply_trusted_proxy_addr(addr: SocketAddr, headers: &HeaderMap) -> Socket
         .or_else(|| headers.get("X-Forwarded-For"))
         .and_then(|header_value| header_value.to_str().ok())
         .and_then(parse_forwarded_ip);
-    forwarded_ip.map(|ip| SocketAddr::new(ip, 0)).unwrap_or(addr)
+    forwarded_ip
+        .map(|ip| SocketAddr::new(ip, addr.port()))
+        .unwrap_or(addr)
 }
 
 fn parse_forwarded_ip(value: &str) -> Option<IpAddr> {
@@ -384,7 +427,6 @@ pub async fn listen_signal() -> Result<()> {
     unreachable!();
 }
 
-
 pub fn check_software_update() {
     const ONE_DAY_IN_SECONDS: u64 = 60 * 60 * 24;
     std::thread::spawn(move || loop {
@@ -395,8 +437,10 @@ pub fn check_software_update() {
 
 #[tokio::main(flavor = "current_thread")]
 async fn check_software_update_() -> hbb_common::ResultType<()> {
-    let (request, url) = hbb_common::version_check_request(hbb_common::VER_TYPE_RUSTDESK_SERVER.to_string());
-    let latest_release_response = reqwest::Client::builder().build()?
+    let (request, url) =
+        hbb_common::version_check_request(hbb_common::VER_TYPE_RUSTDESK_SERVER.to_string());
+    let latest_release_response = reqwest::Client::builder()
+        .build()?
         .post(url)
         .json(&request)
         .send()
@@ -407,7 +451,7 @@ async fn check_software_update_() -> hbb_common::ResultType<()> {
     let response_url = resp.url;
     let latest_release_version = response_url.rsplit('/').next().unwrap_or_default();
     if get_version_number(&latest_release_version) > get_version_number(crate::version::VERSION) {
-       log::info!("new version is available: {}", latest_release_version);
+        log::info!("new version is available: {}", latest_release_version);
     }
     Ok(())
 }
@@ -416,17 +460,18 @@ async fn check_software_update_() -> hbb_common::ResultType<()> {
 mod tests {
     use super::{
         allow_connection_from_ip, allow_udp_packet_from_ip, apply_trusted_proxy_addr,
-        conn_rate_window_seconds, max_conn_per_ip_per_window, max_udp_packets_per_ip_per_window,
-        protection_limits_summary, protection_stats_snapshot, record_protection_event,
-        trust_proxy_headers, udp_rate_window_seconds, CONNECTION_RATE_LIMITS,
-        CONN_RATE_WINDOW_SECONDS_ENV, MAX_CONN_PER_IP_PER_WINDOW_ENV,
-        MAX_UDP_PACKETS_PER_IP_PER_WINDOW_ENV, PROTECTION_STATS, TRUST_PROXY_HEADERS_ENV,
-        UDP_RATE_WINDOW_SECONDS_ENV,
+        conn_rate_window_seconds, max_conn_per_ip_per_window, max_connection_rate_entries,
+        max_udp_packets_per_ip_per_window, protection_limits_summary, protection_stats_snapshot,
+        record_protection_event, trust_proxy_headers, udp_rate_window_seconds,
+        CONNECTION_RATE_LIMITS, CONN_RATE_WINDOW_SECONDS_ENV, MAX_CONNECTION_RATE_ENTRIES_ENV,
+        MAX_CONN_PER_IP_PER_WINDOW_ENV, MAX_UDP_PACKETS_PER_IP_PER_WINDOW_ENV, PROTECTION_STATS,
+        TRUST_PROXY_HEADERS_ENV, UDP_RATE_WINDOW_SECONDS_ENV,
     };
     use http::HeaderMap;
     use std::{
         net::{IpAddr, Ipv4Addr, SocketAddr},
         sync::Mutex,
+        time::Duration,
     };
 
     static TEST_PROXY_HEADERS_LOCK: Mutex<()> = Mutex::new(());
@@ -443,7 +488,10 @@ mod tests {
         let _guard = TEST_PROXY_HEADERS_LOCK.lock().unwrap();
         let original = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 4)), 21117);
         let mut headers = HeaderMap::new();
-        headers.insert("X-Forwarded-For", "198.51.100.10, 10.0.0.1".parse().unwrap());
+        headers.insert(
+            "X-Forwarded-For",
+            "198.51.100.10, 10.0.0.1".parse().unwrap(),
+        );
 
         std::env::remove_var(TRUST_PROXY_HEADERS_ENV);
         assert_eq!(apply_trusted_proxy_addr(original, &headers), original);
@@ -451,7 +499,7 @@ mod tests {
         std::env::set_var(TRUST_PROXY_HEADERS_ENV, "Y");
         assert_eq!(
             apply_trusted_proxy_addr(original, &headers),
-            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(198, 51, 100, 10)), 0)
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(198, 51, 100, 10)), 21117)
         );
 
         std::env::remove_var(TRUST_PROXY_HEADERS_ENV);
@@ -464,6 +512,7 @@ mod tests {
         PROTECTION_STATS.lock().unwrap().clear();
         std::env::set_var(MAX_CONN_PER_IP_PER_WINDOW_ENV, "2");
         std::env::set_var(CONN_RATE_WINDOW_SECONDS_ENV, "60");
+        std::env::set_var(MAX_CONNECTION_RATE_ENTRIES_ENV, "2");
         std::env::set_var(MAX_UDP_PACKETS_PER_IP_PER_WINDOW_ENV, "3");
         std::env::set_var(UDP_RATE_WINDOW_SECONDS_ENV, "60");
 
@@ -499,12 +548,23 @@ mod tests {
 
         std::env::remove_var(MAX_CONN_PER_IP_PER_WINDOW_ENV);
         std::env::remove_var(CONN_RATE_WINDOW_SECONDS_ENV);
+        std::env::remove_var(MAX_CONNECTION_RATE_ENTRIES_ENV);
         std::env::remove_var(MAX_UDP_PACKETS_PER_IP_PER_WINDOW_ENV);
         std::env::remove_var(UDP_RATE_WINDOW_SECONDS_ENV);
         CONNECTION_RATE_LIMITS.lock().unwrap().clear();
         PROTECTION_STATS.lock().unwrap().clear();
-        assert_eq!(max_conn_per_ip_per_window(), super::DEFAULT_MAX_CONN_PER_IP_PER_WINDOW);
-        assert_eq!(conn_rate_window_seconds(), super::DEFAULT_CONN_RATE_WINDOW_SECONDS);
+        assert_eq!(
+            max_conn_per_ip_per_window(),
+            super::DEFAULT_MAX_CONN_PER_IP_PER_WINDOW
+        );
+        assert_eq!(
+            conn_rate_window_seconds(),
+            super::DEFAULT_CONN_RATE_WINDOW_SECONDS
+        );
+        assert_eq!(
+            max_connection_rate_entries(),
+            super::DEFAULT_MAX_CONNECTION_RATE_ENTRIES
+        );
         assert_eq!(
             max_udp_packets_per_ip_per_window(),
             super::DEFAULT_MAX_UDP_PACKETS_PER_IP_PER_WINDOW
@@ -517,9 +577,46 @@ mod tests {
             protection_limits_summary(),
             vec![
                 "connections_per_ip_per_window=120/60s".to_owned(),
+                "connection_rate_entry_cap=8192".to_owned(),
                 "udp_packets_per_ip_per_window=240/60s".to_owned(),
                 "trust_proxy_headers=false".to_owned(),
             ]
         );
+    }
+
+    #[test]
+    fn connection_rate_limit_entries_are_bounded() {
+        let _guard = TEST_PROXY_HEADERS_LOCK.lock().unwrap();
+        CONNECTION_RATE_LIMITS.lock().unwrap().clear();
+        PROTECTION_STATS.lock().unwrap().clear();
+        std::env::set_var(MAX_CONNECTION_RATE_ENTRIES_ENV, "2");
+        std::env::set_var(MAX_CONN_PER_IP_PER_WINDOW_ENV, "10");
+        std::env::set_var(CONN_RATE_WINDOW_SECONDS_ENV, "60");
+
+        let addr1 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(198, 51, 100, 1)), 21117);
+        let addr2 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(198, 51, 100, 2)), 21117);
+        let addr3 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(198, 51, 100, 3)), 21117);
+        assert!(allow_connection_from_ip("hbbs-main", addr1));
+        std::thread::sleep(Duration::from_millis(2));
+        assert!(allow_connection_from_ip("hbbs-main", addr2));
+        std::thread::sleep(Duration::from_millis(2));
+        assert!(allow_connection_from_ip("hbbs-main", addr3));
+
+        let snapshot = CONNECTION_RATE_LIMITS.lock().unwrap();
+        assert_eq!(snapshot.len(), 2);
+        assert!(!snapshot.contains_key("hbbs-main|198.51.100.1"));
+        assert!(snapshot.contains_key("hbbs-main|198.51.100.2"));
+        assert!(snapshot.contains_key("hbbs-main|198.51.100.3"));
+        drop(snapshot);
+        assert_eq!(
+            protection_stats_snapshot(),
+            vec![("connection_rate_entries_evicted".to_owned(), 1)]
+        );
+
+        std::env::remove_var(MAX_CONNECTION_RATE_ENTRIES_ENV);
+        std::env::remove_var(MAX_CONN_PER_IP_PER_WINDOW_ENV);
+        std::env::remove_var(CONN_RATE_WINDOW_SECONDS_ENV);
+        CONNECTION_RATE_LIMITS.lock().unwrap().clear();
+        PROTECTION_STATS.lock().unwrap().clear();
     }
 }
