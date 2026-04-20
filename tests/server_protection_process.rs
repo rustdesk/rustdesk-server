@@ -2,8 +2,8 @@ use hbb_common::{
     anyhow::{bail, Context, Result},
     protobuf::Message,
     rendezvous_proto::{
-        register_pk_response, rendezvous_message, OnlineRequest, RegisterPk, RegisterPkResponse,
-        RendezvousMessage, RequestRelay,
+        register_pk_response, rendezvous_message, OnlineRequest, PunchHoleRequest, RegisterPk,
+        RegisterPkResponse, RendezvousMessage, RequestRelay,
     },
     tcp::FramedStream,
     udp::FramedSocket,
@@ -281,12 +281,41 @@ async fn send_register_pk(
     Ok(response)
 }
 
-async fn send_relay_request(addr: SocketAddr, key: &str) -> Result<Option<RendezvousMessage>> {
-    let mut stream = FramedStream::new(addr, None, 1_500).await?;
+async fn send_relay_request_on_stream(
+    stream: &mut FramedStream,
+    id: &str,
+    uuid: &str,
+    key: &str,
+) -> Result<Option<RendezvousMessage>> {
     let mut message = RendezvousMessage::new();
     message.set_request_relay(RequestRelay {
-        id: "peer-a".to_owned(),
-        uuid: "relay-test-uuid".to_owned(),
+        id: id.to_owned(),
+        uuid: uuid.to_owned(),
+        licence_key: key.to_owned(),
+        ..Default::default()
+    });
+    stream.send(&message).await?;
+    let response = match stream.next_timeout(1_000).await {
+        Some(Ok(bytes)) => Some(RendezvousMessage::parse_from_bytes(&bytes)?),
+        Some(Err(err)) => return Err(err.into()),
+        None => None,
+    };
+    Ok(response)
+}
+
+async fn send_relay_request(addr: SocketAddr, key: &str) -> Result<Option<RendezvousMessage>> {
+    let mut stream = FramedStream::new(addr, None, 1_500).await?;
+    send_relay_request_on_stream(&mut stream, "peer-a", "relay-test-uuid", key).await
+}
+
+async fn send_punch_hole_request_on_stream(
+    stream: &mut FramedStream,
+    id: &str,
+    key: &str,
+) -> Result<Option<RendezvousMessage>> {
+    let mut message = RendezvousMessage::new();
+    message.set_punch_hole_request(PunchHoleRequest {
+        id: id.to_owned(),
         licence_key: key.to_owned(),
         ..Default::default()
     });
@@ -564,5 +593,89 @@ fn hbbs_register_pk_prunes_stale_peer_before_enforcing_cap_process() -> Result<(
     })?;
     assert!(!runtime.block_on(peer_exists(&db_path, "oldpeer1"))?);
     assert!(runtime.block_on(peer_exists(&db_path, "newpeer1"))?);
+    Ok(())
+}
+
+#[test]
+fn hbbs_request_relay_fanout_limit_process() -> Result<()> {
+    let temp_dir = unique_temp_dir("hbbs-relay-fanout-process-test")?;
+    let (port, _child) = spawn_hbbs_in_dir(
+        "server-key",
+        temp_dir,
+        &[
+            ("FANOUT_WINDOW_SECONDS", "60"),
+            ("MAX_RELAY_TARGETS_PER_IP_PER_WINDOW", "1"),
+        ],
+    )?;
+    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
+    let runtime = runtime()?;
+    runtime.block_on(async move {
+        let mut stream = FramedStream::new(addr, None, 1_500).await?;
+        let first =
+            send_relay_request_on_stream(&mut stream, "peer-a", "relay-a", "server-key").await?;
+        assert!(
+            first.is_none(),
+            "first relay fan-out request should not be refused"
+        );
+
+        let second = send_relay_request_on_stream(&mut stream, "peer-b", "relay-b", "server-key")
+            .await?
+            .context("second relay fan-out request should receive a refusal")?;
+        match second.union {
+            Some(rendezvous_message::Union::RelayResponse(response)) => {
+                assert_eq!(response.refuse_reason, "Too many distinct relay targets");
+            }
+            other => bail!("unexpected response to relay fan-out refusal: {other:?}"),
+        }
+        Ok::<(), hbb_common::anyhow::Error>(())
+    })?;
+    Ok(())
+}
+
+#[test]
+fn hbbs_tcp_punch_entries_prune_after_ttl_process() -> Result<()> {
+    let temp_dir = unique_temp_dir("hbbs-tcp-punch-prune-process-test")?;
+    let (port, _child) = spawn_hbbs_in_dir(
+        "server-key",
+        temp_dir,
+        &[
+            ("TCP_PUNCH_ENTRY_TTL_SECS", "1"),
+            ("MAX_TCP_PUNCH_ENTRIES", "16"),
+        ],
+    )?;
+    let udp_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
+    let admin_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port - 1);
+    let tcp_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
+    let runtime = runtime()?;
+    runtime.block_on(async {
+        let response = send_register_pk(udp_addr, "target11", "server-key")
+            .await?
+            .context("register_pk should receive a response")?;
+        match response.union {
+            Some(rendezvous_message::Union::RegisterPkResponse(RegisterPkResponse {
+                result,
+                ..
+            })) => {
+                assert_eq!(result, register_pk_response::Result::OK.into());
+            }
+            other => bail!("unexpected register_pk response: {other:?}"),
+        }
+
+        let mut stream = FramedStream::new(tcp_addr, None, 1_500).await?;
+        let response =
+            send_punch_hole_request_on_stream(&mut stream, "target11", "server-key").await?;
+        assert!(
+            response.is_none(),
+            "live punch-hole request should not receive an immediate response"
+        );
+
+        std::thread::sleep(Duration::from_millis(1_250));
+        let stats = admin_command(admin_addr, "ps")?;
+        assert!(
+            stats.contains("tcp_punch_entries=0"),
+            "unexpected protection stats: {stats}"
+        );
+        Ok::<(), hbb_common::anyhow::Error>(())
+    })?;
     Ok(())
 }

@@ -47,8 +47,15 @@ impl PendingRelay {
     }
 }
 
+struct ActiveRelay {
+    peer_a_ip: String,
+    peer_b_ip: String,
+    started_at: Instant,
+}
+
 lazy_static::lazy_static! {
     static ref PEERS: Mutex<HashMap<String, PendingRelay>> = Default::default();
+    static ref ACTIVE_RELAYS: Mutex<HashMap<String, ActiveRelay>> = Default::default();
     static ref USAGE: RwLock<HashMap<String, Usage>> = Default::default();
     static ref BLACKLIST: RwLock<HashSet<String>> = Default::default();
     static ref BLOCKLIST: RwLock<HashSet<String>> = Default::default();
@@ -61,6 +68,10 @@ static TOTAL_BANDWIDTH: AtomicUsize = AtomicUsize::new(1024 * 1024 * 1024); // i
 static SINGLE_BANDWIDTH: AtomicUsize = AtomicUsize::new(128 * 1024 * 1024); // in bit/s
 static MAX_PENDING_RELAYS: AtomicUsize = AtomicUsize::new(4096);
 static MAX_PENDING_RELAYS_PER_IP: AtomicUsize = AtomicUsize::new(64);
+static MAX_ACTIVE_RELAYS: AtomicUsize = AtomicUsize::new(2048);
+static MAX_ACTIVE_RELAYS_PER_IP: AtomicUsize = AtomicUsize::new(128);
+static RELAY_IDLE_TIMEOUT_SECS: AtomicUsize = AtomicUsize::new(30);
+static MAX_RELAY_SESSION_SECS: AtomicUsize = AtomicUsize::new(14_400);
 const BLACKLIST_FILE: &str = "blacklist.txt";
 const BLOCKLIST_FILE: &str = "blocklist.txt";
 const PENDING_RELAY_HOLD_SECS: u64 = 30;
@@ -187,6 +198,46 @@ fn check_params() {
         "MAX_PENDING_RELAYS_PER_IP: {}",
         MAX_PENDING_RELAYS_PER_IP.load(Ordering::SeqCst)
     );
+    let tmp = std::env::var("MAX_ACTIVE_RELAYS")
+        .map(|x| x.parse::<usize>().unwrap_or(0))
+        .unwrap_or(0);
+    if tmp > 0 {
+        MAX_ACTIVE_RELAYS.store(tmp, Ordering::SeqCst);
+    }
+    log::info!(
+        "MAX_ACTIVE_RELAYS: {}",
+        MAX_ACTIVE_RELAYS.load(Ordering::SeqCst)
+    );
+    let tmp = std::env::var("MAX_ACTIVE_RELAYS_PER_IP")
+        .map(|x| x.parse::<usize>().unwrap_or(0))
+        .unwrap_or(0);
+    if tmp > 0 {
+        MAX_ACTIVE_RELAYS_PER_IP.store(tmp, Ordering::SeqCst);
+    }
+    log::info!(
+        "MAX_ACTIVE_RELAYS_PER_IP: {}",
+        MAX_ACTIVE_RELAYS_PER_IP.load(Ordering::SeqCst)
+    );
+    let tmp = std::env::var("RELAY_IDLE_TIMEOUT_SECS")
+        .map(|x| x.parse::<usize>().unwrap_or(0))
+        .unwrap_or(0);
+    if tmp > 0 {
+        RELAY_IDLE_TIMEOUT_SECS.store(tmp, Ordering::SeqCst);
+    }
+    log::info!(
+        "RELAY_IDLE_TIMEOUT_SECS: {}",
+        RELAY_IDLE_TIMEOUT_SECS.load(Ordering::SeqCst)
+    );
+    let tmp = std::env::var("MAX_RELAY_SESSION_SECS")
+        .map(|x| x.parse::<usize>().unwrap_or(0))
+        .unwrap_or(0);
+    if tmp > 0 {
+        MAX_RELAY_SESSION_SECS.store(tmp, Ordering::SeqCst);
+    }
+    log::info!(
+        "MAX_RELAY_SESSION_SECS: {}",
+        MAX_RELAY_SESSION_SECS.load(Ordering::SeqCst)
+    );
 }
 
 async fn check_cmd(cmd: &str, limiter: Limiter) -> String {
@@ -197,7 +248,7 @@ async fn check_cmd(cmd: &str, limiter: Limiter) -> String {
     match fds.next() {
         Some("h") => {
             res = format!(
-                "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n",
+                "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n",
                 "blacklist-add(ba) <ip>",
                 "blacklist-remove(br) <ip>",
                 "blacklist(b) <ip>",
@@ -209,6 +260,7 @@ async fn check_cmd(cmd: &str, limiter: Limiter) -> String {
                 "limit-speed(ls) [value(Mb/s)]",
                 "total-bandwidth(tb) [value(Mb/s)]",
                 "single-bandwidth(sb) [value(Mb/s)]",
+                "active-relays(ar)",
                 "protection-stats(ps)",
                 "usage(u)"
             )
@@ -359,10 +411,44 @@ async fn check_cmd(cmd: &str, limiter: Limiter) -> String {
                 );
             }
         }
+        Some("active-relays" | "ar") => {
+            let active_relays = ACTIVE_RELAYS.lock().await;
+            let _ = writeln!(res, "{}", active_relays.len());
+            for (uuid, relay) in active_relays.iter() {
+                let _ = writeln!(
+                    res,
+                    "{}: {} <-> {} ({}s)",
+                    uuid,
+                    relay.peer_a_ip,
+                    relay.peer_b_ip,
+                    relay.started_at.elapsed().as_secs()
+                );
+            }
+        }
         Some("protection-stats" | "ps") => {
             for line in crate::common::protection_limits_summary() {
                 let _ = writeln!(res, "{line}");
             }
+            let _ = writeln!(
+                res,
+                "max_active_relays={}",
+                MAX_ACTIVE_RELAYS.load(Ordering::SeqCst)
+            );
+            let _ = writeln!(
+                res,
+                "max_active_relays_per_ip={}",
+                MAX_ACTIVE_RELAYS_PER_IP.load(Ordering::SeqCst)
+            );
+            let _ = writeln!(
+                res,
+                "relay_idle_timeout_secs={}",
+                RELAY_IDLE_TIMEOUT_SECS.load(Ordering::SeqCst)
+            );
+            let _ = writeln!(
+                res,
+                "max_relay_session_secs={}",
+                MAX_RELAY_SESSION_SECS.load(Ordering::SeqCst)
+            );
             for (name, value) in crate::common::protection_stats_snapshot() {
                 let _ = writeln!(res, "{name}={value}");
             }
@@ -492,6 +578,40 @@ async fn make_pair_(stream: impl StreamTrait, addr: SocketAddr, key: &str, limit
                     let mut pending = PEERS.lock().await.remove(&rf.uuid);
                     if let Some(pending) = pending.as_mut() {
                         log::info!("Relayrequest {} from {} got paired", rf.uuid, addr);
+                        let peer_a_ip = pending.ip.clone();
+                        let peer_b_ip = addr.ip().to_string();
+                        let mut active_relays = ACTIVE_RELAYS.lock().await;
+                        let active_for_peer_a =
+                            count_active_relays_for_ip(&active_relays, &peer_a_ip);
+                        let active_for_peer_b =
+                            count_active_relays_for_ip(&active_relays, &peer_b_ip);
+                        if let Some(reason) = active_relay_limit_reason(
+                            active_relays.len(),
+                            active_for_peer_a,
+                            active_for_peer_b,
+                        ) {
+                            drop(active_relays);
+                            crate::common::record_protection_event("active_relay_rejected");
+                            log::warn!(
+                                "Rejecting active relay {} between {} and {}: {}",
+                                rf.uuid,
+                                peer_a_ip,
+                                peer_b_ip,
+                                reason
+                            );
+                            send_relay_refuse(&mut stream, reason).await;
+                            send_relay_refuse(&mut *pending.stream, reason).await;
+                            return;
+                        }
+                        active_relays.insert(
+                            rf.uuid.clone(),
+                            ActiveRelay {
+                                peer_a_ip,
+                                peer_b_ip,
+                                started_at: Instant::now(),
+                            },
+                        );
+                        drop(active_relays);
                         let id = format!("{}:{}", addr.ip(), addr.port());
                         USAGE.write().await.insert(id.clone(), Default::default());
                         let peer = &mut pending.stream;
@@ -500,12 +620,14 @@ async fn make_pair_(stream: impl StreamTrait, addr: SocketAddr, key: &str, limit
                             stream.set_raw();
                             log::info!("Both are raw");
                         }
-                        if let Err(err) = relay(addr, &mut stream, peer, limiter, id.clone()).await
+                        if let Err(err) =
+                            relay(&rf.uuid, addr, &mut stream, peer, limiter, id.clone()).await
                         {
                             log::info!("Relay of {} closed: {}", addr, err);
                         } else {
                             log::info!("Relay of {} closed", addr);
                         }
+                        ACTIVE_RELAYS.lock().await.remove(&rf.uuid);
                         USAGE.write().await.remove(&id);
                     } else {
                         log::info!("New relay request {} from {}", rf.uuid, addr);
@@ -552,7 +674,30 @@ fn pending_relay_limit_reason(total_pending: usize, pending_for_ip: usize) -> Op
     None
 }
 
-async fn send_relay_refuse(stream: &mut impl StreamTrait, reason: &str) {
+fn count_active_relays_for_ip(active_relays: &HashMap<String, ActiveRelay>, ip: &str) -> usize {
+    active_relays
+        .values()
+        .filter(|relay| relay.peer_a_ip == ip || relay.peer_b_ip == ip)
+        .count()
+}
+
+fn active_relay_limit_reason(
+    total_active: usize,
+    active_for_peer_a: usize,
+    active_for_peer_b: usize,
+) -> Option<&'static str> {
+    if total_active >= MAX_ACTIVE_RELAYS.load(Ordering::SeqCst) {
+        return Some("Relay server busy");
+    }
+    if active_for_peer_a >= MAX_ACTIVE_RELAYS_PER_IP.load(Ordering::SeqCst)
+        || active_for_peer_b >= MAX_ACTIVE_RELAYS_PER_IP.load(Ordering::SeqCst)
+    {
+        return Some("Too many active relay sessions");
+    }
+    None
+}
+
+async fn send_relay_refuse(stream: &mut dyn StreamTrait, reason: &str) {
     let mut msg_out = RendezvousMessage::new();
     msg_out.set_relay_response(RelayResponse {
         refuse_reason: reason.to_owned(),
@@ -564,6 +709,7 @@ async fn send_relay_refuse(stream: &mut impl StreamTrait, reason: &str) {
 }
 
 async fn relay(
+    relay_uuid: &str,
     addr: SocketAddr,
     stream: &mut impl StreamTrait,
     peer: &mut Box<dyn StreamTrait>,
@@ -585,6 +731,7 @@ async fn relay(
         (sb * DOWNGRADE_THRESHOLD_100.load(Ordering::SeqCst) as f64 / 100. / 1000.) as usize; // in bit/ms
     let mut timer = interval(Duration::from_secs(3));
     let mut last_recv_time = std::time::Instant::now();
+    let session_started_at = std::time::Instant::now();
     loop {
         tokio::select! {
             res = peer.recv() => {
@@ -626,8 +773,17 @@ async fn relay(
                 }
             },
             _ = timer.tick() => {
-                if last_recv_time.elapsed().as_secs() > 30 {
+                if last_recv_time.elapsed().as_secs()
+                    > RELAY_IDLE_TIMEOUT_SECS.load(Ordering::SeqCst) as u64
+                {
                     bail!("Timeout");
+                }
+                let max_session_secs = MAX_RELAY_SESSION_SECS.load(Ordering::SeqCst);
+                if max_session_secs > 0
+                    && session_started_at.elapsed().as_secs() > max_session_secs as u64
+                {
+                    crate::common::record_protection_event("relay_session_duration_limit_hits");
+                    bail!("Relay session duration limit reached");
                 }
             }
         }
@@ -656,7 +812,8 @@ async fn relay(
             {
                 downgrade = true;
                 log::info!(
-                    "Downgrade {}, exceed downgrade threshold {}bit/ms in {}ms",
+                    "Downgrade relay {} ({}), exceed downgrade threshold {}bit/ms in {}ms",
+                    relay_uuid,
                     id,
                     downgrade_threshold,
                     elapsed
@@ -750,7 +907,10 @@ impl StreamTrait for tokio_tungstenite::WebSocketStream<TcpStream> {
 
 #[cfg(test)]
 mod tests {
-    use super::{pending_relay_limit_reason, MAX_PENDING_RELAYS, MAX_PENDING_RELAYS_PER_IP};
+    use super::{
+        active_relay_limit_reason, pending_relay_limit_reason, MAX_ACTIVE_RELAYS,
+        MAX_ACTIVE_RELAYS_PER_IP, MAX_PENDING_RELAYS, MAX_PENDING_RELAYS_PER_IP,
+    };
     use std::sync::{atomic::Ordering, Mutex};
 
     static TEST_RELAY_LIMITS_LOCK: Mutex<()> = Mutex::new(());
@@ -773,5 +933,32 @@ mod tests {
 
         MAX_PENDING_RELAYS.store(saved_total, Ordering::SeqCst);
         MAX_PENDING_RELAYS_PER_IP.store(saved_per_ip, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn active_relay_limits_enforce_global_and_per_ip_caps() {
+        let _guard = TEST_RELAY_LIMITS_LOCK.lock().unwrap();
+        let saved_total = MAX_ACTIVE_RELAYS.load(Ordering::SeqCst);
+        let saved_per_ip = MAX_ACTIVE_RELAYS_PER_IP.load(Ordering::SeqCst);
+
+        MAX_ACTIVE_RELAYS.store(2, Ordering::SeqCst);
+        MAX_ACTIVE_RELAYS_PER_IP.store(1, Ordering::SeqCst);
+
+        assert_eq!(active_relay_limit_reason(0, 0, 0), None);
+        assert_eq!(
+            active_relay_limit_reason(1, 1, 0),
+            Some("Too many active relay sessions")
+        );
+        assert_eq!(
+            active_relay_limit_reason(1, 0, 1),
+            Some("Too many active relay sessions")
+        );
+        assert_eq!(
+            active_relay_limit_reason(2, 0, 0),
+            Some("Relay server busy")
+        );
+
+        MAX_ACTIVE_RELAYS.store(saved_total, Ordering::SeqCst);
+        MAX_ACTIVE_RELAYS_PER_IP.store(saved_per_ip, Ordering::SeqCst);
     }
 }

@@ -21,11 +21,15 @@ const TRUST_PROXY_HEADERS_ENV: &str = "TRUST_PROXY_HEADERS";
 const CONN_RATE_WINDOW_SECONDS_ENV: &str = "CONNECTION_RATE_WINDOW_SECONDS";
 const MAX_CONN_PER_IP_PER_WINDOW_ENV: &str = "MAX_CONNECTIONS_PER_IP_PER_WINDOW";
 const MAX_CONNECTION_RATE_ENTRIES_ENV: &str = "MAX_CONNECTION_RATE_ENTRIES";
+const CONTROL_MSG_RATE_WINDOW_SECONDS_ENV: &str = "CONTROL_MESSAGE_RATE_WINDOW_SECONDS";
+const MAX_CONTROL_MSGS_PER_IP_PER_WINDOW_ENV: &str = "MAX_CONTROL_MESSAGES_PER_IP_PER_WINDOW";
 const UDP_RATE_WINDOW_SECONDS_ENV: &str = "UDP_RATE_WINDOW_SECONDS";
 const MAX_UDP_PACKETS_PER_IP_PER_WINDOW_ENV: &str = "MAX_UDP_PACKETS_PER_IP_PER_WINDOW";
 const DEFAULT_CONN_RATE_WINDOW_SECONDS: usize = 60;
 const DEFAULT_MAX_CONN_PER_IP_PER_WINDOW: usize = 120;
 const DEFAULT_MAX_CONNECTION_RATE_ENTRIES: usize = 8_192;
+const DEFAULT_CONTROL_MSG_RATE_WINDOW_SECONDS: usize = 60;
+const DEFAULT_MAX_CONTROL_MSGS_PER_IP_PER_WINDOW: usize = 1_200;
 const DEFAULT_UDP_RATE_WINDOW_SECONDS: usize = 60;
 const DEFAULT_MAX_UDP_PACKETS_PER_IP_PER_WINDOW: usize = 240;
 
@@ -170,6 +174,20 @@ fn udp_rate_window_seconds() -> usize {
     env_usize_or(UDP_RATE_WINDOW_SECONDS_ENV, DEFAULT_UDP_RATE_WINDOW_SECONDS)
 }
 
+fn control_msg_rate_window_seconds() -> usize {
+    env_usize_or(
+        CONTROL_MSG_RATE_WINDOW_SECONDS_ENV,
+        DEFAULT_CONTROL_MSG_RATE_WINDOW_SECONDS,
+    )
+}
+
+fn max_control_msgs_per_ip_per_window() -> usize {
+    env_usize_or(
+        MAX_CONTROL_MSGS_PER_IP_PER_WINDOW_ENV,
+        DEFAULT_MAX_CONTROL_MSGS_PER_IP_PER_WINDOW,
+    )
+}
+
 fn max_udp_packets_per_ip_per_window() -> usize {
     env_usize_or(
         MAX_UDP_PACKETS_PER_IP_PER_WINDOW_ENV,
@@ -271,6 +289,20 @@ pub fn allow_udp_packet_from_ip(scope: &str, addr: SocketAddr) -> bool {
 }
 
 #[allow(dead_code)]
+pub fn allow_control_message_from_ip(scope: &str, addr: SocketAddr) -> bool {
+    let allowed = allow_ip_activity(
+        scope,
+        addr,
+        control_msg_rate_window_seconds(),
+        max_control_msgs_per_ip_per_window(),
+    );
+    if !allowed {
+        record_protection_event("control_message_rate_limit_hits");
+    }
+    allowed
+}
+
+#[allow(dead_code)]
 pub fn record_protection_event(name: &'static str) {
     let mut lock = PROTECTION_STATS.lock().unwrap();
     *lock.entry(name).or_insert(0) += 1;
@@ -299,6 +331,11 @@ pub fn protection_limits_summary() -> Vec<String> {
         format!(
             "connection_rate_entry_cap={}",
             max_connection_rate_entries()
+        ),
+        format!(
+            "control_messages_per_ip_per_window={}/{}s",
+            max_control_msgs_per_ip_per_window(),
+            control_msg_rate_window_seconds()
         ),
         format!(
             "udp_packets_per_ip_per_window={}/{}s",
@@ -459,13 +496,16 @@ async fn check_software_update_() -> hbb_common::ResultType<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        allow_connection_from_ip, allow_udp_packet_from_ip, apply_trusted_proxy_addr,
-        conn_rate_window_seconds, max_conn_per_ip_per_window, max_connection_rate_entries,
-        max_udp_packets_per_ip_per_window, protection_limits_summary, protection_stats_snapshot,
-        record_protection_event, trust_proxy_headers, udp_rate_window_seconds,
-        CONNECTION_RATE_LIMITS, CONN_RATE_WINDOW_SECONDS_ENV, MAX_CONNECTION_RATE_ENTRIES_ENV,
-        MAX_CONN_PER_IP_PER_WINDOW_ENV, MAX_UDP_PACKETS_PER_IP_PER_WINDOW_ENV, PROTECTION_STATS,
-        TRUST_PROXY_HEADERS_ENV, UDP_RATE_WINDOW_SECONDS_ENV,
+        allow_connection_from_ip, allow_control_message_from_ip, allow_udp_packet_from_ip,
+        apply_trusted_proxy_addr, conn_rate_window_seconds, control_msg_rate_window_seconds,
+        max_conn_per_ip_per_window, max_connection_rate_entries,
+        max_control_msgs_per_ip_per_window, max_udp_packets_per_ip_per_window,
+        protection_limits_summary, protection_stats_snapshot, record_protection_event,
+        trust_proxy_headers, udp_rate_window_seconds, CONNECTION_RATE_LIMITS,
+        CONN_RATE_WINDOW_SECONDS_ENV, CONTROL_MSG_RATE_WINDOW_SECONDS_ENV,
+        MAX_CONNECTION_RATE_ENTRIES_ENV, MAX_CONN_PER_IP_PER_WINDOW_ENV,
+        MAX_CONTROL_MSGS_PER_IP_PER_WINDOW_ENV, MAX_UDP_PACKETS_PER_IP_PER_WINDOW_ENV,
+        PROTECTION_STATS, TRUST_PROXY_HEADERS_ENV, UDP_RATE_WINDOW_SECONDS_ENV,
     };
     use http::HeaderMap;
     use std::{
@@ -512,7 +552,9 @@ mod tests {
         PROTECTION_STATS.lock().unwrap().clear();
         std::env::set_var(MAX_CONN_PER_IP_PER_WINDOW_ENV, "2");
         std::env::set_var(CONN_RATE_WINDOW_SECONDS_ENV, "60");
-        std::env::set_var(MAX_CONNECTION_RATE_ENTRIES_ENV, "2");
+        std::env::set_var(MAX_CONNECTION_RATE_ENTRIES_ENV, "4");
+        std::env::set_var(MAX_CONTROL_MSGS_PER_IP_PER_WINDOW_ENV, "2");
+        std::env::set_var(CONTROL_MSG_RATE_WINDOW_SECONDS_ENV, "60");
         std::env::set_var(MAX_UDP_PACKETS_PER_IP_PER_WINDOW_ENV, "3");
         std::env::set_var(UDP_RATE_WINDOW_SECONDS_ENV, "60");
 
@@ -520,6 +562,9 @@ mod tests {
         assert!(allow_connection_from_ip("hbbs-main", remote));
         assert!(allow_connection_from_ip("hbbs-main", remote));
         assert!(!allow_connection_from_ip("hbbs-main", remote));
+        assert!(allow_control_message_from_ip("hbbs-control", remote));
+        assert!(allow_control_message_from_ip("hbbs-control", remote));
+        assert!(!allow_control_message_from_ip("hbbs-control", remote));
         assert!(allow_udp_packet_from_ip("hbbs-udp", remote));
         assert!(allow_udp_packet_from_ip("hbbs-udp", remote));
         assert!(allow_udp_packet_from_ip("hbbs-udp", remote));
@@ -533,6 +578,7 @@ mod tests {
             protection_stats_snapshot(),
             vec![
                 ("connection_rate_limit_hits".to_owned(), 1),
+                ("control_message_rate_limit_hits".to_owned(), 1),
                 ("udp_rate_limit_hits".to_owned(), 1),
             ]
         );
@@ -541,6 +587,7 @@ mod tests {
             protection_stats_snapshot(),
             vec![
                 ("connection_rate_limit_hits".to_owned(), 1),
+                ("control_message_rate_limit_hits".to_owned(), 1),
                 ("peer_records_pruned".to_owned(), 1),
                 ("udp_rate_limit_hits".to_owned(), 1),
             ]
@@ -549,6 +596,8 @@ mod tests {
         std::env::remove_var(MAX_CONN_PER_IP_PER_WINDOW_ENV);
         std::env::remove_var(CONN_RATE_WINDOW_SECONDS_ENV);
         std::env::remove_var(MAX_CONNECTION_RATE_ENTRIES_ENV);
+        std::env::remove_var(MAX_CONTROL_MSGS_PER_IP_PER_WINDOW_ENV);
+        std::env::remove_var(CONTROL_MSG_RATE_WINDOW_SECONDS_ENV);
         std::env::remove_var(MAX_UDP_PACKETS_PER_IP_PER_WINDOW_ENV);
         std::env::remove_var(UDP_RATE_WINDOW_SECONDS_ENV);
         CONNECTION_RATE_LIMITS.lock().unwrap().clear();
@@ -566,6 +615,14 @@ mod tests {
             super::DEFAULT_MAX_CONNECTION_RATE_ENTRIES
         );
         assert_eq!(
+            max_control_msgs_per_ip_per_window(),
+            super::DEFAULT_MAX_CONTROL_MSGS_PER_IP_PER_WINDOW
+        );
+        assert_eq!(
+            control_msg_rate_window_seconds(),
+            super::DEFAULT_CONTROL_MSG_RATE_WINDOW_SECONDS
+        );
+        assert_eq!(
             max_udp_packets_per_ip_per_window(),
             super::DEFAULT_MAX_UDP_PACKETS_PER_IP_PER_WINDOW
         );
@@ -578,6 +635,7 @@ mod tests {
             vec![
                 "connections_per_ip_per_window=120/60s".to_owned(),
                 "connection_rate_entry_cap=8192".to_owned(),
+                "control_messages_per_ip_per_window=1200/60s".to_owned(),
                 "udp_packets_per_ip_per_window=240/60s".to_owned(),
                 "trust_proxy_headers=false".to_owned(),
             ]

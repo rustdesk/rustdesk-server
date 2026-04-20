@@ -85,7 +85,8 @@ impl Database {
             .parse()
             .unwrap_or(1);
         log::debug!("MAX_DATABASE_CONNECTIONS={}", n);
-        let max_total_peers = env_usize_or("MAX_TOTAL_PEER_RECORDS", DEFAULT_MAX_TOTAL_PEER_RECORDS);
+        let max_total_peers =
+            env_usize_or("MAX_TOTAL_PEER_RECORDS", DEFAULT_MAX_TOTAL_PEER_RECORDS);
         let peer_record_retention_days = env_usize_or(
             "PEER_RECORD_RETENTION_DAYS",
             DEFAULT_PEER_RECORD_RETENTION_DAYS,
@@ -155,7 +156,11 @@ impl Database {
                 let deleted = self.prune_old_peer_records().await?;
                 if deleted > 0 {
                     crate::common::record_protection_event("peer_records_pruned");
-                    log::info!("pruned {} old peer records before inserting {}", deleted, id);
+                    log::info!(
+                        "pruned {} old peer records before inserting {}",
+                        deleted,
+                        id
+                    );
                 }
             }
         }
@@ -219,7 +224,10 @@ mod tests {
     use super::{peer_limit_reached, peer_retention_cutoff_arg, peer_retention_prune_enabled};
     use hbb_common::tokio;
     use sqlx::Connection as _;
-    use std::{path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
+    use std::{
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     #[test]
     fn peer_limit_helper_rejects_when_total_reaches_cap() {
