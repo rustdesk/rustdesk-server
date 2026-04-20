@@ -13,7 +13,9 @@ use hbb_common::{
     log,
     protobuf::{Message as _, MessageField},
     rendezvous_proto::{
-        register_pk_response::Result::{TOO_FREQUENT, UUID_MISMATCH},
+        register_pk_response::Result::{
+            INVALID_ID_FORMAT, LICENSE_MISMATCH, TOO_FREQUENT, UUID_MISMATCH,
+        },
         *,
     },
     tcp::{listen_any, FramedStream},
@@ -33,7 +35,7 @@ use hbb_common::{
 use ipnetwork::Ipv4Network;
 use sodiumoxide::crypto::sign;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     sync::Arc,
@@ -48,11 +50,31 @@ enum Data {
 }
 
 const REG_TIMEOUT: i32 = 30_000;
+const MIN_REGISTRATION_ID_LEN: usize = 6;
+const MAX_REGISTRATION_ID_LEN: usize = 100;
+const MAX_ONLINE_REQUEST_PEERS_ENV: &str = "MAX_ONLINE_REQUEST_PEERS";
+const FANOUT_WINDOW_SECONDS_ENV: &str = "FANOUT_WINDOW_SECONDS";
+const MAX_FANOUT_TRACKED_SOURCES_ENV: &str = "MAX_FANOUT_TRACKED_SOURCES";
+const MAX_PUNCH_TARGETS_PER_IP_PER_WINDOW_ENV: &str = "MAX_PUNCH_TARGETS_PER_IP_PER_WINDOW";
+const MAX_RELAY_TARGETS_PER_IP_PER_WINDOW_ENV: &str = "MAX_RELAY_TARGETS_PER_IP_PER_WINDOW";
+const TCP_PUNCH_ENTRY_TTL_SECS_ENV: &str = "TCP_PUNCH_ENTRY_TTL_SECS";
+const MAX_TCP_PUNCH_ENTRIES_ENV: &str = "MAX_TCP_PUNCH_ENTRIES";
+const DEFAULT_MAX_ONLINE_REQUEST_PEERS: usize = 4_096;
+const DEFAULT_FANOUT_WINDOW_SECONDS: usize = 60;
+const DEFAULT_MAX_FANOUT_TRACKED_SOURCES: usize = 8_192;
+const DEFAULT_MAX_PUNCH_TARGETS_PER_IP_PER_WINDOW: usize = 256;
+const DEFAULT_MAX_RELAY_TARGETS_PER_IP_PER_WINDOW: usize = 256;
+const DEFAULT_TCP_PUNCH_ENTRY_TTL_SECS: usize = 30;
+const DEFAULT_MAX_TCP_PUNCH_ENTRIES: usize = 4_096;
 type TcpStreamSink = SplitSink<Framed<TcpStream, BytesCodec>, Bytes>;
 type WsSink = SplitSink<tokio_tungstenite::WebSocketStream<TcpStream>, tungstenite::Message>;
 enum Sink {
     TcpStream(TcpStreamSink),
     Ws(WsSink),
+}
+struct TcpPunchEntry {
+    sink: Sink,
+    created_at: Instant,
 }
 type Sender = mpsc::UnboundedSender<Data>;
 type Receiver = mpsc::UnboundedReceiver<Data>;
@@ -65,9 +87,26 @@ static ALWAYS_USE_RELAY: AtomicBool = AtomicBool::new(false);
 use once_cell::sync::Lazy;
 use tokio::sync::Mutex as TokioMutex; // differentiate if needed
 #[derive(Clone)]
-struct PunchReqEntry { tm: Instant, from_ip: String, to_ip: String, to_id: String }
+struct PunchReqEntry {
+    tm: Instant,
+    from_ip: String,
+    to_ip: String,
+    to_id: String,
+}
 static PUNCH_REQS: Lazy<TokioMutex<Vec<PunchReqEntry>>> = Lazy::new(|| TokioMutex::new(Vec::new()));
 const PUNCH_REQ_DEDUPE_SEC: u64 = 60;
+const PUNCH_REQ_RETENTION_SECS: u64 = 600;
+const MAX_PUNCH_REQS: usize = 8192;
+
+struct FanoutEntry {
+    window_started_at: Instant,
+    last_seen_at: Instant,
+    targets: HashSet<String>,
+}
+
+type FanoutMap = HashMap<String, FanoutEntry>;
+static PUNCH_FANOUT: Lazy<TokioMutex<FanoutMap>> = Lazy::new(|| TokioMutex::new(HashMap::new()));
+static RELAY_FANOUT: Lazy<TokioMutex<FanoutMap>> = Lazy::new(|| TokioMutex::new(HashMap::new()));
 
 #[derive(Clone)]
 struct Inner {
@@ -81,7 +120,7 @@ struct Inner {
 
 #[derive(Clone)]
 pub struct RendezvousServer {
-    tcp_punch: Arc<Mutex<HashMap<SocketAddr, Sink>>>,
+    tcp_punch: Arc<Mutex<HashMap<SocketAddr, TcpPunchEntry>>>,
     pm: PeerMap,
     tx: Sender,
     relay_servers: Arc<RelayServers>,
@@ -172,12 +211,13 @@ impl RendezvousServer {
             } else {
                 test_addr.parse()?
             };
+            let test_key = key.to_owned();
             tokio::spawn(async move {
-                if let Err(err) = test_hbbs(test_addr).await {
+                if let Err(err) = test_hbbs(test_addr, test_key.clone()).await {
                     if test_addr.is_ipv6() && test_addr.ip().is_unspecified() {
                         let mut test_addr = test_addr;
                         test_addr.set_ip(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
-                        if let Err(err) = test_hbbs(test_addr).await {
+                        if let Err(err) = test_hbbs(test_addr, test_key).await {
                             log::error!("Failed to run hbbs test with {test_addr}: {err}");
                             std::process::exit(1);
                         }
@@ -259,7 +299,12 @@ impl RendezvousServer {
                 res = socket.next() => {
                     match res {
                         Some(Ok((bytes, addr))) => {
-                            if let Err(err) = self.handle_udp(&bytes, addr.into(), socket, key).await {
+                            let addr: SocketAddr = addr.into();
+                            if !crate::common::allow_udp_packet_from_ip("hbbs-udp", addr) {
+                                log::warn!("Rate limit exceeded for hbbs-udp from {}", addr.ip());
+                                continue;
+                            }
+                            if let Err(err) = self.handle_udp(&bytes, addr, socket, key).await {
                                 log::error!("udp failure: {}", err);
                                 return LoopFailure::UdpSocket;
                             }
@@ -276,8 +321,12 @@ impl RendezvousServer {
                 res = listener2.accept() => {
                     match res {
                         Ok((stream, addr))  => {
+                            if !crate::common::allow_connection_from_ip("hbbs-nat", addr) {
+                                log::warn!("Rate limit exceeded for hbbs-nat from {}", addr.ip());
+                                continue;
+                            }
                             stream.set_nodelay(true).ok();
-                            self.handle_listener2(stream, addr).await;
+                            self.handle_listener2(stream, addr, key).await;
                         }
                         Err(err) => {
                            log::error!("listener2.accept failed: {}", err);
@@ -288,6 +337,10 @@ impl RendezvousServer {
                 res = listener3.accept() => {
                     match res {
                         Ok((stream, addr))  => {
+                            if !crate::common::allow_connection_from_ip("hbbs-ws", addr) {
+                                log::warn!("Rate limit exceeded for hbbs-ws from {}", addr.ip());
+                                continue;
+                            }
                             stream.set_nodelay(true).ok();
                             self.handle_listener(stream, addr, key, true).await;
                         }
@@ -300,6 +353,10 @@ impl RendezvousServer {
                 res = listener.accept() => {
                     match res {
                         Ok((stream, addr)) => {
+                            if !crate::common::allow_connection_from_ip("hbbs-main", addr) {
+                                log::warn!("Rate limit exceeded for hbbs-main from {}", addr.ip());
+                                continue;
+                            }
                             stream.set_nodelay(true).ok();
                             self.handle_listener(stream, addr, key, false).await;
                         }
@@ -326,6 +383,27 @@ impl RendezvousServer {
                 Some(rendezvous_message::Union::RegisterPeer(rp)) => {
                     // B registered
                     if !rp.id.is_empty() {
+                        if !is_valid_server_key(key, &rp.licence_key) {
+                            log::warn!(
+                                "Authentication failed from {} for peer {} - invalid key",
+                                addr,
+                                rp.id
+                            );
+                            return Ok(());
+                        }
+                        if !is_valid_registration_id(&rp.id) {
+                            log::warn!("Invalid peer registration id from {}: {:?}", addr, rp.id);
+                            return Ok(());
+                        }
+                        let ip = addr.ip().to_string();
+                        if !self.check_ip_blocker(&ip, &rp.id).await {
+                            log::warn!(
+                                "Peer registration rate-limited from {} for id {}",
+                                addr,
+                                rp.id
+                            );
+                            return Ok(());
+                        }
                         log::trace!("New peer registered: {:?} {:?}", &rp.id, &addr);
                         self.update_addr(rp.id, addr, socket).await?;
                         if self.inner.serial > rp.serial {
@@ -343,14 +421,29 @@ impl RendezvousServer {
                     if rk.uuid.is_empty() || rk.pk.is_empty() {
                         return Ok(());
                     }
+                    if !is_valid_server_key(key, &rk.licence_key) {
+                        log::warn!(
+                            "Authentication failed from {} for peer {} - invalid key",
+                            addr,
+                            rk.id
+                        );
+                        return send_rk_res(socket, addr, LICENSE_MISMATCH).await;
+                    }
                     let id = rk.id;
                     let ip = addr.ip().to_string();
-                    if id.len() < 6 {
-                        return send_rk_res(socket, addr, UUID_MISMATCH).await;
+                    if !is_valid_registration_id(&id) {
+                        return send_rk_res(socket, addr, INVALID_ID_FORMAT).await;
                     } else if !self.check_ip_blocker(&ip, &id).await {
                         return send_rk_res(socket, addr, TOO_FREQUENT).await;
                     }
-                    let peer = self.pm.get_or(&id).await;
+                    let Some(peer) = self.pm.get_or_for_registration(&id, &ip).await else {
+                        log::warn!(
+                            "Pending registration cache limit reached from {} for id {}",
+                            addr,
+                            id
+                        );
+                        return send_rk_res(socket, addr, TOO_FREQUENT).await;
+                    };
                     let (changed, ip_changed) = {
                         let peer = peer.read().await;
                         if peer.uuid.is_empty() {
@@ -397,29 +490,16 @@ impl RendezvousServer {
                     peer.write().await.reg_pk = req_pk;
                     if ip_changed {
                         let mut lock = IP_CHANGES.lock().await;
-                        if let Some((tm, ips)) = lock.get_mut(&id) {
-                            if tm.elapsed().as_secs() > IP_CHANGE_DUR {
-                                *tm = Instant::now();
-                                ips.clear();
-                                ips.insert(ip.clone(), 1);
-                            } else if let Some(v) = ips.get_mut(&ip) {
-                                *v += 1;
-                            } else {
-                                ips.insert(ip.clone(), 1);
-                            }
-                        } else {
-                            lock.insert(
-                                id.clone(),
-                                (Instant::now(), HashMap::from([(ip.clone(), 1)])),
-                            );
-                        }
+                        track_ip_change(&mut lock, &id, &ip);
                     }
-                    if changed {
-                        self.pm.update_pk(id, peer, addr, rk.uuid, rk.pk, ip).await;
-                    }
+                    let result = if changed {
+                        self.pm.update_pk(id, peer, addr, rk.uuid, rk.pk, ip).await
+                    } else {
+                        register_pk_response::Result::OK
+                    };
                     let mut msg_out = RendezvousMessage::new();
                     msg_out.set_register_pk_response(RegisterPkResponse {
-                        result: register_pk_response::Result::OK.into(),
+                        result: result.into(),
                         ..Default::default()
                     });
                     socket.send(&msg_out, addr).await?
@@ -489,19 +569,96 @@ impl RendezvousServer {
         ws: bool,
     ) -> bool {
         if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(bytes) {
+            let should_rate_limit = matches!(
+                msg_in.union.as_ref(),
+                Some(rendezvous_message::Union::PunchHoleRequest(_))
+                    | Some(rendezvous_message::Union::RequestRelay(_))
+                    | Some(rendezvous_message::Union::RelayResponse(_))
+                    | Some(rendezvous_message::Union::PunchHoleSent(_))
+                    | Some(rendezvous_message::Union::LocalAddr(_))
+                    | Some(rendezvous_message::Union::TestNatRequest(_))
+            );
+            if should_rate_limit
+                && !crate::common::allow_control_message_from_ip("hbbs-control", addr)
+            {
+                log::warn!("Control message rate limit exceeded from {}", addr.ip());
+                return false;
+            }
             match msg_in.union {
                 Some(rendezvous_message::Union::PunchHoleRequest(ph)) => {
                     // there maybe several attempt, so sink can be none
                     if let Some(sink) = sink.take() {
-                        self.tcp_punch.lock().await.insert(try_into_v4(addr), sink);
+                        let rejected_sink = {
+                            let mut lock = self.tcp_punch.lock().await;
+                            insert_tcp_punch_entry(&mut lock, try_into_v4(addr), sink)
+                        };
+                        if let Some(rejected_sink) = rejected_sink {
+                            crate::common::record_protection_event("tcp_punch_entry_limit_hits");
+                            log::warn!("tcp_punch entry limit exceeded for {}", addr);
+                            let mut msg_out = RendezvousMessage::new();
+                            msg_out.set_punch_hole_response(PunchHoleResponse {
+                                other_failure: "Too many pending TCP punch sessions".to_owned(),
+                                ..Default::default()
+                            });
+                            Self::send_to_sink(&mut Some(rejected_sink), msg_out).await;
+                            return false;
+                        }
                     }
                     allow_err!(self.handle_tcp_punch_hole_request(addr, ph, key, ws).await);
                     return true;
                 }
                 Some(rendezvous_message::Union::RequestRelay(mut rf)) => {
+                    let source_ip = try_into_v4(addr).ip().to_string();
+                    let target_id = rf.id.clone();
+                    let allowed = {
+                        let mut lock = RELAY_FANOUT.lock().await;
+                        allow_target_fanout(
+                            &mut lock,
+                            &source_ip,
+                            &target_id,
+                            max_relay_targets_per_ip_per_window(),
+                            "relay_fanout_entries_evicted",
+                            "relay_fanout_entries_rejected",
+                        )
+                    };
+                    if !allowed {
+                        crate::common::record_protection_event("relay_target_fanout_limit_hits");
+                        log::warn!(
+                            "Relay target fan-out limit exceeded from {} toward {}",
+                            addr,
+                            target_id
+                        );
+                        let mut msg_out = RendezvousMessage::new();
+                        msg_out.set_relay_response(RelayResponse {
+                            uuid: rf.uuid.clone(),
+                            refuse_reason: "Too many distinct relay targets".to_owned(),
+                            ..Default::default()
+                        });
+                        if sink.is_some() {
+                            Self::send_to_sink(sink, msg_out).await;
+                        } else {
+                            allow_err!(self.send_to_tcp_sync(msg_out, addr).await);
+                        }
+                        return true;
+                    }
                     // there maybe several attempt, so sink can be none
                     if let Some(sink) = sink.take() {
-                        self.tcp_punch.lock().await.insert(try_into_v4(addr), sink);
+                        let rejected_sink = {
+                            let mut lock = self.tcp_punch.lock().await;
+                            insert_tcp_punch_entry(&mut lock, try_into_v4(addr), sink)
+                        };
+                        if let Some(rejected_sink) = rejected_sink {
+                            crate::common::record_protection_event("tcp_punch_entry_limit_hits");
+                            log::warn!("tcp_punch entry limit exceeded for {}", addr);
+                            let mut msg_out = RendezvousMessage::new();
+                            msg_out.set_relay_response(RelayResponse {
+                                uuid: rf.uuid.clone(),
+                                refuse_reason: "Too many pending TCP punch sessions".to_owned(),
+                                ..Default::default()
+                            });
+                            Self::send_to_sink(&mut Some(rejected_sink), msg_out).await;
+                            return true;
+                        }
                     }
                     if let Some(peer) = self.pm.get_in_memory(&rf.id).await {
                         let mut msg_out = RendezvousMessage::new();
@@ -539,6 +696,10 @@ impl RendezvousServer {
                     allow_err!(self.handle_local_addr(la, addr, None).await);
                 }
                 Some(rendezvous_message::Union::TestNatRequest(tar)) => {
+                    if !is_valid_server_key(key, &tar.licence_key) {
+                        log::warn!("Authentication failed from {} for nat probe", addr);
+                        return true;
+                    }
                     let mut msg_out = RendezvousMessage::new();
                     let mut res = TestNatResponse {
                         port: addr.port() as _,
@@ -688,7 +849,11 @@ impl RendezvousServer {
     ) -> ResultType<(RendezvousMessage, Option<SocketAddr>)> {
         let mut ph = ph;
         if !key.is_empty() && ph.licence_key != key {
-            log::warn!("Authentication failed from {} for peer {} - invalid key", addr, ph.id);
+            log::warn!(
+                "Authentication failed from {} for peer {} - invalid key",
+                addr,
+                ph.id
+            );
             let mut msg_out = RendezvousMessage::new();
             msg_out.set_punch_hole_response(PunchHoleResponse {
                 failure: punch_hole_response::Failure::LICENSE_MISMATCH.into(),
@@ -697,6 +862,32 @@ impl RendezvousServer {
             return Ok((msg_out, None));
         }
         let id = ph.id;
+        let source_ip = try_into_v4(addr).ip().to_string();
+        let allowed = {
+            let mut lock = PUNCH_FANOUT.lock().await;
+            allow_target_fanout(
+                &mut lock,
+                &source_ip,
+                &id,
+                max_punch_targets_per_ip_per_window(),
+                "punch_fanout_entries_evicted",
+                "punch_fanout_entries_rejected",
+            )
+        };
+        if !allowed {
+            crate::common::record_protection_event("punch_target_fanout_limit_hits");
+            log::warn!(
+                "Punch target fan-out limit exceeded from {} toward {}",
+                addr,
+                id
+            );
+            let mut msg_out = RendezvousMessage::new();
+            msg_out.set_punch_hole_response(PunchHoleResponse {
+                other_failure: "Too many distinct punch targets".to_owned(),
+                ..Default::default()
+            });
+            return Ok((msg_out, None));
+        }
         // punch hole request from A, relay to B,
         // check if in same intranet first,
         // fetch local addrs if in same intranet.
@@ -715,21 +906,33 @@ impl RendezvousServer {
                 });
                 return Ok((msg_out, None));
             }
-            
+
             // record punch hole request (from addr -> peer id/peer_addr)
             {
                 let from_ip = try_into_v4(addr).ip().to_string();
                 let to_ip = try_into_v4(peer_addr).ip().to_string();
                 let to_id_clone = id.clone();
                 let mut lock = PUNCH_REQS.lock().await;
+                prune_punch_requests(&mut lock);
                 let mut dup = false;
-                for e in lock.iter().rev().take(30) { // only check recent tail subset for speed
+                for e in lock.iter().rev().take(30) {
+                    // only check recent tail subset for speed
                     if e.from_ip == from_ip && e.to_id == to_id_clone {
-                        if e.tm.elapsed().as_secs() < PUNCH_REQ_DEDUPE_SEC { dup = true; }
+                        if e.tm.elapsed().as_secs() < PUNCH_REQ_DEDUPE_SEC {
+                            dup = true;
+                        }
                         break;
                     }
                 }
-                if !dup { lock.push(PunchReqEntry { tm: Instant::now(), from_ip, to_ip, to_id: to_id_clone }); }
+                if !dup {
+                    lock.push(PunchReqEntry {
+                        tm: Instant::now(),
+                        from_ip,
+                        to_ip,
+                        to_id: to_id_clone,
+                    });
+                    prune_punch_requests(&mut lock);
+                }
             }
 
             let mut msg_out = RendezvousMessage::new();
@@ -795,8 +998,17 @@ impl RendezvousServer {
         stream: &mut FramedStream,
         peers: Vec<String>,
     ) -> ResultType<()> {
+        let peer_lookup_limit = clamped_online_request_peer_count(peers.len());
+        if peer_lookup_limit < peers.len() {
+            crate::common::record_protection_event("online_request_peer_limit_hits");
+            log::warn!(
+                "Capping online request lookup from {} to {} peers",
+                peers.len(),
+                peer_lookup_limit
+            );
+        }
         let mut states = BytesMut::zeroed((peers.len() + 7) / 8);
-        for (i, peer_id) in peers.iter().enumerate() {
+        for (i, peer_id) in peers.iter().take(peer_lookup_limit).enumerate() {
             if let Some(peer) = self.pm.get_in_memory(peer_id).await {
                 let elapsed = peer.read().await.last_reg_time.elapsed().as_millis() as i32;
                 // bytes index from left to right
@@ -820,7 +1032,11 @@ impl RendezvousServer {
 
     #[inline]
     async fn send_to_tcp(&mut self, msg: RendezvousMessage, addr: SocketAddr) {
-        let mut tcp = self.tcp_punch.lock().await.remove(&try_into_v4(addr));
+        let mut tcp = {
+            let mut lock = self.tcp_punch.lock().await;
+            prune_tcp_punch_entries(&mut lock);
+            lock.remove(&try_into_v4(addr)).map(|entry| entry.sink)
+        };
         tokio::spawn(async move {
             Self::send_to_sink(&mut tcp, msg).await;
         });
@@ -848,7 +1064,11 @@ impl RendezvousServer {
         msg: RendezvousMessage,
         addr: SocketAddr,
     ) -> ResultType<()> {
-        let mut sink = self.tcp_punch.lock().await.remove(&try_into_v4(addr));
+        let mut sink = {
+            let mut lock = self.tcp_punch.lock().await;
+            prune_tcp_punch_entries(&mut lock);
+            lock.remove(&try_into_v4(addr)).map(|entry| entry.sink)
+        };
         Self::send_to_sink(&mut sink, msg).await;
         Ok(())
     }
@@ -890,32 +1110,7 @@ impl RendezvousServer {
 
     async fn check_ip_blocker(&self, ip: &str, id: &str) -> bool {
         let mut lock = IP_BLOCKER.lock().await;
-        let now = Instant::now();
-        if let Some(old) = lock.get_mut(ip) {
-            let counter = &mut old.0;
-            if counter.1.elapsed().as_secs() > IP_BLOCK_DUR {
-                counter.0 = 0;
-            } else if counter.0 > 30 {
-                return false;
-            }
-            counter.0 += 1;
-            counter.1 = now;
-
-            let counter = &mut old.1;
-            let is_new = counter.0.get(id).is_none();
-            if counter.1.elapsed().as_secs() > DAY_SECONDS {
-                counter.0.clear();
-            } else if counter.0.len() > 300 {
-                return !is_new;
-            }
-            if is_new {
-                counter.0.insert(id.to_owned());
-            }
-            counter.1 = now;
-        } else {
-            lock.insert(ip.to_owned(), ((0, now), (Default::default(), now)));
-        }
-        true
+        allow_ip_registration_attempt(&mut lock, ip, id)
     }
 
     fn parse_relay_servers(&mut self, relay_servers: &str) {
@@ -942,13 +1137,14 @@ impl RendezvousServer {
         match fds.next() {
             Some("h") => {
                 res = format!(
-                    "{}\n{}\n{}\n{}\n{}\n{}\n{}\n",
+                    "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n",
                     "relay-servers(rs) <separated by ,>",
                     "reload-geo(rg)",
                     "ip-blocker(ib) [<ip>|<number>] [-]",
                     "ip-changes(ic) [<id>|<number>] [-]",
                     "punch-requests(pr) [<number>] [-]",
                     "always-use-relay(aur)",
+                    "protection-stats(ps)",
                     "test-geo(tg) <ip1> <ip2>"
                 )
             }
@@ -963,10 +1159,7 @@ impl RendezvousServer {
             }
             Some("ip-blocker" | "ib") => {
                 let mut lock = IP_BLOCKER.lock().await;
-                lock.retain(|&_, (a, b)| {
-                    a.1.elapsed().as_secs() <= IP_BLOCK_DUR
-                        || b.1.elapsed().as_secs() <= DAY_SECONDS
-                });
+                prune_ip_blocker_entries(&mut lock);
                 res = format!("{}\n", lock.len());
                 let ip = fds.next();
                 let mut start = ip.map(|x| x.parse::<i32>().unwrap_or(-1)).unwrap_or(-1);
@@ -1015,7 +1208,7 @@ impl RendezvousServer {
             }
             Some("ip-changes" | "ic") => {
                 let mut lock = IP_CHANGES.lock().await;
-                lock.retain(|&_, v| v.0.elapsed().as_secs() < IP_CHANGE_DUR_X2 && v.1.len() > 1);
+                prune_ip_change_entries(&mut lock);
                 res = format!("{}\n", lock.len());
                 let id = fds.next();
                 let mut start = id.map(|x| x.parse::<i32>().unwrap_or(-1)).unwrap_or(-1);
@@ -1051,17 +1244,28 @@ impl RendezvousServer {
                 use std::fmt::Write as _;
                 let mut lock = PUNCH_REQS.lock().await;
                 let arg = fds.next();
-                if let Some("-") = arg { lock.clear(); }
-                else {
-                    let mut start = arg.and_then(|x| x.parse::<usize>().ok()).unwrap_or(0);
-                    let mut page_size = fds.next().and_then(|x| x.parse::<usize>().ok()).unwrap_or(10);
-                    if page_size == 0 { page_size = 10; }
+                if let Some("-") = arg {
+                    lock.clear();
+                } else {
+                    prune_punch_requests(&mut lock);
+                    let start = arg.and_then(|x| x.parse::<usize>().ok()).unwrap_or(0);
+                    let mut page_size = fds
+                        .next()
+                        .and_then(|x| x.parse::<usize>().ok())
+                        .unwrap_or(10);
+                    if page_size == 0 {
+                        page_size = 10;
+                    }
                     for (_, e) in lock.iter().enumerate().skip(start).take(page_size) {
                         let age = e.tm.elapsed();
                         let event_system = std::time::SystemTime::now() - age;
                         let event_iso = chrono::DateTime::<chrono::Utc>::from(event_system)
                             .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-                        let _ = writeln!(res, "{} {} -> {}@{}", event_iso, e.from_ip, e.to_id, e.to_ip);
+                        let _ = writeln!(
+                            res,
+                            "{} {} -> {}@{}",
+                            event_iso, e.from_ip, e.to_id, e.to_ip
+                        );
                     }
                 }
             }
@@ -1079,6 +1283,47 @@ impl RendezvousServer {
                         "ALWAYS_USE_RELAY: {:?}",
                         ALWAYS_USE_RELAY.load(Ordering::SeqCst)
                     );
+                }
+            }
+            Some("protection-stats" | "ps") => {
+                for line in crate::common::protection_limits_summary() {
+                    let _ = writeln!(res, "{line}");
+                }
+                let tcp_punch_entries = {
+                    let mut lock = self.tcp_punch.lock().await;
+                    prune_tcp_punch_entries(&mut lock);
+                    lock.len()
+                };
+                let _ = writeln!(
+                    res,
+                    "tcp_punch_entry_ttl_secs={}",
+                    tcp_punch_entry_ttl_secs()
+                );
+                let _ = writeln!(res, "max_tcp_punch_entries={}", max_tcp_punch_entries());
+                let _ = writeln!(res, "tcp_punch_entries={tcp_punch_entries}");
+                let _ = writeln!(res, "fanout_window_seconds={}", fanout_window_seconds());
+                let _ = writeln!(
+                    res,
+                    "max_fanout_tracked_sources={}",
+                    max_fanout_tracked_sources()
+                );
+                let _ = writeln!(
+                    res,
+                    "max_punch_targets_per_ip_per_window={}",
+                    max_punch_targets_per_ip_per_window()
+                );
+                let _ = writeln!(
+                    res,
+                    "max_relay_targets_per_ip_per_window={}",
+                    max_relay_targets_per_ip_per_window()
+                );
+                let _ = writeln!(
+                    res,
+                    "max_online_request_peers={}",
+                    max_online_request_peers()
+                );
+                for (name, value) in crate::common::protection_stats_snapshot() {
+                    let _ = writeln!(res, "{name}={value}");
                 }
             }
             Some("test-geo" | "tg") => {
@@ -1099,8 +1344,9 @@ impl RendezvousServer {
         res
     }
 
-    async fn handle_listener2(&self, stream: TcpStream, addr: SocketAddr) {
+    async fn handle_listener2(&self, stream: TcpStream, addr: SocketAddr, key: &str) {
         let mut rs = self.clone();
+        let key = key.to_owned();
         let ip = try_into_v4(addr).ip();
         if ip.is_loopback() {
             tokio::spawn(async move {
@@ -1121,7 +1367,11 @@ impl RendezvousServer {
             if let Some(Ok(bytes)) = stream.next_timeout(30_000).await {
                 if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(&bytes) {
                     match msg_in.union {
-                        Some(rendezvous_message::Union::TestNatRequest(_)) => {
+                        Some(rendezvous_message::Union::TestNatRequest(tar)) => {
+                            if !is_valid_server_key(&key, &tar.licence_key) {
+                                log::warn!("Authentication failed from {} for nat probe", addr);
+                                return;
+                            }
                             let mut msg_out = RendezvousMessage::new();
                             msg_out.set_test_nat_response(TestNatResponse {
                                 port: addr.port() as _,
@@ -1130,6 +1380,10 @@ impl RendezvousServer {
                             stream.send(&msg_out).await.ok();
                         }
                         Some(rendezvous_message::Union::OnlineRequest(or)) => {
+                            if !is_valid_server_key(&key, &or.licence_key) {
+                                log::warn!("Authentication failed from {} for online query", addr);
+                                return;
+                            }
                             allow_err!(rs.handle_online_request(&mut stream, or.peers).await);
                         }
                         _ => {}
@@ -1158,23 +1412,22 @@ impl RendezvousServer {
     ) -> ResultType<()> {
         let mut sink;
         if ws {
+            let peer_addr = addr;
             use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
             let callback = |req: &Request, response: Response| {
-                let headers = req.headers();
-                let real_ip = headers
-                    .get("X-Real-IP")
-                    .or_else(|| headers.get("X-Forwarded-For"))
-                    .and_then(|header_value| header_value.to_str().ok());
-                if let Some(ip) = real_ip {
-                    if ip.contains('.') {
-                        addr = format!("{ip}:0").parse().unwrap_or(addr);
-                    } else {
-                        addr = format!("[{ip}]:0").parse().unwrap_or(addr);
-                    }
-                }
+                addr = crate::common::apply_trusted_proxy_addr(addr, req.headers());
                 Ok(response)
             };
             let ws_stream = tokio_tungstenite::accept_hdr_async(stream, callback).await?;
+            if addr.ip() != peer_addr.ip()
+                && !crate::common::allow_connection_from_ip("hbbs-ws-forwarded", addr)
+            {
+                log::warn!(
+                    "Rate limit exceeded for hbbs-ws-forwarded from {}",
+                    addr.ip()
+                );
+                return Ok(());
+            }
             let (a, mut b) = ws_stream.split();
             sink = Some(Sink::Ws(a));
             while let Ok(Some(Ok(msg))) = timeout(30_000, b.next()).await {
@@ -1300,7 +1553,7 @@ async fn check_relay_servers(rs0: Arc<RelayServers>, tx: Sender) {
 }
 
 // temp solution to solve udp socket failure
-async fn test_hbbs(addr: SocketAddr) -> ResultType<()> {
+async fn test_hbbs(addr: SocketAddr, key: String) -> ResultType<()> {
     let mut addr = addr;
     if addr.ip().is_unspecified() {
         addr.set_ip(if addr.is_ipv4() {
@@ -1314,6 +1567,7 @@ async fn test_hbbs(addr: SocketAddr) -> ResultType<()> {
     let mut msg_out = RendezvousMessage::new();
     msg_out.set_register_peer(RegisterPeer {
         id: "(:test_hbbs:)".to_owned(),
+        licence_key: key,
         ..Default::default()
     });
     let mut last_time_recv = Instant::now();
@@ -1334,6 +1588,371 @@ async fn test_hbbs(addr: SocketAddr) -> ResultType<()> {
               }
           }
         }
+    }
+}
+
+fn prune_punch_requests(entries: &mut Vec<PunchReqEntry>) {
+    let before = entries.len();
+    entries.retain(|entry| entry.tm.elapsed().as_secs() < PUNCH_REQ_RETENTION_SECS);
+    if entries.len() > MAX_PUNCH_REQS {
+        let excess = entries.len() - MAX_PUNCH_REQS;
+        entries.drain(0..excess);
+    }
+    if before > entries.len() {
+        crate::common::record_protection_event("punch_requests_pruned");
+    }
+}
+
+fn fanout_window_seconds() -> usize {
+    std::env::var(FANOUT_WINDOW_SECONDS_ENV)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_FANOUT_WINDOW_SECONDS)
+}
+
+fn max_fanout_tracked_sources() -> usize {
+    std::env::var(MAX_FANOUT_TRACKED_SOURCES_ENV)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_MAX_FANOUT_TRACKED_SOURCES)
+}
+
+fn max_punch_targets_per_ip_per_window() -> usize {
+    std::env::var(MAX_PUNCH_TARGETS_PER_IP_PER_WINDOW_ENV)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_MAX_PUNCH_TARGETS_PER_IP_PER_WINDOW)
+}
+
+fn max_relay_targets_per_ip_per_window() -> usize {
+    std::env::var(MAX_RELAY_TARGETS_PER_IP_PER_WINDOW_ENV)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_MAX_RELAY_TARGETS_PER_IP_PER_WINDOW)
+}
+
+fn tcp_punch_entry_ttl_secs() -> usize {
+    std::env::var(TCP_PUNCH_ENTRY_TTL_SECS_ENV)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_TCP_PUNCH_ENTRY_TTL_SECS)
+}
+
+fn max_tcp_punch_entries() -> usize {
+    std::env::var(MAX_TCP_PUNCH_ENTRIES_ENV)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_MAX_TCP_PUNCH_ENTRIES)
+}
+
+fn prune_tcp_punch_entries(entries: &mut HashMap<SocketAddr, TcpPunchEntry>) {
+    let before = entries.len();
+    let ttl_secs = tcp_punch_entry_ttl_secs() as u64;
+    entries.retain(|_, entry| entry.created_at.elapsed().as_secs() < ttl_secs);
+    if before > entries.len() {
+        crate::common::record_protection_event("tcp_punch_entries_pruned");
+    }
+}
+
+fn evict_oldest_tcp_punch_entry(entries: &mut HashMap<SocketAddr, TcpPunchEntry>) -> bool {
+    let oldest_addr = entries
+        .iter()
+        .min_by_key(|(_, entry)| entry.created_at)
+        .map(|(addr, _)| *addr);
+    if let Some(addr) = oldest_addr {
+        entries.remove(&addr);
+        return true;
+    }
+    false
+}
+
+fn insert_tcp_punch_entry(
+    entries: &mut HashMap<SocketAddr, TcpPunchEntry>,
+    addr: SocketAddr,
+    sink: Sink,
+) -> Option<Sink> {
+    prune_tcp_punch_entries(entries);
+    if !entries.contains_key(&addr) {
+        let max_entries = max_tcp_punch_entries();
+        if max_entries > 0 && entries.len() >= max_entries && evict_oldest_tcp_punch_entry(entries)
+        {
+            crate::common::record_protection_event("tcp_punch_entries_evicted");
+        }
+        if max_entries > 0 && entries.len() >= max_entries {
+            crate::common::record_protection_event("tcp_punch_entries_rejected");
+            return Some(sink);
+        }
+    }
+    entries.insert(
+        addr,
+        TcpPunchEntry {
+            sink,
+            created_at: Instant::now(),
+        },
+    );
+    None
+}
+
+fn prune_target_fanout(entries: &mut FanoutMap) {
+    let window_secs = fanout_window_seconds() as u64;
+    entries
+        .retain(|_, entry| entry.last_seen_at.elapsed().as_secs() < window_secs.saturating_mul(2));
+}
+
+fn evict_oldest_target_fanout(entries: &mut FanoutMap) -> bool {
+    let oldest_ip = entries
+        .iter()
+        .min_by_key(|(_, entry)| entry.last_seen_at)
+        .map(|(ip, _)| ip.clone());
+    if let Some(ip) = oldest_ip {
+        entries.remove(&ip);
+        return true;
+    }
+    false
+}
+
+fn allow_target_fanout(
+    entries: &mut FanoutMap,
+    source_ip: &str,
+    target_id: &str,
+    max_targets_per_window: usize,
+    evicted_event: &'static str,
+    rejected_event: &'static str,
+) -> bool {
+    let now = Instant::now();
+    let window_secs = fanout_window_seconds() as u64;
+    prune_target_fanout(entries);
+    if let Some(entry) = entries.get_mut(source_ip) {
+        if now.duration_since(entry.window_started_at).as_secs() >= window_secs {
+            entry.window_started_at = now;
+            entry.targets.clear();
+        }
+        entry.last_seen_at = now;
+        if entry.targets.contains(target_id) {
+            return true;
+        }
+        if max_targets_per_window > 0 && entry.targets.len() >= max_targets_per_window {
+            return false;
+        }
+        entry.targets.insert(target_id.to_owned());
+        return true;
+    }
+
+    let max_entries = max_fanout_tracked_sources();
+    if max_entries > 0 && entries.len() >= max_entries && evict_oldest_target_fanout(entries) {
+        crate::common::record_protection_event(evicted_event);
+    }
+    if max_entries > 0 && entries.len() >= max_entries {
+        crate::common::record_protection_event(rejected_event);
+        return false;
+    }
+
+    entries.insert(
+        source_ip.to_owned(),
+        FanoutEntry {
+            window_started_at: now,
+            last_seen_at: now,
+            targets: HashSet::from([target_id.to_owned()]),
+        },
+    );
+    true
+}
+
+fn max_online_request_peers() -> usize {
+    std::env::var(MAX_ONLINE_REQUEST_PEERS_ENV)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_MAX_ONLINE_REQUEST_PEERS)
+}
+
+fn clamped_online_request_peer_count(total_peers: usize) -> usize {
+    total_peers.min(max_online_request_peers())
+}
+
+#[inline]
+fn is_valid_registration_id(id: &str) -> bool {
+    let len = id.chars().count();
+    (MIN_REGISTRATION_ID_LEN..=MAX_REGISTRATION_ID_LEN).contains(&len)
+}
+
+#[inline]
+fn is_valid_server_key(configured_key: &str, supplied_key: &str) -> bool {
+    configured_key.is_empty() || supplied_key == configured_key
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        allow_target_fanout, clamped_online_request_peer_count, is_valid_registration_id,
+        is_valid_server_key, prune_punch_requests, FanoutMap, PunchReqEntry,
+        DEFAULT_MAX_ONLINE_REQUEST_PEERS, FANOUT_WINDOW_SECONDS_ENV,
+        MAX_FANOUT_TRACKED_SOURCES_ENV, MAX_ONLINE_REQUEST_PEERS_ENV, MAX_PUNCH_REQS,
+        PUNCH_REQ_RETENTION_SECS,
+    };
+    use std::{
+        collections::HashMap,
+        time::{Duration, Instant},
+    };
+
+    #[test]
+    fn server_key_validation_accepts_open_server_or_matching_key() {
+        assert!(is_valid_server_key("", ""));
+        assert!(is_valid_server_key("", "anything"));
+        assert!(is_valid_server_key("shared-secret", "shared-secret"));
+    }
+
+    #[test]
+    fn server_key_validation_rejects_mismatched_key() {
+        assert!(!is_valid_server_key("shared-secret", ""));
+        assert!(!is_valid_server_key("shared-secret", "wrong"));
+    }
+
+    #[test]
+    fn registration_id_validation_enforces_basic_length_bounds() {
+        assert!(!is_valid_registration_id(""));
+        assert!(!is_valid_registration_id("12345"));
+        assert!(is_valid_registration_id("123456"));
+        assert!(is_valid_registration_id(&"a".repeat(100)));
+        assert!(!is_valid_registration_id(&"a".repeat(101)));
+    }
+
+    #[test]
+    fn prune_punch_requests_removes_old_entries_and_caps_growth() {
+        let now = Instant::now();
+        let old = now
+            .checked_sub(Duration::from_secs(PUNCH_REQ_RETENTION_SECS + 1))
+            .unwrap_or(now);
+        let mut entries = vec![PunchReqEntry {
+            tm: old,
+            from_ip: "192.0.2.10".to_owned(),
+            to_ip: "198.51.100.10".to_owned(),
+            to_id: "old".to_owned(),
+        }];
+        for i in 0..(MAX_PUNCH_REQS + 5) {
+            entries.push(PunchReqEntry {
+                tm: now,
+                from_ip: format!("192.0.2.{i}"),
+                to_ip: "198.51.100.10".to_owned(),
+                to_id: format!("peer-{i}"),
+            });
+        }
+
+        prune_punch_requests(&mut entries);
+
+        assert_eq!(entries.len(), MAX_PUNCH_REQS);
+        assert!(entries
+            .iter()
+            .all(|entry| entry.tm.elapsed().as_secs() < PUNCH_REQ_RETENTION_SECS));
+        assert_eq!(
+            entries.first().map(|entry| entry.to_id.as_str()),
+            Some("peer-5")
+        );
+    }
+
+    #[test]
+    fn online_request_peer_lookup_count_is_bounded() {
+        std::env::remove_var(MAX_ONLINE_REQUEST_PEERS_ENV);
+        assert_eq!(
+            clamped_online_request_peer_count(DEFAULT_MAX_ONLINE_REQUEST_PEERS + 1),
+            DEFAULT_MAX_ONLINE_REQUEST_PEERS
+        );
+
+        std::env::set_var(MAX_ONLINE_REQUEST_PEERS_ENV, "3");
+        assert_eq!(clamped_online_request_peer_count(2), 2);
+        assert_eq!(clamped_online_request_peer_count(3), 3);
+        assert_eq!(clamped_online_request_peer_count(4), 3);
+        std::env::remove_var(MAX_ONLINE_REQUEST_PEERS_ENV);
+    }
+
+    #[test]
+    fn target_fanout_caps_distinct_targets_but_allows_repeats() {
+        std::env::set_var(FANOUT_WINDOW_SECONDS_ENV, "60");
+        let mut entries: FanoutMap = HashMap::new();
+
+        assert!(allow_target_fanout(
+            &mut entries,
+            "198.51.100.10",
+            "peer-a",
+            2,
+            "fanout_evicted",
+            "fanout_rejected"
+        ));
+        assert!(allow_target_fanout(
+            &mut entries,
+            "198.51.100.10",
+            "peer-a",
+            2,
+            "fanout_evicted",
+            "fanout_rejected"
+        ));
+        assert!(allow_target_fanout(
+            &mut entries,
+            "198.51.100.10",
+            "peer-b",
+            2,
+            "fanout_evicted",
+            "fanout_rejected"
+        ));
+        assert!(!allow_target_fanout(
+            &mut entries,
+            "198.51.100.10",
+            "peer-c",
+            2,
+            "fanout_evicted",
+            "fanout_rejected"
+        ));
+
+        std::env::remove_var(FANOUT_WINDOW_SECONDS_ENV);
+    }
+
+    #[test]
+    fn target_fanout_tracked_sources_are_bounded() {
+        std::env::set_var(FANOUT_WINDOW_SECONDS_ENV, "60");
+        std::env::set_var(MAX_FANOUT_TRACKED_SOURCES_ENV, "2");
+        let now = Instant::now();
+        let older = now.checked_sub(Duration::from_secs(10)).unwrap_or(now);
+        let newer = now.checked_sub(Duration::from_secs(1)).unwrap_or(now);
+        let mut entries: FanoutMap = HashMap::from([
+            (
+                "198.51.100.1".to_owned(),
+                super::FanoutEntry {
+                    window_started_at: older,
+                    last_seen_at: older,
+                    targets: std::collections::HashSet::from(["peer-a".to_owned()]),
+                },
+            ),
+            (
+                "198.51.100.2".to_owned(),
+                super::FanoutEntry {
+                    window_started_at: newer,
+                    last_seen_at: newer,
+                    targets: std::collections::HashSet::from(["peer-b".to_owned()]),
+                },
+            ),
+        ]);
+
+        assert!(allow_target_fanout(
+            &mut entries,
+            "198.51.100.3",
+            "peer-c",
+            2,
+            "fanout_evicted",
+            "fanout_rejected"
+        ));
+        assert_eq!(entries.len(), 2);
+        assert!(!entries.contains_key("198.51.100.1"));
+        assert!(entries.contains_key("198.51.100.2"));
+        assert!(entries.contains_key("198.51.100.3"));
+
+        std::env::remove_var(FANOUT_WINDOW_SECONDS_ENV);
+        std::env::remove_var(MAX_FANOUT_TRACKED_SOURCES_ENV);
     }
 }
 
