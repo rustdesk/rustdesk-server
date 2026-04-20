@@ -166,7 +166,7 @@ pub(crate) fn allow_ip_registration_attempt(entries: &mut IpBlockMap, ip: &str, 
 }
 
 pub(crate) fn prune_ip_change_entries(entries: &mut IpChangesMap) {
-    entries.retain(|_, value| value.0.elapsed().as_secs() < IP_CHANGE_DUR_X2 && value.1.len() > 1);
+    entries.retain(|_, value| value.0.elapsed().as_secs() < IP_CHANGE_DUR_X2 || value.1.len() > 1);
 }
 
 fn evict_oldest_ip_change_entry(entries: &mut IpChangesMap) -> bool {
@@ -550,5 +550,31 @@ mod tests {
         assert!(entries.contains_key("peer-c"));
         std::env::remove_var("MAX_IP_CHANGES_ENTRIES");
         std::env::remove_var("MAX_UNIQUE_IP_CHANGES_PER_ID");
+    }
+
+    #[test]
+    fn prune_ip_change_entries_keeps_recent_single_ip_entries() {
+        let now = Instant::now();
+        let recent = now
+            .checked_sub(Duration::from_secs(IP_CHANGE_DUR_X2 / 2))
+            .unwrap_or(now);
+        let stale = now
+            .checked_sub(Duration::from_secs(IP_CHANGE_DUR_X2 + 5))
+            .unwrap_or(now);
+        let mut entries: IpChangesMap = HashMap::from([
+            (
+                "recent-single".to_owned(),
+                (recent, HashMap::from([("198.51.100.1".to_owned(), 1)])),
+            ),
+            (
+                "stale-single".to_owned(),
+                (stale, HashMap::from([("198.51.100.2".to_owned(), 1)])),
+            ),
+        ]);
+
+        prune_ip_change_entries(&mut entries);
+
+        assert!(entries.contains_key("recent-single"));
+        assert!(!entries.contains_key("stale-single"));
     }
 }

@@ -581,6 +581,18 @@ async fn make_pair_(stream: impl StreamTrait, addr: SocketAddr, key: &str, limit
                         let peer_a_ip = pending.ip.clone();
                         let peer_b_ip = addr.ip().to_string();
                         let mut active_relays = ACTIVE_RELAYS.lock().await;
+                        if active_relays.contains_key(&rf.uuid) {
+                            drop(active_relays);
+                            crate::common::record_protection_event("relay_uuid_in_use");
+                            log::warn!(
+                                "Rejecting relay request {} from {}: uuid already active",
+                                rf.uuid,
+                                addr
+                            );
+                            send_relay_refuse(&mut stream, "uuid_in_use").await;
+                            send_relay_refuse(&mut *pending.stream, "uuid_in_use").await;
+                            return;
+                        }
                         let active_for_peer_a =
                             count_active_relays_for_ip(&active_relays, &peer_a_ip);
                         let active_for_peer_b =
@@ -632,6 +644,19 @@ async fn make_pair_(stream: impl StreamTrait, addr: SocketAddr, key: &str, limit
                     } else {
                         log::info!("New relay request {} from {}", rf.uuid, addr);
                         let ip = addr.ip().to_string();
+                        let active_relays = ACTIVE_RELAYS.lock().await;
+                        if active_relays.contains_key(&rf.uuid) {
+                            drop(active_relays);
+                            crate::common::record_protection_event("relay_uuid_in_use");
+                            log::warn!(
+                                "Rejecting pending relay request {} from {}: uuid already active",
+                                rf.uuid,
+                                addr
+                            );
+                            send_relay_refuse(&mut stream, "uuid_in_use").await;
+                            return;
+                        }
+                        drop(active_relays);
                         let mut peers = PEERS.lock().await;
                         prune_expired_pending_relays(&mut peers);
                         let pending_for_ip = peers.values().filter(|peer| peer.ip == ip).count();
@@ -908,10 +933,11 @@ impl StreamTrait for tokio_tungstenite::WebSocketStream<TcpStream> {
 #[cfg(test)]
 mod tests {
     use super::{
-        active_relay_limit_reason, pending_relay_limit_reason, MAX_ACTIVE_RELAYS,
+        active_relay_limit_reason, pending_relay_limit_reason, ACTIVE_RELAYS, MAX_ACTIVE_RELAYS,
         MAX_ACTIVE_RELAYS_PER_IP, MAX_PENDING_RELAYS, MAX_PENDING_RELAYS_PER_IP,
     };
     use std::sync::{atomic::Ordering, Mutex};
+    use std::time::Instant;
 
     static TEST_RELAY_LIMITS_LOCK: Mutex<()> = Mutex::new(());
 
@@ -960,5 +986,22 @@ mod tests {
 
         MAX_ACTIVE_RELAYS.store(saved_total, Ordering::SeqCst);
         MAX_ACTIVE_RELAYS_PER_IP.store(saved_per_ip, Ordering::SeqCst);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn active_relay_uuid_reuse_is_detected() {
+        let _guard = TEST_RELAY_LIMITS_LOCK.lock().unwrap();
+        let mut active_relays = ACTIVE_RELAYS.lock().await;
+        active_relays.clear();
+        active_relays.insert(
+            "uuid-1".to_owned(),
+            super::ActiveRelay {
+                peer_a_ip: "198.51.100.1".to_owned(),
+                peer_b_ip: "198.51.100.2".to_owned(),
+                started_at: Instant::now(),
+            },
+        );
+        assert!(active_relays.contains_key("uuid-1"));
+        active_relays.clear();
     }
 }
