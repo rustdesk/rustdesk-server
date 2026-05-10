@@ -1,0 +1,318 @@
+{% extends "layout.html" %}
+
+{% block title %}设备管理 - {% endblock %}
+
+{% block nav_links %}
+<a href="/dashboard">控制台</a>
+<a href="/devices" class="active">设备管理</a>
+<a href="/users">用户管理</a>
+<a href="/monitor">连接监控</a>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    .toolbar {
+        background: white;
+        padding: 1rem;
+        border-radius: 10px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        margin-bottom: 2rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    
+    .search-box {
+        display: flex;
+        gap: 0.5rem;
+        align-items: center;
+    }
+    
+    .search-box input {
+        padding: 0.5rem;
+        border: 2px solid #e1e5e9;
+        border-radius: 5px;
+        font-size: 1rem;
+    }
+    
+    .search-box input:focus {
+        outline: none;
+        border-color: #667eea;
+    }
+    
+    .devices-grid {
+        display: grid;
+        gap: 1rem;
+    }
+    
+    .device-card {
+        background: white;
+        padding: 1.5rem;
+        border-radius: 10px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        transition: transform 0.2s;
+    }
+    
+    .device-card:hover {
+        transform: translateY(-2px);
+    }
+    
+    .device-info h3 {
+        color: #667eea;
+        margin-bottom: 0.5rem;
+    }
+    
+    .device-info p {
+        color: #666;
+        margin-bottom: 0.25rem;
+    }
+    
+    .device-status {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin-bottom: 0.5rem;
+    }
+    
+    .status-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+    }
+    
+    .status-online {
+        background: #28a745;
+    }
+    
+    .status-offline {
+        background: #dc3545;
+    }
+    
+    .device-actions {
+        display: flex;
+        gap: 0.5rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="toolbar">
+    <div class="search-box">
+        <input type="text" id="search-input" placeholder="搜索设备..." onkeyup="searchDevices()">
+        <button class="btn btn-secondary" onclick="refreshDevices()">刷新</button>
+    </div>
+    <button class="btn" onclick="showAddDeviceModal()">添加设备</button>
+</div>
+
+<div class="devices-grid" id="devices-grid">
+    <!-- 设备列表将通过JavaScript动态加载 -->
+</div>
+
+<!-- 添加设备模态框 -->
+<div class="modal" id="add-device-modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>添加新设备</h2>
+        </div>
+        <form id="add-device-form">
+            <div class="form-group">
+                <label for="device-id">设备ID</label>
+                <input type="text" id="device-id" name="device_id" required>
+            </div>
+            <div class="form-group">
+                <label for="device-name">设备名称</label>
+                <input type="text" id="device-name" name="device_name">
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="hideAddDeviceModal()">取消</button>
+                <button type="submit" class="btn">添加</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    let devices = [];
+    let currentUser = null;
+    
+    // 检查用户登录状态
+    document.addEventListener('DOMContentLoaded', function() {
+        currentUser = checkAuth();
+        if (!currentUser) return;
+        
+        // 加载设备列表
+        loadDevices();
+    });
+    
+    // 加载设备列表
+    async function loadDevices() {
+        try {
+            // 模拟设备数据（实际应该从API获取）
+            devices = [
+                {
+                    id: 'device001',
+                    name: '办公室电脑',
+                    status: 'online',
+                    last_seen: '2024-01-15 10:30:00',
+                    ip_address: '192.168.1.100',
+                    user_id: currentUser.id
+                },
+                {
+                    id: 'device002',
+                    name: '家庭电脑',
+                    status: 'offline',
+                    last_seen: '2024-01-14 18:45:00',
+                    ip_address: '192.168.1.101',
+                    user_id: currentUser.id
+                },
+                {
+                    id: 'device003',
+                    name: '移动设备',
+                    status: 'online',
+                    last_seen: '2024-01-15 09:15:00',
+                    ip_address: '192.168.1.102',
+                    user_id: currentUser.id
+                }
+            ];
+            
+            renderDevices();
+        } catch (error) {
+            console.error('加载设备列表失败:', error);
+            showError('加载设备列表失败');
+        }
+    }
+    
+    // 渲染设备列表
+    function renderDevices() {
+        const grid = document.getElementById('devices-grid');
+        grid.innerHTML = '';
+        
+        devices.forEach(device => {
+            const card = document.createElement('div');
+            card.className = 'device-card';
+            card.innerHTML = `
+                <div class="device-info">
+                    <h3>${device.name || device.id}</h3>
+                    <div class="device-status">
+                        <div class="status-dot status-${device.status}"></div>
+                        <span>${device.status === 'online' ? '在线' : '离线'}</span>
+                    </div>
+                    <p>设备ID: ${device.id}</p>
+                    <p>IP地址: ${device.ip_address}</p>
+                    <p>最后在线: ${device.last_seen}</p>
+                </div>
+                <div class="device-actions">
+                    <button class="btn btn-small" onclick="editDevice('${device.id}')">编辑</button>
+                    <button class="btn btn-small btn-danger" onclick="removeDevice('${device.id}')">删除</button>
+                </div>
+            `;
+            grid.appendChild(card);
+        });
+    }
+    
+    // 搜索设备
+    function searchDevices() {
+        const searchTerm = document.getElementById('search-input').value.toLowerCase();
+        const filteredDevices = devices.filter(device => 
+            device.id.toLowerCase().includes(searchTerm) ||
+            (device.name && device.name.toLowerCase().includes(searchTerm))
+        );
+        
+        const grid = document.getElementById('devices-grid');
+        grid.innerHTML = '';
+        
+        if (filteredDevices.length === 0) {
+            grid.innerHTML = '<p style="text-align: center; color: #666;">没有找到匹配的设备</p>';
+            return;
+        }
+        
+        devices = filteredDevices;
+        renderDevices();
+        devices = devices.concat(filteredDevices.filter(d => !devices.includes(d)));
+    }
+    
+    // 刷新设备列表
+    function refreshDevices() {
+        loadDevices();
+        showSuccess('设备列表已刷新');
+    }
+    
+    // 显示添加设备模态框
+    function showAddDeviceModal() {
+        document.getElementById('add-device-modal').style.display = 'flex';
+    }
+    
+    // 隐藏添加设备模态框
+    function hideAddDeviceModal() {
+        document.getElementById('add-device-modal').style.display = 'none';
+        document.getElementById('add-device-form').reset();
+    }
+    
+    // 编辑设备
+    function editDevice(deviceId) {
+        const device = devices.find(d => d.id === deviceId);
+        if (device) {
+            // 填充表单
+            document.getElementById('device-id').value = device.id;
+            document.getElementById('device-name').value = device.name || '';
+            
+            // 显示模态框
+            showAddDeviceModal();
+        }
+    }
+    
+    // 删除设备
+    async function removeDevice(deviceId) {
+        if (!confirm('确定要删除这个设备吗？')) {
+            return;
+        }
+        
+        try {
+            const token = localStorage.getItem('jwt_token');
+            
+            // 模拟删除操作（实际应该调用API）
+            devices = devices.filter(d => d.id !== deviceId);
+            renderDevices();
+            showSuccess('设备已删除');
+        } catch (error) {
+            console.error('删除设备失败:', error);
+            showError('删除设备失败');
+        }
+    }
+    
+    // 添加设备表单提交
+    document.getElementById('add-device-form').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        
+        const deviceId = document.getElementById('device-id').value;
+        const deviceName = document.getElementById('device-name').value;
+        
+        try {
+            const token = localStorage.getItem('jwt_token');
+            
+            // 模拟添加设备操作（实际应该调用API）
+            const newDevice = {
+                id: deviceId,
+                name: deviceName || deviceId,
+                status: 'offline',
+                last_seen: new Date().toLocaleString(),
+                ip_address: '未知',
+                user_id: currentUser.id
+            };
+            
+            devices.unshift(newDevice);
+            renderDevices();
+            hideAddDeviceModal();
+            showSuccess('设备已添加');
+        } catch (error) {
+            console.error('添加设备失败:', error);
+            showError('添加设备失败');
+        }
+    });
+</script>
+{% endblock %}

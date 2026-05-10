@@ -1,0 +1,141 @@
+{% extends "layout.html" %}
+
+{% block title %}用户登录 - {% endblock %}
+
+{% block nav_links %}
+<a href="/">首页</a>
+<a href="/login" class="active">登录</a>
+<a href="/register">注册</a>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    .login-container {
+        background: white;
+        padding: 2rem;
+        border-radius: 10px;
+        box-shadow: 0 15px 35px rgba(0, 0, 0, 0.1);
+        width: 100%;
+        max-width: 400px;
+        margin: 2rem auto;
+    }
+    
+    .login-header {
+        text-align: center;
+        margin-bottom: 2rem;
+    }
+    
+    .login-header h1 {
+        color: #333;
+        font-size: 2rem;
+        margin-bottom: 0.5rem;
+    }
+    
+    .login-header p {
+        color: #666;
+        font-size: 0.9rem;
+    }
+    
+    .register-link {
+        text-align: center;
+        margin-top: 1.5rem;
+        color: #666;
+    }
+    
+    .register-link a {
+        color: #667eea;
+        text-decoration: none;
+        font-weight: 500;
+    }
+    
+    .register-link a:hover {
+        text-decoration: underline;
+    }
+    
+    .forgot-link {
+        text-align: center;
+        margin-top: 1rem;
+    }
+    
+    .forgot-link a {
+        color: #667eea;
+        text-decoration: none;
+        font-size: 0.9rem;
+    }
+    
+    .forgot-link a:hover {
+        text-decoration: underline;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="login-container">
+    <div class="login-header">
+        <h1>用户登录</h1>
+        <p>欢迎使用 NAT Server</p>
+    </div>
+    
+    <form id="login-form">
+        <div class="form-group">
+            <label for="username">用户名</label>
+            <input type="text" id="username" name="username" required>
+        </div>
+        
+        <div class="form-group">
+            <label for="password">密码</label>
+            <input type="password" id="password" name="password" required>
+        </div>
+        
+        <button type="submit" class="login-btn">登录</button>
+    </form>
+    
+    <div class="register-link">
+        还没有账户？ <a href="/register">立即注册</a>
+    </div>
+    
+    <div class="forgot-link">
+        <a href="/forgot-password">忘记密码？</a>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.getElementById('login-form').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        
+        const username = document.getElementById('username').value;
+        const password = document.getElementById('password').value;
+        
+        try {
+            const response = await fetch('/api/login', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ username, password }),
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                showSuccess('登录成功！正在跳转...');
+                
+                // 保存token到localStorage
+                localStorage.setItem('jwt_token', result.data.token);
+                localStorage.setItem('user_info', JSON.stringify(result.data.user));
+                
+                // 跳转到主页或仪表板
+                setTimeout(function() {
+                    window.location.href = '/dashboard';
+                }, 1500);
+            } else {
+                showError(result.message);
+            }
+        } catch (error) {
+            showError('网络错误，请重试');
+        }
+    });
+</script>
+{% endblock %}

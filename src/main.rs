@@ -4,7 +4,7 @@
 use flexi_logger::*;
 use hbb_common::{bail, config::RENDEZVOUS_PORT, ResultType, log};
 use hbbs::common::{init_args, get_arg, get_arg_or};
-use hbbs::{api::create_api_router, RendezvousServer};
+use hbbs::{web::create_web_router, api::create_api_router, RendezvousServer};
 use tokio::net::TcpListener;
 use tokio::runtime::Runtime;
 
@@ -63,7 +63,7 @@ async fn main() -> ResultType<()> {
         "your-secret-key-change-in-production".to_string()
     });
     
-    let api_router = create_api_router(db.clone(), jwt_secret);
+    let web_router = create_web_router(db.clone(), jwt_secret);
     let api_addr = format!("0.0.0.0:{}", API_PORT).parse()?;
     log::info!("API 服务器启动在端口: {}", API_PORT);
     
@@ -71,7 +71,7 @@ async fn main() -> ResultType<()> {
     let rt = Runtime::new().unwrap();
     let api_server = rt.spawn(async move {
         axum::Server::bind(&api_addr)
-            .serve(api_router.into_make_service())
+            .serve(web_router.into_make_service())
             .await
     });
     let rendezvous_server = rt.spawn_blocking(move || {

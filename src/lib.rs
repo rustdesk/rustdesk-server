@@ -5,4 +5,8 @@ pub mod database;
 pub mod peer;
 pub mod api;
 pub mod database_simple;
+pub mod device_pages;
+pub mod device_api;
+pub mod views;
+pub mod web;
 mod version;

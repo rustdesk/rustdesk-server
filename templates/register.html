@@ -1,0 +1,139 @@
+{% extends "layout.html" %}
+
+{% block title %}用户注册 - {% endblock %}
+
+{% block nav_links %}
+<a href="/">首页</a>
+<a href="/login">登录</a>
+<a href="/register" class="active">注册</a>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    .register-container {
+        background: white;
+        padding: 2rem;
+        border-radius: 10px;
+        box-shadow: 0 15px 35px rgba(0, 0, 0, 0.1);
+        width: 100%;
+        max-width: 400px;
+        margin: 2rem auto;
+    }
+    
+    .register-header {
+        text-align: center;
+        margin-bottom: 2rem;
+    }
+    
+    .register-header h1 {
+        color: #333;
+        font-size: 2rem;
+        margin-bottom: 0.5rem;
+    }
+    
+    .register-header p {
+        color: #666;
+        font-size: 0.9rem;
+    }
+    
+    .login-link {
+        text-align: center;
+        margin-top: 1.5rem;
+        color: #666;
+    }
+    
+    .login-link a {
+        color: #667eea;
+        text-decoration: none;
+        font-weight: 500;
+    }
+    
+    .login-link a:hover {
+        text-decoration: underline;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="register-container">
+    <div class="register-header">
+        <h1>用户注册</h1>
+        <p>创建您的 NAT Server 账户</p>
+    </div>
+    
+    <form id="register-form">
+        <div class="form-group">
+            <label for="username">用户名</label>
+            <input type="text" id="username" name="username" required>
+        </div>
+        
+        <div class="form-group">
+            <label for="email">邮箱</label>
+            <input type="email" id="email" name="email" required>
+        </div>
+        
+        <div class="form-group">
+            <label for="password">密码</label>
+            <input type="password" id="password" name="password" required>
+        </div>
+        
+        <div class="form-group">
+            <label for="confirm_password">确认密码</label>
+            <input type="password" id="confirm_password" name="confirm_password" required>
+        </div>
+        
+        <button type="submit" class="register-btn">注册</button>
+    </form>
+    
+    <div class="login-link">
+        已有账户？ <a href="/login">立即登录</a>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.getElementById('register-form').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        
+        const username = document.getElementById('username').value;
+        const email = document.getElementById('email').value;
+        const password = document.getElementById('password').value;
+        const confirm_password = document.getElementById('confirm_password').value;
+        
+        if (password !== confirm_password) {
+            showError('两次输入的密码不一致');
+            return;
+        }
+        
+        try {
+            const response = await fetch('/api/register', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ 
+                    username, 
+                    email, 
+                    password, 
+                    confirm_password 
+                }),
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                showSuccess('注册成功！正在跳转到登录页面...');
+                
+                setTimeout(function() {
+                    window.location.href = '/login';
+                }, 2000);
+            } else {
+                showError(result.message);
+            }
+        } catch (error) {
+            showError('网络错误，请重试');
+        }
+    });
+</script>
+{% endblock %}

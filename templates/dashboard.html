@@ -1,0 +1,121 @@
+{% extends "layout.html" %}
+
+{% block title %}控制台 - {% endblock %}
+
+{% block nav_links %}
+<a href="/dashboard" class="active">控制台</a>
+<a href="/devices">设备管理</a>
+<a href="/users">用户管理</a>
+<a href="/monitor">连接监控</a>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    .dashboard-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 2rem;
+        margin-bottom: 2rem;
+    }
+    
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 1rem;
+        margin-bottom: 2rem;
+    }
+    
+    .stat-card {
+        background: white;
+        padding: 1rem;
+        border-radius: 10px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        text-align: center;
+    }
+    
+    .stat-number {
+        font-size: 2rem;
+        font-weight: bold;
+        color: #667eea;
+    }
+    
+    .stat-label {
+        color: #666;
+        font-size: 0.9rem;
+        margin-top: 0.5rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-number" id="total-devices">-</div>
+        <div class="stat-label">设备总数</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-number" id="active-devices">-</div>
+        <div class="stat-label">在线设备</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-number" id="total-users">-</div>
+        <div class="stat-label">用户总数</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-number" id="active-connections">-</div>
+        <div class="stat-label">活跃连接</div>
+    </div>
+</div>
+
+<div class="dashboard-grid">
+    <div class="card">
+        <h3>设备管理</h3>
+        <p>管理所有连接到NAT服务器的设备，查看设备状态和配置信息。</p>
+        <button class="btn" onclick="window.location.href='/devices'">进入设备管理</button>
+    </div>
+    
+    <div class="card">
+        <h3>用户管理</h3>
+        <p>管理系统用户，查看用户信息和权限设置。</p>
+        <button class="btn" onclick="window.location.href='/users'">进入用户管理</button>
+    </div>
+    
+    <div class="card">
+        <h3>连接监控</h3>
+        <p>实时监控NAT连接状态，查看网络流量和连接统计。</p>
+        <button class="btn" onclick="window.location.href='/monitor'">进入连接监控</button>
+    </div>
+    
+    <div class="card">
+        <h3>系统设置</h3>
+        <p>配置NAT服务器参数，调整网络设置和安全策略。</p>
+        <button class="btn" onclick="window.location.href='/settings'">进入系统设置</button>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // 检查用户登录状态
+    document.addEventListener('DOMContentLoaded', function() {
+        const user = checkAuth();
+        if (!user) return;
+        
+        // 加载统计数据
+        loadStats();
+    });
+    
+    // 加载统计数据
+    async function loadStats() {
+        try {
+            // 模拟统计数据（实际应该从API获取）
+            document.getElementById('total-devices').textContent = Math.floor(Math.random() * 100) + 50;
+            document.getElementById('active-devices').textContent = Math.floor(Math.random() * 50) + 20;
+            document.getElementById('total-users').textContent = Math.floor(Math.random() * 200) + 100;
+            document.getElementById('active-connections').textContent = Math.floor(Math.random() * 150) + 80;
+        } catch (error) {
+            console.error('加载统计数据失败:', error);
+        }
+    }
+</script>
+{% endblock %}

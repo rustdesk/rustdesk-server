@@ -48,11 +48,16 @@ regex = "1.4"
 tower-http = { version = "0.3", features = ["fs", "trace", "cors"] }
 http = "0.2"
 flexi_logger = { version = "0.22", features = ["async", "use_chrono_for_offset", "dont_minimize_extra_stacks"] }
+capnp = "0.18"
+prost = "0.12"
+criterion = { version = "0.5", features = ["html_reports"] }
 ipnetwork = "0.20"
 local-ip-address = "0.5.1"
 dns-lookup = "1.0.8"
 ping = "0.4.0"
 flate2 = "1.0"
+askama = { version = "0.12", features = ["with-axum"] }
+askama_axum = "0.4"
 
 [target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
 # https://github.com/rustdesk/rustdesk-server-pro/issues/189, using native-tls for better tls support
