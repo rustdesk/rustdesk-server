@@ -1,0 +1,790 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RustDesk 服务器管理</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: #f5f5f5;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px 0;
+            text-align: center;
+            margin-bottom: 30px;
+            border-radius: 10px;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .tabs {
+            display: flex;
+            background: white;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+
+        .tab {
+            flex: 1;
+            padding: 15px 20px;
+            background: #f8f9fa;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
+            transition: all 0.3s ease;
+        }
+
+        .tab.active {
+            background: #667eea;
+            color: white;
+        }
+
+        .tab:hover:not(.active) {
+            background: #e9ecef;
+        }
+
+        .tab-content {
+            display: none;
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #495057;
+        }
+
+        .form-group input, .form-group select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e9ecef;
+            border-radius: 6px;
+            font-size: 16px;
+            transition: border-color 0.3s ease;
+        }
+
+        .form-group input:focus, .form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: all 0.3s ease;
+        }
+
+        .btn:hover {
+            background: #5a6fd8;
+            transform: translateY(-2px);
+        }
+
+        .btn-danger {
+            background: #dc3545;
+        }
+
+        .btn-danger:hover {
+            background: #c82333;
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+        }
+
+        .btn-secondary:hover {
+            background: #5a6268;
+        }
+
+        .table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+
+        .table th, .table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #dee2e6;
+        }
+
+        .table th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #495057;
+        }
+
+        .table tr:hover {
+            background: #f8f9fa;
+        }
+
+        .alert {
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }
+
+        .alert-success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .alert-error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .login-container {
+            max-width: 400px;
+            margin: 100px auto;
+            background: white;
+            padding: 40px;
+            border-radius: 10px;
+            box-shadow: 0 2px 20px rgba(0,0,0,0.1);
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 25px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+
+        .stat-number {
+            font-size: 2.5em;
+            font-weight: bold;
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+
+        .stat-label {
+            color: #6c757d;
+            font-size: 1.1em;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+            
+            .tabs {
+                flex-direction: column;
+            }
+            
+            .container {
+                padding: 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- 登录界面 -->
+    <div id="loginPage" class="login-container">
+        <h2 style="text-align: center; margin-bottom: 30px; color: #667eea;">管理员登录</h2>
+        <div class="form-group">
+            <label for="username">用户名:</label>
+            <input type="text" id="username" placeholder="请输入用户名">
+        </div>
+        <div class="form-group">
+            <label for="password">密码:</label>
+            <input type="password" id="password" placeholder="请输入密码">
+        </div>
+        <button class="btn" onclick="login()" style="width: 100%;">登录</button>
+        <div id="loginMessage"></div>
+    </div>
+
+    <!-- 主管理界面 -->
+    <div id="mainPage" class="container hidden">
+        <div class="header">
+            <h1>RustDesk 服务器管理</h1>
+            <p>用户和设备管理平台</p>
+        </div>
+
+        <!-- 统计信息 -->
+        <div class="stats">
+            <div class="stat-card">
+                <div class="stat-number" id="totalUsers">-</div>
+                <div class="stat-label">总用户数</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="totalDevices">-</div>
+                <div class="stat-label">总设备数</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="activeDevices">-</div>
+                <div class="stat-label">活跃设备</div>
+            </div>
+        </div>
+
+        <!-- 标签页 -->
+        <div class="tabs">
+            <button class="tab active" onclick="showTab('users')">用户管理</button>
+            <button class="tab" onclick="showTab('devices')">设备管理</button>
+            <button class="tab" onclick="showTab('settings')">系统设置</button>
+        </div>
+
+        <!-- 消息提示 -->
+        <div id="message"></div>
+
+        <!-- 用户管理 -->
+        <div id="users" class="tab-content active">
+            <h3>用户管理</h3>
+            <button class="btn" onclick="showCreateUserForm()">创建新用户</button>
+            
+            <div id="createUserForm" class="hidden" style="margin-top: 20px; padding: 20px; background: #f8f9fa; border-radius: 6px;">
+                <h4>创建新用户</h4>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="newUsername">用户名:</label>
+                        <input type="text" id="newUsername" placeholder="至少3个字符">
+                    </div>
+                    <div class="form-group">
+                        <label for="newEmail">邮箱:</label>
+                        <input type="email" id="newEmail" placeholder="user@example.com">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="newPassword">密码:</label>
+                    <input type="password" id="newPassword" placeholder="至少6个字符">
+                </div>
+                <button class="btn" onclick="createUser()">创建用户</button>
+                <button class="btn btn-secondary" onclick="hideCreateUserForm()">取消</button>
+            </div>
+
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>用户名</th>
+                        <th>邮箱</th>
+                        <th>创建时间</th>
+                        <th>状态</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody id="usersTable">
+                    <tr><td colspan="6" style="text-align: center;">加载中...</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- 设备管理 -->
+        <div id="devices" class="tab-content">
+            <h3>设备管理</h3>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="deviceUser">选择用户:</label>
+                    <select id="deviceUser">
+                        <option value="">请选择用户</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="deviceSearch">搜索设备:</label>
+                    <input type="text" id="deviceSearch" placeholder="输入设备ID" onkeyup="searchDevices()">
+                </div>
+            </div>
+            
+            <button class="btn" onclick="showAddDeviceForm()">添加设备</button>
+            
+            <div id="addDeviceForm" class="hidden" style="margin-top: 20px; padding: 20px; background: #f8f9fa; border-radius: 6px;">
+                <h4>添加设备到用户</h4>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="addDeviceUser">用户:</label>
+                        <select id="addDeviceUser">
+                            <option value="">请选择用户</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="newDeviceId">设备ID:</label>
+                        <input type="text" id="newDeviceId" placeholder="RustDesk设备ID">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="newDeviceName">设备名称:</label>
+                    <input type="text" id="newDeviceName" placeholder="可选，如：办公电脑">
+                </div>
+                <button class="btn" onclick="addDevice()">添加设备</button>
+                <button class="btn btn-secondary" onclick="hideAddDeviceForm()">取消</button>
+            </div>
+
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>设备ID</th>
+                        <th>设备名称</th>
+                        <th>所属用户</th>
+                        <th>添加时间</th>
+                        <th>状态</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody id="devicesTable">
+                    <tr><td colspan="6" style="text-align: center;">加载中...</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- 系统设置 -->
+        <div id="settings" class="tab-content">
+            <h3>系统设置</h3>
+            <div class="form-group">
+                <label>当前用户:</label>
+                <p id="currentUser">-</p>
+            </div>
+            <div class="form-group">
+                <label>API 端点:</label>
+                <p id="apiEndpoint">-</p>
+            </div>
+            <button class="btn btn-danger" onclick="logout()">退出登录</button>
+        </div>
+    </div>
+
+    <script>
+        let authToken = localStorage.getItem('authToken');
+        let currentUser = null;
+
+        // 页面加载时检查登录状态
+        window.onload = function() {
+            if (authToken) {
+                showMainPage();
+                loadStats();
+                loadUsers();
+            } else {
+                showLoginPage();
+            }
+        };
+
+        function showLoginPage() {
+            document.getElementById('loginPage').classList.remove('hidden');
+            document.getElementById('mainPage').classList.add('hidden');
+        }
+
+        function showMainPage() {
+            document.getElementById('loginPage').classList.add('hidden');
+            document.getElementById('mainPage').classList.remove('hidden');
+            document.getElementById('apiEndpoint').textContent = window.location.origin + '/api';
+        }
+
+        async function login() {
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            
+            if (!username || !password) {
+                showMessage('请输入用户名和密码', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ username, password })
+                });
+
+                const result = await response.json();
+                
+                if (result.success) {
+                    authToken = result.data.token;
+                    currentUser = result.data.user;
+                    localStorage.setItem('authToken', authToken);
+                    localStorage.setItem('currentUser', JSON.stringify(currentUser));
+                    
+                    document.getElementById('currentUser').textContent = currentUser.username;
+                    showMessage('登录成功！', 'success');
+                    setTimeout(() => {
+                        showMainPage();
+                        loadStats();
+                        loadUsers();
+                    }, 1000);
+                } else {
+                    showMessage(result.message, 'error');
+                }
+            } catch (error) {
+                showMessage('登录失败: ' + error.message, 'error');
+            }
+        }
+
+        function logout() {
+            localStorage.removeItem('authToken');
+            localStorage.removeItem('currentUser');
+            authToken = null;
+            currentUser = null;
+            showLoginPage();
+            showMessage('已退出登录', 'success');
+        }
+
+        function showTab(tabName) {
+            // 隐藏所有标签页内容
+            const tabContents = document.querySelectorAll('.tab-content');
+            tabContents.forEach(tab => tab.classList.remove('active'));
+            
+            // 移除所有标签按钮的激活状态
+            const tabs = document.querySelectorAll('.tab');
+            tabs.forEach(tab => tab.classList.remove('active'));
+            
+            // 显示选中的标签页
+            document.getElementById(tabName).classList.add('active');
+            event.target.classList.add('active');
+            
+            // 根据标签页加载相应数据
+            if (tabName === 'users') {
+                loadUsers();
+            } else if (tabName === 'devices') {
+                loadDevices();
+                loadUserOptions();
+            }
+        }
+
+        async function loadStats() {
+            try {
+                const usersResponse = await apiCall('/api/users');
+                const users = usersResponse.data || [];
+                
+                let totalDevices = 0;
+                for (const user of users) {
+                    const devicesResponse = await apiCall(`/api/users/${user.id}/devices`);
+                    totalDevices += (devicesResponse.data || []).length;
+                }
+                
+                document.getElementById('totalUsers').textContent = users.length;
+                document.getElementById('totalDevices').textContent = totalDevices;
+                document.getElementById('activeDevices').textContent = totalDevices; // 简化处理，实际应该检查设备在线状态
+            } catch (error) {
+                console.error('加载统计信息失败:', error);
+            }
+        }
+
+        async function loadUsers() {
+            try {
+                const response = await apiCall('/api/users');
+                const users = response.data || [];
+                
+                let html = '';
+                users.forEach(user => {
+                    html += `
+                        <tr>
+                            <td>${user.id}</td>
+                            <td>${user.username}</td>
+                            <td>${user.email}</td>
+                            <td>${new Date(user.created_at).toLocaleString()}</td>
+                            <td>${user.is_active ? '活跃' : '禁用'}</td>
+                            <td>
+                                <button class="btn btn-secondary" onclick="viewUserDevices(${user.id})">查看设备</button>
+                                <button class="btn btn-danger" onclick="deleteUser(${user.id})">删除</button>
+                            </td>
+                        </tr>
+                    `;
+                });
+                
+                document.getElementById('usersTable').innerHTML = html || '<tr><td colspan="6" style="text-align: center;">暂无用户</td></tr>';
+            } catch (error) {
+                document.getElementById('usersTable').innerHTML = '<tr><td colspan="6" style="text-align: center;">加载失败</td></tr>';
+            }
+        }
+
+        async function loadDevices() {
+            try {
+                const usersResponse = await apiCall('/api/users');
+                const users = usersResponse.data || [];
+                
+                let allDevices = [];
+                for (const user of users) {
+                    const devicesResponse = await apiCall(`/api/users/${user.id}/devices`);
+                    const devices = devicesResponse.data || [];
+                    devices.forEach(device => {
+                        allDevices.push({
+                            ...device,
+                            username: user.username
+                        });
+                    });
+                }
+                
+                let html = '';
+                allDevices.forEach(device => {
+                    html += `
+                        <tr>
+                            <td>${device.device_id}</td>
+                            <td>${device.device_name || '-'}</td>
+                            <td>${device.username}</td>
+                            <td>${new Date(device.created_at).toLocaleString()}</td>
+                            <td>${device.is_active ? '活跃' : '禁用'}</td>
+                            <td>
+                                <button class="btn btn-danger" onclick="removeDevice(${device.user_id}, '${device.device_id}')">移除</button>
+                            </td>
+                        </tr>
+                    `;
+                });
+                
+                document.getElementById('devicesTable').innerHTML = html || '<tr><td colspan="6" style="text-align: center;">暂无设备</td></tr>';
+            } catch (error) {
+                document.getElementById('devicesTable').innerHTML = '<tr><td colspan="6" style="text-align: center;">加载失败</td></tr>';
+            }
+        }
+
+        async function loadUserOptions() {
+            try {
+                const response = await apiCall('/api/users');
+                const users = response.data || [];
+                
+                let options = '<option value="">请选择用户</option>';
+                users.forEach(user => {
+                    options += `<option value="${user.id}">${user.username} (${user.email})</option>`;
+                });
+                
+                document.getElementById('deviceUser').innerHTML = options;
+                document.getElementById('addDeviceUser').innerHTML = options;
+            } catch (error) {
+                console.error('加载用户选项失败:', error);
+            }
+        }
+
+        function showCreateUserForm() {
+            document.getElementById('createUserForm').classList.remove('hidden');
+        }
+
+        function hideCreateUserForm() {
+            document.getElementById('createUserForm').classList.add('hidden');
+            // 清空表单
+            document.getElementById('newUsername').value = '';
+            document.getElementById('newEmail').value = '';
+            document.getElementById('newPassword').value = '';
+        }
+
+        async function createUser() {
+            const username = document.getElementById('newUsername').value;
+            const email = document.getElementById('newEmail').value;
+            const password = document.getElementById('newPassword').value;
+            
+            if (!username || !email || !password) {
+                showMessage('请填写所有必填字段', 'error');
+                return;
+            }
+            
+            try {
+                const response = await apiCall('/api/users', 'POST', { username, email, password });
+                
+                if (response.success) {
+                    showMessage('用户创建成功！', 'success');
+                    hideCreateUserForm();
+                    loadUsers();
+                    loadStats();
+                } else {
+                    showMessage(response.message, 'error');
+                }
+            } catch (error) {
+                showMessage('创建用户失败: ' + error.message, 'error');
+            }
+        }
+
+        async function deleteUser(userId) {
+            if (!confirm('确定要删除这个用户吗？这将同时删除其所有设备。')) {
+                return;
+            }
+            
+            try {
+                const response = await apiCall(`/api/users/${userId}`, 'DELETE');
+                
+                if (response.success) {
+                    showMessage('用户删除成功！', 'success');
+                    loadUsers();
+                    loadStats();
+                } else {
+                    showMessage(response.message, 'error');
+                }
+            } catch (error) {
+                showMessage('删除用户失败: ' + error.message, 'error');
+            }
+        }
+
+        function showAddDeviceForm() {
+            document.getElementById('addDeviceForm').classList.remove('hidden');
+        }
+
+        function hideAddDeviceForm() {
+            document.getElementById('addDeviceForm').classList.add('hidden');
+            // 清空表单
+            document.getElementById('addDeviceUser').value = '';
+            document.getElementById('newDeviceId').value = '';
+            document.getElementById('newDeviceName').value = '';
+        }
+
+        async function addDevice() {
+            const userId = parseInt(document.getElementById('addDeviceUser').value);
+            const deviceId = document.getElementById('newDeviceId').value;
+            const deviceName = document.getElementById('newDeviceName').value;
+            
+            if (!userId || !deviceId) {
+                showMessage('请选择用户并输入设备ID', 'error');
+                return;
+            }
+            
+            try {
+                const response = await apiCall(`/api/users/${userId}/devices`, 'POST', {
+                    user_id: userId,
+                    device_id: deviceId,
+                    device_name: deviceName || null
+                });
+                
+                if (response.success) {
+                    showMessage('设备添加成功！', 'success');
+                    hideAddDeviceForm();
+                    loadDevices();
+                    loadStats();
+                } else {
+                    showMessage(response.message, 'error');
+                }
+            } catch (error) {
+                showMessage('添加设备失败: ' + error.message, 'error');
+            }
+        }
+
+        async function removeDevice(userId, deviceId) {
+            if (!confirm('确定要移除这个设备吗？')) {
+                return;
+            }
+            
+            try {
+                const response = await apiCall(`/api/users/${userId}/devices/${deviceId}`, 'DELETE');
+                
+                if (response.success) {
+                    showMessage('设备移除成功！', 'success');
+                    loadDevices();
+                    loadStats();
+                } else {
+                    showMessage(response.message, 'error');
+                }
+            } catch (error) {
+                showMessage('移除设备失败: ' + error.message, 'error');
+            }
+        }
+
+        function viewUserDevices(userId) {
+            showTab('devices');
+            document.getElementById('deviceUser').value = userId;
+            // 这里可以添加过滤逻辑，只显示指定用户的设备
+        }
+
+        function searchDevices() {
+            const searchTerm = document.getElementById('deviceSearch').value.toLowerCase();
+            const rows = document.querySelectorAll('#devicesTable tr');
+            
+            rows.forEach(row => {
+                const deviceId = row.cells[0]?.textContent.toLowerCase() || '';
+                const deviceName = row.cells[1]?.textContent.toLowerCase() || '';
+                const username = row.cells[2]?.textContent.toLowerCase() || '';
+                
+                if (deviceId.includes(searchTerm) || deviceName.includes(searchTerm) || username.includes(searchTerm)) {
+                    row.style.display = '';
+                } else {
+                    row.style.display = 'none';
+                }
+            });
+        }
+
+        async function apiCall(endpoint, method = 'GET', data = null) {
+            const options = {
+                method,
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            };
+            
+            if (authToken) {
+                options.headers['Authorization'] = `Bearer ${authToken}`;
+            }
+            
+            if (data) {
+                options.body = JSON.stringify(data);
+            }
+            
+            const response = await fetch(endpoint, options);
+            return await response.json();
+        }
+
+        function showMessage(message, type = 'success') {
+            const messageDiv = document.getElementById('message');
+            messageDiv.className = `alert alert-${type}`;
+            messageDiv.textContent = message;
+            messageDiv.style.display = 'block';
+            
+            setTimeout(() => {
+                messageDiv.style.display = 'none';
+            }, 5000);
+        }
+
+        // 检查本地存储的用户信息
+        if (localStorage.getItem('currentUser')) {
+            currentUser = JSON.parse(localStorage.getItem('currentUser'));
+            if (document.getElementById('currentUser')) {
+                document.getElementById('currentUser').textContent = currentUser.username;
+            }
+        }
+    </script>
+</body>
+</html>

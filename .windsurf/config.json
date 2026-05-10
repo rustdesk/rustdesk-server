@@ -1,0 +1,57 @@
+{
+  "project": {
+    "name": "nat-server",
+    "description": "RustDesk server fork with API enhancements",
+    "version": "1.1.15",
+    "type": "rust"
+  },
+  "build": {
+    "target": "release",
+    "binary": "hbbs",
+    "command": "cargo build --release"
+  },
+  "run": {
+    "binary": "hbbs",
+    "command": "cargo run --bin hbbs"
+  },
+  "api": {
+    "port": 8080,
+    "base_url": "http://localhost:8080",
+    "endpoints": {
+      "login": "/api/login",
+      "users": "/api/users",
+      "devices": "/api/users/:id/devices"
+    }
+  },
+  "database": {
+    "file": "./db_v2.sqlite3",
+    "type": "sqlite"
+  },
+  "features": {
+    "user_management": true,
+    "device_management": true,
+    "jwt_auth": true,
+    "api_routes": true
+  },
+  "development": {
+    "status": "compilation_successful",
+    "last_fixed_issues": [
+      "Handler trait compatibility with axum 0.5",
+      "ApiResponse generic error method",
+      "Type mismatches in update_user function",
+      "Server::bind SocketAddr compatibility",
+      "RendezvousServer import issues"
+    ],
+    "known_limitations": [
+      "create_user and add_device routes temporarily commented out due to Handler trait issues",
+      "Some unused imports and warnings present"
+    ]
+  },
+  "dependencies": {
+    "axum": "0.5.5",
+    "sqlx": "0.6",
+    "tokio": "1.0",
+    "serde": "1.0",
+    "jsonwebtoken": "8.0"
+  }
+}
