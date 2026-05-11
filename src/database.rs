@@ -165,6 +165,24 @@ impl Database {
         .execute(&mut *conn)
         .await?;
 
+        // 创建密码重置令牌表
+        sqlx::query("
+            create table if not exists password_reset_tokens (
+                id integer primary key autoincrement,
+                user_id integer not null,
+                token varchar(255) unique not null,
+                expires_at datetime not null,
+                created_at datetime not null default(current_timestamp),
+                is_used boolean not null default 0,
+                foreign key (user_id) references users (id) on delete cascade
+            );
+            create index if not exists index_password_reset_tokens_user_id on password_reset_tokens (user_id);
+            create index if not exists index_password_reset_tokens_token on password_reset_tokens (token);
+            create index if not exists index_password_reset_tokens_expires_at on password_reset_tokens (expires_at);
+        ")
+        .execute(&mut *conn)
+        .await?;
+
         Ok(())
     }
 
@@ -453,6 +471,108 @@ impl Database {
 
     pub async fn verify_password(&self, password: &str, hash: &str) -> ResultType<bool> {
         Ok(bcrypt::verify(password, hash).unwrap_or(false))
+    }
+
+    // 密码重置相关方法
+    pub async fn create_password_reset_token(&self, user_id: i64) -> ResultType<String> {
+        use uuid::Uuid;
+        
+        // 生成唯一的重置令牌
+        let token = Uuid::new_v4().to_string();
+        let expires_at = chrono::Utc::now() + chrono::Duration::hours(1); // 1小时后过期
+        
+        let mut conn = self.pool.get().await?;
+        sqlx::query("insert into password_reset_tokens (user_id, token, expires_at) values (?, ?, ?)")
+            .bind(user_id)
+            .bind(&token)
+            .bind(expires_at)
+            .execute(&mut *conn)
+            .await?;
+        
+        Ok(token)
+    }
+
+    pub async fn validate_password_reset_token(&self, token: &str) -> ResultType<Option<i64>> {
+        let mut conn = self.pool.get().await?;
+        let row = sqlx::query("select user_id from password_reset_tokens where token = ? and expires_at > datetime('now') and is_used = 0")
+            .bind(token)
+            .fetch_optional(&mut *conn)
+            .await?;
+        
+        if let Some(row) = row {
+            Ok(Some(row.get("user_id")))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub async fn reset_password(&self, user_id: i64, new_password: &str) -> ResultType<()> {
+        let password_hash = bcrypt::hash(new_password, bcrypt::DEFAULT_COST)
+            .map_err(|e| hbb_common::anyhow::anyhow!("Failed to hash password: {}", e))?;
+        
+        let mut conn = self.pool.get().await?;
+        
+        // 开始事务
+        let mut tx = conn.begin().await?;
+        
+        // 更新密码
+        sqlx::query("update users set password_hash = ?, updated_at = current_timestamp where id = ?")
+            .bind(&password_hash)
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await?;
+        
+        // 标记该用户的所有重置令牌为已使用
+        sqlx::query("update password_reset_tokens set is_used = 1 where user_id = ? and is_used = 0")
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await?;
+        
+        // 提交事务
+        tx.commit().await?;
+        
+        Ok(())
+    }
+
+    pub async fn update_password(&self, user_id: i64, old_password: &str, new_password: &str) -> ResultType<()> {
+        // 首先验证旧密码
+        match self.get_user_by_id(user_id).await? {
+            Some(user) => {
+                if !bcrypt::verify(old_password, &user.password_hash).unwrap_or(false) {
+                    return Err(hbb_common::anyhow::anyhow!("旧密码不正确"));
+                }
+            }
+            None => {
+                return Err(hbb_common::anyhow::anyhow!("用户不存在"));
+            }
+        }
+        
+        // 更新密码
+        let password_hash = bcrypt::hash(new_password, bcrypt::DEFAULT_COST)
+            .map_err(|e| hbb_common::anyhow::anyhow!("Failed to hash password: {}", e))?;
+        
+        let mut conn = self.pool.get().await?;
+        sqlx::query("update users set password_hash = ?, updated_at = current_timestamp where id = ?")
+            .bind(&password_hash)
+            .bind(user_id)
+            .execute(&mut *conn)
+            .await?;
+        
+        Ok(())
+    }
+
+    pub async fn change_password(&self, user_id: i64, new_password: &str) -> ResultType<()> {
+        let password_hash = bcrypt::hash(new_password, bcrypt::DEFAULT_COST)
+            .map_err(|e| hbb_common::anyhow::anyhow!("Failed to hash password: {}", e))?;
+        
+        let mut conn = self.pool.get().await?;
+        sqlx::query("update users set password_hash = ?, updated_at = current_timestamp where id = ?")
+            .bind(&password_hash)
+            .bind(user_id)
+            .execute(&mut *conn)
+            .await?;
+        
+        Ok(())
     }
 }
 

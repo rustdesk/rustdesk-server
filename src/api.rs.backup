@@ -1,8 +1,7 @@
-use crate::database::{Database, CreateUserRequest, CreateDeviceRequest, User, UserDevice};
+use crate::database::{Database, CreateUserRequest, CreateDeviceRequest, User, UserDevice};\nuse crate::password_reset::{forgot_password, reset_password, change_password, forgot_password_page, reset_password_page};
 use crate::database_simple::*;
 use crate::device_pages;
 use crate::device_api;
-use crate::password_reset::{forgot_password, reset_password, change_password, forgot_password_page, reset_password_page};
 use axum::{
     extract::{Path, Query, Extension},
     http::StatusCode,
@@ -200,18 +199,6 @@ async fn root_handler() -> impl IntoResponse {
         </div>
         
         <div class="endpoint">
-            <span class="method post">POST</span> <code>/api/register</code> - User registration
-        </div>
-        
-        <div class="endpoint">
-            <span class="method post">POST</span> <code>/api/forgot-password</code> - Password reset request
-        </div>
-        
-        <div class="endpoint">
-            <span class="method post">POST</span> <code>/api/reset-password</code> - Password reset confirmation
-        </div>
-        
-        <div class="endpoint">
             <span class="method get">GET</span> <code>/api/users</code> - List all users
         </div>
         
@@ -227,16 +214,26 @@ async fn root_handler() -> impl IntoResponse {
             <span class="method delete">DELETE</span> <code>/api/users/:id</code> - Delete user
         </div>
         
+        <div class="endpoint">
+            <span class="method get">GET</span> <code>/api/users/:id/devices</code> - Get user devices
+        </div>
+        
+        <div class="endpoint">
+            <span class="method delete">DELETE</span> <code>/api/users/:id/devices/:device_id</code> - Remove device
+        </div>
+        
+        <div class="endpoint">
+            <span class="method get">GET</span> <code>/api/devices/:device_id/owner</code> - Get device owner
+        </div>
+        
         <h2>🔧 Usage Example</h2>
         <pre><code># Login
 curl -X POST http://localhost:8080/api/login \
   -H "Content-Type: application/json" \
   -d '{"username": "admin", "password": "password"}'
 
-# Register
-curl -X POST http://localhost:8080/api/register \
-  -H "Content-Type: application/json" \
-  -d '{"username": "testuser", "email": "test@example.com", "password": "password123", "confirm_password": "password123"}'</code></pre>
+# Get users
+curl -X GET http://localhost:8080/api/users</code></pre>
         
         <h2>📝 Notes</h2>
         <ul>
@@ -289,79 +286,46 @@ async fn login(
                 Err(_) => Ok(Json(ApiResponse::error("认证失败".to_string()))),
             }
         }
-        Ok(None) => Ok(Json(ApiResponse::error("用户不存在".to_string()))),
-        Err(_) => Ok(Json(ApiResponse::error("数据库错误".to_string()))),
+        Ok(None) => Ok(Json(ApiResponse::error("用户不存�?.to_string()))),
+        Err(_) => Ok(Json(ApiResponse::error("数据库错�?.to_string()))),
     }
 }
 
-async fn register(
+async fn create_user(
     Extension(state): Extension<ApiState>,
-    Json(request): Json<RegisterRequest>,
+    Json(request): Json<CreateUserRequest>,
 ) -> Result<Json<ApiResponse<UserInfo>>, StatusCode> {
     // 验证输入
-    if request.username.trim().is_empty() {
-        return Ok(Json(ApiResponse::error("用户名不能为空".to_string())));
-    }
-    
-    if request.email.trim().is_empty() {
-        return Ok(Json(ApiResponse::error("邮箱不能为空".to_string())));
+    if request.username.len() < 3 {
+        return Ok(Json(ApiResponse::error("用户名至少需�?个字�?.to_string())));
     }
     
     if request.password.len() < 6 {
-        return Ok(Json(ApiResponse::error("密码长度至少6位".to_string())));
+        return Ok(Json(ApiResponse::error("密码至少需�?个字�?.to_string())));
     }
     
-    if request.password != request.confirm_password {
-        return Ok(Json(ApiResponse::error("两次输入的密码不一致".to_string())));
+    if !request.email.contains('@') {
+        return Ok(Json(ApiResponse::error("邮箱格式不正�?.to_string())));
     }
     
-    // 检查用户名是否已存在
-    match state.db.get_user_by_username(&request.username).await {
-        Ok(Some(_)) => {
-            return Ok(Json(ApiResponse::error("用户名已存在".to_string())));
-        }
-        Ok(None) => {}
-        Err(_) => {
-            return Ok(Json(ApiResponse::error("数据库错误".to_string())));
-        }
+    // 检查用户名和邮箱是否已存在
+    if let Ok(Some(_)) = state.db.get_user_by_username_simple(&request.username).await {
+        return Ok(Json(ApiResponse::error("用户名已存在".to_string())));
     }
     
-    // 检查邮箱是否已存在
-    match state.db.get_user_by_email(&request.email).await {
-        Ok(Some(_)) => {
-            return Ok(Json(ApiResponse::error("邮箱已被注册".to_string())));
-        }
-        Ok(None) => {}
-        Err(_) => {
-            return Ok(Json(ApiResponse::error("数据库错误".to_string())));
-        }
+    if let Ok(Some(_)) = state.db.get_user_by_email_simple(&request.email).await {
+        return Ok(Json(ApiResponse::error("邮箱已存�?.to_string())));
     }
     
-    // 创建用户
-    let create_request = CreateUserRequest {
-        username: request.username.clone(),
-        email: request.email.clone(),
-        password: request.password.clone(),
-    };
-    
-    match state.db.create_user(&create_request).await {
+    match state.db.create_user_simple(&request).await {
         Ok(user_id) => {
-            // 获取刚创建的用户信息
             match state.db.get_user_by_id(user_id).await {
-                Ok(Some(user)) => {
-                    Ok(Json(ApiResponse::success(user.into())))
-                }
-                Ok(None) => {
-                    Ok(Json(ApiResponse::error("创建用户后查询失败".to_string())))
-                }
-                Err(_) => {
-                    Ok(Json(ApiResponse::error("查询用户信息失败".to_string())))
-                }
+                Ok(Some(user)) => Ok(Json(ApiResponse::success(user.into()))),
+                Ok(None) => Ok(Json(ApiResponse::error("创建用户后查询失�?.to_string()))),
+                Err(_) => Ok(Json(ApiResponse::error("数据库错�?.to_string()))),
             }
         }
-        Err(_) => {
-            Ok(Json(ApiResponse::error("注册失败".to_string())))
-        }
+        Err(e) => Ok(Json(ApiResponse::error(format!("创建用户失败: {}", e)))),
     }
 }
 
@@ -384,8 +348,8 @@ pub async fn get_user(
 ) -> Result<Json<ApiResponse<UserInfo>>, StatusCode> {
     match state.db.get_user_by_id(user_id).await {
         Ok(Some(user)) => Ok(Json(ApiResponse::success(user.into()))),
-        Ok(None) => Ok(Json(ApiResponse::error("用户不存在".to_string()))),
-        Err(_) => Ok(Json(ApiResponse::error("数据库错误".to_string()))),
+        Ok(None) => Ok(Json(ApiResponse::error("用户不存�?.to_string()))),
+        Err(_) => Ok(Json(ApiResponse::error("数据库错�?.to_string()))),
     }
 }
 
@@ -400,7 +364,7 @@ pub async fn update_user(
     // 验证邮箱格式
     if let Some(ref email) = email {
         if !email.contains('@') {
-            return Ok(Json(ApiResponse::error("邮箱格式不正确".to_string())));
+            return Ok(Json(ApiResponse::error("邮箱格式不正�?.to_string())));
         }
     }
     
@@ -408,8 +372,8 @@ pub async fn update_user(
         Ok(_) => {
             match state.db.get_user_by_id(user_id).await {
                 Ok(Some(user)) => Ok(Json(ApiResponse::success(user.into()))),
-                Ok(None) => Ok(Json(ApiResponse::error("用户不存在".to_string()))),
-                Err(_) => Ok(Json(ApiResponse::error("数据库错误".to_string()))),
+                Ok(None) => Ok(Json(ApiResponse::error("用户不存�?.to_string()))),
+                Err(_) => Ok(Json(ApiResponse::error("数据库错�?.to_string()))),
             }
         }
         Err(e) => Ok(Json(ApiResponse::error(format!("更新用户失败: {}", e)))),
@@ -439,6 +403,43 @@ pub async fn get_user_devices(
     }
 }
 
+async fn add_device(
+    Extension(state): Extension<ApiState>,
+    Path(user_id): Path<i64>,
+    Json(request): Json<CreateDeviceRequest>,
+) -> Result<Json<ApiResponse<DeviceInfo>>, StatusCode> {
+    // 验证用户存在
+    match state.db.get_user_by_id(user_id).await {
+        Ok(Some(_)) => {
+            // 创建设备关联请求
+            let device_request = CreateDeviceRequest {
+                user_id,
+                device_id: request.device_id,
+                device_name: request.device_name,
+            };
+            
+            match state.db.add_device_to_user_simple(&device_request).await {
+                Ok(device_relation_id) => {
+                    // 获取设备信息
+                    match state.db.get_user_devices_simple(user_id).await {
+                        Ok(devices) => {
+                            if let Some(device) = devices.into_iter().find(|d| d.id == device_relation_id) {
+                                Ok(Json(ApiResponse::success(device.into())))
+                            } else {
+                                Ok(Json(ApiResponse::error("添加设备后查询失�?.to_string())))
+                            }
+                        }
+                        Err(_) => Ok(Json(ApiResponse::error("查询设备信息失败".to_string()))),
+                    }
+                }
+                Err(e) => Ok(Json(ApiResponse::error(format!("添加设备失败: {}", e)))),
+            }
+        }
+        Ok(None) => Ok(Json(ApiResponse::error("用户不存�?.to_string()))),
+        Err(_) => Ok(Json(ApiResponse::error("数据库错�?.to_string()))),
+    }
+}
+
 pub async fn remove_device(
     Extension(state): Extension<ApiState>,
     Path((user_id, device_id)): Path<(i64, String)>,
@@ -455,8 +456,79 @@ pub async fn get_device_owner(
 ) -> Result<Json<ApiResponse<UserInfo>>, StatusCode> {
     match state.db.get_device_owner_simple(&device_id).await {
         Ok(Some(user)) => Ok(Json(ApiResponse::success(user.into()))),
-        Ok(None) => Ok(Json(ApiResponse::<UserInfo>::error("设备未被分配给任何用户".to_string()))),
-        Err(e) => Ok(Json(ApiResponse::<UserInfo>::error(format!("查询设备所有者失败: {}", e)))),
+        Ok(None) => Ok(Json(ApiResponse::<UserInfo>::error("设备未被分配给任何用�?.to_string()))),
+        Err(e) => Ok(Json(ApiResponse::<UserInfo>::error(format!("查询设备所有者失�? {}", e)))),
+    }
+}
+
+async fn register(
+    Extension(state): Extension<ApiState>,
+    Json(request): Json<RegisterRequest>,
+) -> Result<Json<ApiResponse<UserInfo>>, StatusCode> {
+    // 验证输入
+    if request.username.trim().is_empty() {
+        return Ok(Json(ApiResponse::error("用户名不能为�?.to_string())));
+    }
+    
+    if request.email.trim().is_empty() {
+        return Ok(Json(ApiResponse::error("邮箱不能为空".to_string())));
+    }
+    
+    if request.password.len() < 6 {
+        return Ok(Json(ApiResponse::error("密码长度至少6�?.to_string())));
+    }
+    
+    if request.password != request.confirm_password {
+        return Ok(Json(ApiResponse::error("两次输入的密码不一�?.to_string())));
+    }
+    
+    // 检查用户名是否已存�?
+    match state.db.get_user_by_username(&request.username).await {
+        Ok(Some(_)) => {
+            return Ok(Json(ApiResponse::error("用户名已存在".to_string())));
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return Ok(Json(ApiResponse::error("数据库错�?.to_string())));
+        }
+    }
+    
+    // 检查邮箱是否已存在
+    match state.db.get_user_by_email(&request.email).await {
+        Ok(Some(_)) => {
+            return Ok(Json(ApiResponse::error("邮箱已被注册".to_string())));
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return Ok(Json(ApiResponse::error("数据库错�?.to_string())));
+        }
+    }
+    
+    // 创建用户
+    let create_request = CreateUserRequest {
+        username: request.username.clone(),
+        email: request.email.clone(),
+        password: request.password.clone(),
+    };
+    
+    match state.db.create_user(&create_request).await {
+        Ok(user_id) => {
+            // 获取刚创建的用户信息
+            match state.db.get_user_by_id(user_id).await {
+                Ok(Some(user)) => {
+                    Ok(Json(ApiResponse::success(user.into())))
+                }
+                Ok(None) => {
+                    Ok(Json(ApiResponse::error("创建用户后查询失�?.to_string())))
+                }
+                Err(_) => {
+                    Ok(Json(ApiResponse::error("查询用户信息失败".to_string())))
+                }
+            }
+        }
+        Err(_) => {
+            Ok(Json(ApiResponse::error("注册失败".to_string())))
+        }
     }
 }
 
@@ -601,7 +673,7 @@ async fn login_page() -> impl IntoResponse {
         
         <form id="login-form">
             <div class="form-group">
-                <label for="username">用户名</label>
+                <label for="username">用户�?/label>
                 <input type="text" id="username" name="username" required>
             </div>
             
@@ -615,9 +687,6 @@ async fn login_page() -> impl IntoResponse {
         
         <div class="register-link">
             还没有账户？ <a href="/register">立即注册</a>
-        </div>
-        <div class="register-link">
-            忘记密码？ <a href="/forgot-password">重置密码</a>
         </div>
     </div>
     
@@ -645,14 +714,14 @@ async fn login_page() -> impl IntoResponse {
                 const result = await response.json();
                 
                 if (result.success) {
-                    successDiv.textContent = '登录成功！正在跳转...';
+                    successDiv.textContent = '登录成功！正在跳�?..';
                     successDiv.style.display = 'block';
                     
                     // 保存token到localStorage
                     localStorage.setItem('jwt_token', result.data.token);
                     localStorage.setItem('user_info', JSON.stringify(result.data.user));
                     
-                    // 跳转到主页或仪表板
+                    // 跳转到主页或仪表�?
                     setTimeout(() => {
                         window.location.href = '/';
                     }, 1500);
@@ -819,7 +888,7 @@ async fn register_page() -> impl IntoResponse {
         
         <form id="register-form">
             <div class="form-group">
-                <label for="username">用户名</label>
+                <label for="username">用户�?/label>
                 <input type="text" id="username" name="username" required>
             </div>
             
@@ -831,7 +900,7 @@ async fn register_page() -> impl IntoResponse {
             <div class="form-group">
                 <label for="password">密码</label>
                 <input type="password" id="password" name="password" required>
-                <div class="password-requirements">密码至少6位字符</div>
+                <div class="password-requirements">密码至少6位字�?/div>
             </div>
             
             <div class="form-group">
@@ -843,7 +912,7 @@ async fn register_page() -> impl IntoResponse {
         </form>
         
         <div class="login-link">
-            已有账户？ <a href="/login">立即登录</a>
+            已有账户�?<a href="/login">立即登录</a>
         </div>
     </div>
     
@@ -861,15 +930,15 @@ async fn register_page() -> impl IntoResponse {
             errorDiv.style.display = 'none';
             successDiv.style.display = 'none';
             
-            // 客户端验证
+            // 客户端验�?
             if (password !== confirmPassword) {
-                errorDiv.textContent = '两次输入的密码不一致';
+                errorDiv.textContent = '两次输入的密码不一�?;
                 errorDiv.style.display = 'block';
                 return;
             }
             
             if (password.length < 6) {
-                errorDiv.textContent = '密码长度至少6位';
+                errorDiv.textContent = '密码长度至少6�?;
                 errorDiv.style.display = 'block';
                 return;
             }

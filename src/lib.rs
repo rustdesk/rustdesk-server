@@ -9,4 +9,5 @@ pub mod device_pages;
 pub mod device_api;
 pub mod views;
 pub mod web;
+pub mod password_reset;
 mod version;
