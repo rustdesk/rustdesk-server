@@ -17,7 +17,7 @@ path = "src/utils.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-core-common = { path = "libs/core-common" }
+core_common = { path = "libs/core-common" }
 serde_derive = "1.0"
 serde = "1.0"
 serde_json = "1.0"
@@ -67,10 +67,11 @@ reqwest = { git = "https://github.com/rustdesk-org/reqwest", features = ["blocki
 reqwest = { git = "https://github.com/rustdesk-org/reqwest", features = ["blocking", "socks", "json", "rustls-tls", "rustls-tls-native-roots", "gzip"], default-features=false }
 
 [build-dependencies]
-core-common = { path = "libs/core-common" }
+core_common = { path = "libs/core-common" }
 
+# "libs/hbb_common",
 [workspace]
-members = ["libs/hbb_common", "libs/core-common"]
+members = ["libs/core-common"]
 exclude = ["ui"]
 
 #https://github.com/johnthagen/min-sized-rust

@@ -882,7 +882,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
 
 [[package]]
-name = "core-common"
+name = "core-foundation"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b2a6cd9ae233e7f62ba4e9353e81a88df7fc8a5987b8d445b4d90c879bd156f6"
+dependencies = [
+ "core-foundation-sys",
+ "libc",
+]
+
+[[package]]
+name = "core-foundation-sys"
+version = "0.8.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
+
+[[package]]
+name = "core_common"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -944,22 +960,6 @@ dependencies = [
  "x11",
  "zstd",
 ]
-
-[[package]]
-name = "core-foundation"
-version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2a6cd9ae233e7f62ba4e9353e81a88df7fc8a5987b8d445b4d90c879bd156f6"
-dependencies = [
- "core-foundation-sys",
- "libc",
-]
-
-[[package]]
-name = "core-foundation-sys"
-version = "0.8.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
 name = "cpufeatures"
@@ -1841,70 +1841,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hbb_common"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-recursion",
- "backtrace",
- "base64 0.22.1",
- "bytes",
- "chrono",
- "clap 4.6.1",
- "confy",
- "default_net",
- "directories-next",
- "dirs-next",
- "dlopen",
- "env_logger 0.11.10",
- "filetime",
- "flexi_logger 0.27.4",
- "futures",
- "futures-util",
- "httparse",
- "lazy_static",
- "libc",
- "libloading",
- "log",
- "mac_address",
- "machine-uid 0.3.0",
- "osascript",
- "protobuf",
- "protobuf-codegen",
- "rand 0.8.6",
- "regex",
- "rustls-native-certs",
- "rustls-pki-types",
- "rustls-platform-verifier",
- "serde",
- "serde_derive",
- "serde_json",
- "sha2",
- "smithay-client-toolkit",
- "socket2 0.3.19",
- "sodiumoxide",
- "sysinfo",
- "thiserror 1.0.69",
- "tokio",
- "tokio-native-tls",
- "tokio-rustls 0.26.4",
- "tokio-socks",
- "tokio-tungstenite 0.26.2",
- "tokio-util",
- "toml 0.7.8",
- "tungstenite 0.26.2",
- "url",
- "users",
- "uuid",
- "webpki-roots 1.0.7",
- "webrtc",
- "whoami",
- "winapi",
- "x11",
- "zstd",
-]
-
-[[package]]
 name = "hbbs"
 version = "1.1.15"
 dependencies = [
@@ -1918,7 +1854,7 @@ dependencies = [
  "capnp",
  "chrono",
  "clap 2.34.0",
- "core-common",
+ "core_common",
  "criterion",
  "deadpool",
  "dns-lookup",
