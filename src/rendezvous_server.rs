@@ -1,3 +1,6 @@
+// NAT打洞穿透服务器实现
+// 实现了完整的NAT穿透协议，包括UDP打洞、TCP打洞、中继服务器等功能
+
 use crate::common::*;
 use crate::peer::*;
 use core_common::{
@@ -40,13 +43,17 @@ use std::{
     time::Instant,
 };
 
+/// 数据类型枚举，用于处理不同类型的消息
 #[derive(Clone, Debug)]
 enum Data {
+    /// 消息和来源地址
     Msg(Box<RendezvousMessage>, SocketAddr),
+    /// 中继服务器列表（字符串格式）
     RelayServers0(String),
+    /// 中继服务器列表（结构化格式）
     RelayServers(RelayServers),
 }
-
+/// 注册超时时间（毫秒）
 const REG_TIMEOUT: i32 = 30_000;
 type TcpStreamSink = SplitSink<Framed<TcpStream, BytesCodec>, Bytes>;
 type WsSink = SplitSink<tokio_tungstenite::WebSocketStream<TcpStream>, tungstenite::Message>;
@@ -58,6 +65,7 @@ type Sender = mpsc::UnboundedSender<Data>;
 type Receiver = mpsc::UnboundedReceiver<Data>;
 static ROTATION_RELAY_SERVER: AtomicUsize = AtomicUsize::new(0);
 type RelayServers = Vec<String>;
+/// 检查中继服务器超时时间
 const CHECK_RELAY_TIMEOUT: u64 = 3_000;
 static ALWAYS_USE_RELAY: AtomicBool = AtomicBool::new(false);
 
@@ -98,13 +106,19 @@ enum LoopFailure {
 }
 
 impl RendezvousServer {
+    /// 启动服务器的主函数
     #[tokio::main(flavor = "multi_thread")]
     pub async fn start(port: i32, serial: i32, key: &str, rmem: usize) -> ResultType<()> {
+        // 获取服务器密钥对
         let (key, sk) = Self::get_server_sk(key);
+        // NAT测试端口（主端口-1）
         let nat_port = port - 1;
+        // WebSocket端口（主端口+2）
         let ws_port = port + 2;
+        // 初始化Peer管理器
         let pm = PeerMap::new().await?;
         log::info!("serial={}", serial);
+        // 获取Rendezvous服务器列表
         let rendezvous_servers = get_servers(&get_arg("rendezvous-servers"), "rendezvous-servers");
         log::info!("Listening on tcp/udp :{}", port);
         log::info!("Listening on tcp :{}, extra port for NAT test", nat_port);

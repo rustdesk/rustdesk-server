@@ -1,3 +1,15 @@
+///
+/// hbbr - RustDesk Heartbeat Bridge Server
+/// 
+/// This is a Rust implementation of the hbbr (heartbeat bridge) server
+/// that handles NAT traversal and connection establishment for RustDesk.
+/// 
+/// The hbbr server is responsible for:
+/// - Maintaining NAT mappings through periodic heartbeat messages
+/// - Facilitating direct peer-to-peer connections between RustDesk clients
+/// - Acting as a bridge when direct connections cannot be established
+/// 
+
 use clap::App;
 mod common;
 mod relay_server;
