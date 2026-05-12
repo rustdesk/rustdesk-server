@@ -1,0 +1,49 @@
+# hbbs (RustDesk ID/Rendezvous Server) 配置文件
+# 使用方法: ./target/release/hbbs -c config.toml
+
+# 监听端口，默认 21116
+port = 21116
+
+# 配置更新序列号，默认 0
+serial = 0
+
+# Rendezvous 服务器地址，多个地址用逗号分隔
+rendezvous_servers = "rs-ny.rustdesk.com"
+
+# RustDesk 软件下载地址
+software_url = "https://rustdesk.com/"
+
+# 默认中继服务器地址，多个地址用逗号分隔
+relay_servers = ""
+
+# UDP 接收缓冲区大小（需要先设置系统 rmem_max）
+# 例如: sudo sysctl -w net.core.rmem_max=52428800
+rmem = 0
+
+# 局域网掩码，用于判断连接是否来自局域网
+# 例如: "192.168.0.0/16"
+mask = ""
+
+# 密钥，只允许具有相同密钥的客户端连接
+key = ""
+
+# 数据库配置
+[database]
+# 数据库文件路径
+url = "db_v2.sqlite3"
+
+# API 服务器配置
+[api]
+# API 服务器端口，默认 8080
+port = 8080
+
+# JWT 密钥（生产环境请修改）
+jwt_secret = "your-secret-key-change-in-production"
+
+# 日志配置
+[log]
+# 日志级别: error, warn, info, debug, trace
+level = "info"
+
+# 日志文件路径（可选，不设置则输出到控制台）
+# file = "/var/log/hbbs.log"

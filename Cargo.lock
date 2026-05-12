@@ -443,7 +443,25 @@ version = "0.18.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b671a5b39eadb909b0c2b81d22a400d446526e651e64be9eb6674b33644a4"
 dependencies = [
- "embedded-io",
+ "embedded-io 0.5.0",
+]
+
+[[package]]
+name = "capnp"
+version = "0.19.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4e985a566bdaae9a428a957d12b10c318d41b2afddb54cfbb764878059df636e"
+dependencies = [
+ "embedded-io 0.6.1",
+]
+
+[[package]]
+name = "capnpc"
+version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c75ba30e0f08582d53c2f3710cf4bb65ff562614b1ba86906d7391adffe189ec"
+dependencies = [
+ "capnp 0.19.8",
 ]
 
 [[package]]
@@ -947,6 +965,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "658bbadc628dc286b9ae02f0cb0f5411c056eb7487b72f0083203f115de94060"
 
 [[package]]
+name = "embedded-io"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
+
+[[package]]
 name = "env_logger"
 version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1347,6 +1371,8 @@ dependencies = [
  "backtrace",
  "base64 0.22.1",
  "bytes",
+ "capnp 0.19.8",
+ "capnpc",
  "chrono",
  "confy",
  "default_net",
@@ -1403,7 +1429,7 @@ dependencies = [
  "axum",
  "base64 0.13.1",
  "bcrypt",
- "capnp",
+ "capnp 0.18.13",
  "chrono",
  "clap 2.34.0",
  "criterion",
