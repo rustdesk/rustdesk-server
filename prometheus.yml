@@ -1,0 +1,87 @@
+# Prometheus 配置文件
+# 用于监控 RustDesk 服务器指标
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# 告警规则文件
+rule_files:
+  - "alert_rules.yml"
+
+# 告警管理器
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - alertmanager:9093
+
+# 抓取配置
+scrape_configs:
+  # RustDesk hbbs 服务器
+  - job_name: 'rustdesk-hbbs'
+    static_configs:
+      - targets: ['localhost:9090']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+    scrape_timeout: 5s
+    
+    # 指标标签
+    relabel_configs:
+      - source_labels: [address]
+        target_label: instance
+        regex: (.*)
+        
+      - source_labels: [__address__]
+        target_label: __address__
+        regex: (.*)
+
+  # RustDesk hbbr 服务器
+  - job_name: 'rustdesk-hbbr'
+    static_configs:
+      - targets: ['localhost:9091']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+    scrape_timeout: 5s
+    
+    # 指标标签
+    relabel_configs:
+      - source_labels: [address]
+        target_label: instance
+        regex: (.*)
+        
+      - source_labels: [__address__]
+        target_label: __address__
+        regex: (.*)
+
+  # Nginx 代理服务器（如果使用）
+  - job_name: 'nginx'
+    static_configs:
+      - targets: ['localhost:9113']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+    scrape_timeout: 5s
+
+  # 系统指标
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['localhost:9100']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+    scrape_timeout: 5s
+
+  # Redis 指标（如果使用）
+  - job_name: 'redis-exporter'
+    static_configs:
+      - targets: ['localhost:9121']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+    scrape_timeout: 5s
+
+  # 数据库指标
+  - job_name: 'postgres-exporter'
+    static_configs:
+      - targets: ['localhost:9187']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+    scrape_timeout: 5s

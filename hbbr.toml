@@ -1,0 +1,104 @@
+# hbbr (RustDesk Relay Server) 配置文件
+# 这是 hbbr 服务器的专用配置文件
+# 使用方法: ./target/release/hbbr -c hbbr.toml
+
+# 服务器基本配置
+[server]
+# 监听端口，默认 21117 (hbbr 主端口)
+port = 21117
+
+# WebSocket 端口，默认 21119 (TCP端口 + 2)
+websocket_port = 21119
+
+# 服务器密钥配置
+[key]
+# 服务器密钥，只允许具有相同密钥的客户端连接
+# 生产环境请修改为强密钥
+secret = ""
+
+# 网络配置
+[network]
+# 绑定地址，默认 "0.0.0.0" (所有接口）
+bind_address = "0.0.0.0"
+
+# TCP 接收缓冲区大小
+tcp_buffer_size = 65536
+
+# 连接配置
+[connection]
+# 最大并发连接数
+max_connections = 1000
+
+# 连接超时时间（秒）
+timeout = 300
+
+# 心跳间隔（秒）
+heartbeat_interval = 30
+
+# 空闲连接超时（秒）
+idle_timeout = 600
+
+# 带宽配置
+[bandwidth]
+# 总带宽限制 (Mbps)
+# 0 表示无限制
+total_limit = 0
+
+# 单连接带宽限制 (Mbps)
+single_limit = 0
+
+# 速度限制 (Mbps)
+speed_limit = 0
+
+# 降级配置
+[downgrade]
+# 降级阈值 (0.0-1.0)
+threshold = 0.66
+
+# 开始降级检查时间 (毫秒)
+start_check = 1800000
+
+# 安全配置
+[security]
+# 黑名单文件路径
+blacklist_file = "blacklist.txt"
+
+# 阻止名单文件路径
+blocklist_file = "blocklist.txt"
+
+# IP 白名单（可选，优先级高于黑名单）
+# whitelist = ["192.168.1.0/24", "10.0.0.0/8"]
+
+# 日志配置
+[logging]
+# 日志级别: error, warn, info, debug, trace
+level = "info"
+
+# 日志文件路径（可选，不设置则输出到控制台）
+# file = "/var/log/hbbr.log"
+
+# 日志轮转配置
+max_file_size = "100MB"
+max_files = 10
+
+# 性能监控
+[monitoring]
+# 启用使用统计
+enable_usage_stats = true
+
+# 统计报告间隔（秒）
+stats_interval = 60
+
+# 启用性能监控
+enable_performance_monitoring = true
+
+# 高级配置
+[advanced]
+# 启用 TCP_NODELAY
+tcp_nodelay = true
+
+# 启用 SO_REUSEADDR
+reuse_address = true
+
+# 工作线程数 (0 表示自动检测）
+worker_threads = 0

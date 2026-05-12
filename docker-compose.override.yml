@@ -1,0 +1,116 @@
+# Docker Compose 覆盖配置文件
+# 用于开发环境或特定部署场景
+# 使用方法: docker-compose -f docker-compose.yml -f docker-compose.override.yml up
+
+version: '3.8'
+
+services:
+  hbbs:
+    # 环境变量覆盖
+    environment:
+      # 数据库 URL
+      - DATABASE_URL=sqlite:///app/data/db_v2.sqlite3
+      
+      # 日志级别
+      - RUST_LOG=info
+      
+      # 服务器密钥（生产环境请修改）
+      - KEY=your-production-key-here
+      
+      # 端口配置
+      - HBBS_PORT=21115
+      - API_PORT=8080
+      
+      # JWT 密钥
+      - JWT_SECRET=your-jwt-secret-change-in-production
+      
+      # 性能配置
+      - MAX_CONNECTIONS=1000
+      - CONNECTION_TIMEOUT=30
+      
+      # 网络配置
+      - LAN_MASK=192.168.0.0/16
+      
+      # 监控配置
+      - ENABLE_METRICS=true
+      - METRICS_PORT=9090
+
+    # 端口映射覆盖
+    ports:
+      - "21115:21115"    # hbbs 主端口
+      - "21116:21116"    # hbbr 端口
+      - "8080:8080"      # API 端口
+      - "9090:9090"      # 监控端口
+
+    # 卷映射覆盖
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config
+      - ./logs:/app/logs
+      - ./blacklist.txt:/app/blacklist.txt
+      - ./blocklist.txt:/app/blocklist.txt
+
+    # 资源限制
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '1.0'
+          memory: 1G
+
+    # 重启策略
+    restart: unless-stopped
+
+    # 健康检查
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # 可选：添加监控服务
+  # prometheus:
+  #   image: prom/prometheus:latest
+  #   container_name: rustdesk-prometheus
+  #   ports:
+  #     - "9091:9090"
+  #   volumes:
+  #     - ./prometheus.yml:/etc/prometheus/prometheus.yml
+  #   command:
+  #     - '--config.file=/etc/prometheus/prometheus.yml'
+  #     - '--storage.tsdb.path=/prometheus'
+  #     - '--web.console.libraries=/etc/prometheus/console_libraries'
+  #     - '--web.console.templates=/etc/prometheus/consoles'
+
+  # 可选：添加 Grafana
+  # grafana:
+  #   image: grafana/grafana:latest
+  #   container_name: rustdesk-grafana
+  #   ports:
+  #     - "3000:3000"
+  #   environment:
+  #     - GF_SECURITY_ADMIN_PASSWORD=admin
+  #   volumes:
+  #     - grafana-data:/var/lib/grafana
+
+# 网络配置
+networks:
+  default:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# 持久化卷
+volumes:
+  data:
+    driver: local
+  config:
+    driver: local
+  logs:
+    driver: local
+  grafana-data:
+    driver: local

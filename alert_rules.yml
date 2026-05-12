@@ -1,0 +1,163 @@
+# Prometheus 告警规则配置
+# 用于 RustDesk 服务器监控告警
+
+groups:
+  - name: rustdesk_hbbs_alerts
+    rules:
+      # 服务器离线告警
+      - alert: HbbsDown
+        expr: up{job="rustdesk-hbbs"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: hbbs
+        annotations:
+          summary: "RustDesk hbbs 服务器离线"
+          description: "RustDesk hbbs 服务器 {{ $labels.instance }} 已离线超过 1 分钟"
+
+      # 高 CPU 使用率告警
+      - alert: HighCpuUsage
+        expr: 100 - (avg by(instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 5m
+        labels:
+          severity: warning
+          service: system
+        annotations:
+          summary: "CPU 使用率过高"
+          description: "服务器 {{ $labels.instance }} CPU 使用率 {{ $value }}% 超过 80%"
+
+      # 高内存使用率告警
+      - alert: HighMemoryUsage
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+          service: system
+        annotations:
+          summary: "内存使用率过高"
+          description: "服务器 {{ $labels.instance }} 内存使用率 {{ $value }}% 超过 85%"
+
+      # 磁盘空间不足告警
+      - alert: LowDiskSpace
+        expr: (1 - (node_filesystem_avail_bytes{fstype!="tmpfs"} / node_filesystem_size_bytes)) * 100 < 10
+        for: 2m
+        labels:
+          severity: critical
+          service: system
+        annotations:
+          summary: "磁盘空间不足"
+          description: "服务器 {{ $labels.instance }} 磁盘 {{ $labels.mountpoint }} 剩余空间 {{ $value }}%"
+
+      # 连接数过多告警
+      - alert: TooManyConnections
+        expr: rustdesk_connections_total > 1000
+        for: 2m
+        labels:
+          severity: warning
+          service: hbbs
+        annotations:
+          summary: "连接数过多"
+          description: "RustDesk hbbs 服务器连接数 {{ $value }} 超过 1000"
+
+      # 响应时间过长告警
+      - alert: HighResponseTime
+        expr: histogram_quantile(0.95, rate(rustdesk_request_duration_seconds_bucket[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+          service: hbbs
+        annotations:
+          summary: "响应时间过长"
+          description: "RustDesk hbbs 服务器 95% 响应时间 {{ $value }}s 超过 1 秒"
+
+      # 错误率过高告警
+      - alert: HighErrorRate
+        expr: rate(rustdesk_requests_total{status=~"5.."}[5m]) / rate(rustdesk_requests_total[5m]) > 0.05
+        for: 3m
+        labels:
+          severity: warning
+          service: hbbs
+        annotations:
+          summary: "错误率过高"
+          description: "RustDesk hbbs 服务器错误率 {{ $value | humanizePercentage }} 超过 5%"
+
+  - name: rustdesk_hbbr_alerts
+    rules:
+      # hbbr 服务器离线告警
+      - alert: HbbrDown
+        expr: up{job="rustdesk-hbbr"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: hbbr
+        annotations:
+          summary: "RustDesk hbbr 服务器离线"
+          description: "RustDesk hbbr 服务器 {{ $labels.instance }} 已离线超过 1 分钟"
+
+      # 带宽使用率过高告警
+      - alert: HighBandwidthUsage
+        expr: rustdesk_bandwidth_usage_bytes / rustdesk_bandwidth_limit_bytes > 0.9
+        for: 5m
+        labels:
+          severity: warning
+          service: hbbr
+        annotations:
+          summary: "带宽使用率过高"
+          description: "RustDesk hbbr 服务器带宽使用率 {{ $value | humanizePercentage }} 超过 90%"
+
+      # 中继连接数过多告警
+      - alert: TooManyRelayConnections
+        expr: rustdesk_relay_connections_total > 500
+        for: 2m
+        labels:
+          severity: warning
+          service: hbbr
+        annotations:
+          summary: "中继连接数过多"
+          description: "RustDesk hbbr 服务器中继连接数 {{ $value }} 超过 500"
+
+      # 数据库连接池耗尽告警
+      - alert: DatabaseConnectionPoolExhausted
+        expr: rustdesk_db_connections_active / rustdesk_db_connections_max > 0.9
+        for: 1m
+        labels:
+          severity: critical
+          service: database
+        annotations:
+          summary: "数据库连接池即将耗尽"
+          description: "数据库连接池使用率 {{ $value | humanizePercentage }} 超过 90%"
+
+      # 数据库查询慢告警
+      - alert: SlowDatabaseQueries
+        expr: histogram_quantile(0.95, rate(rustdesk_db_query_duration_seconds_bucket[5m])) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          service: database
+        annotations:
+          summary: "数据库查询过慢"
+          description: "95% 的数据库查询时间 {{ $value }}s 超过 0.5 秒"
+
+  - name: system_alerts
+    rules:
+      # 系统负载过高告警
+      - alert: HighSystemLoad
+        expr: node_load1 > 2.0
+        for: 5m
+        labels:
+          severity: warning
+          service: system
+        annotations:
+          summary: "系统负载过高"
+          description: "服务器 {{ $labels.instance }} 1 分钟平均负载 {{ $value }} 超过 2.0"
+
+      # 网络错误率过高告警
+      - alert: HighNetworkErrorRate
+        expr: rate(node_network_receive_errs_total[5m]) + rate(node_network_transmit_errs_total[5m]) > 10
+        for: 2m
+        labels:
+          severity: warning
+          service: network
+        annotations:
+          summary: "网络错误率过高"
+          description: "服务器 {{ $labels.instance }} 网络错误率 {{ $value }}/秒 超过阈值"
