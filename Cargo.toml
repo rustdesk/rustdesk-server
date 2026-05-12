@@ -70,7 +70,7 @@ reqwest = { git = "https://github.com/rustdesk-org/reqwest", features = ["blocki
 hbb_common = { path = "libs/hbb_common" }
 
 [workspace]
-members = ["libs/hbb_common"]
+members = ["libs/hbb_common", "libs/core-common"]
 exclude = ["ui"]
 
 #https://github.com/johnthagen/min-sized-rust
