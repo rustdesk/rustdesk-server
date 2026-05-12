@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use hbb_common::{log, ResultType};
+use core_common::{log, ResultType};
 use sqlx::{
     sqlite::SqliteConnectOptions, ConnectOptions, Connection, Error as SqlxError, SqliteConnection, Row,
 };
@@ -253,7 +253,7 @@ impl Database {
     // 用户管理方法
     pub async fn create_user(&self, request: &CreateUserRequest) -> ResultType<i64> {
         let password_hash = bcrypt::hash(&request.password, bcrypt::DEFAULT_COST)
-            .map_err(|e| hbb_common::anyhow::anyhow!("Failed to hash password: {}", e))?;
+            .map_err(|e| core_common::anyhow::anyhow!("Failed to hash password: {}", e))?;
         
         let mut conn = self.pool.get().await?;
         let result = sqlx::query("insert into users (username, email, password_hash) values (?, ?, ?)")
@@ -403,7 +403,7 @@ impl Database {
             .unwrap_or(0);
         
         if device_count >= 10 {
-            return Err(hbb_common::anyhow::anyhow!("用户设备数量已达到上限（10个）"));
+            return Err(core_common::anyhow::anyhow!("用户设备数量已达到上限（10个）"));
         }
         
         let result = sqlx::query("insert or replace into user_devices (user_id, device_id, device_name) values (?, ?, ?)")
@@ -508,7 +508,7 @@ impl Database {
 
     pub async fn reset_password(&self, user_id: i64, new_password: &str) -> ResultType<()> {
         let password_hash = bcrypt::hash(new_password, bcrypt::DEFAULT_COST)
-            .map_err(|e| hbb_common::anyhow::anyhow!("Failed to hash password: {}", e))?;
+            .map_err(|e| core_common::anyhow::anyhow!("Failed to hash password: {}", e))?;
         
         let mut conn = self.pool.get().await?;
         
@@ -539,17 +539,17 @@ impl Database {
         match self.get_user_by_id(user_id).await? {
             Some(user) => {
                 if !bcrypt::verify(old_password, &user.password_hash).unwrap_or(false) {
-                    return Err(hbb_common::anyhow::anyhow!("旧密码不正确"));
+                    return Err(core_common::anyhow::anyhow!("旧密码不正确"));
                 }
             }
             None => {
-                return Err(hbb_common::anyhow::anyhow!("用户不存在"));
+                return Err(core_common::anyhow::anyhow!("用户不存在"));
             }
         }
         
         // 更新密码
         let password_hash = bcrypt::hash(new_password, bcrypt::DEFAULT_COST)
-            .map_err(|e| hbb_common::anyhow::anyhow!("Failed to hash password: {}", e))?;
+            .map_err(|e| core_common::anyhow::anyhow!("Failed to hash password: {}", e))?;
         
         let mut conn = self.pool.get().await?;
         sqlx::query("update users set password_hash = ?, updated_at = current_timestamp where id = ?")
@@ -563,7 +563,7 @@ impl Database {
 
     pub async fn change_password(&self, user_id: i64, new_password: &str) -> ResultType<()> {
         let password_hash = bcrypt::hash(new_password, bcrypt::DEFAULT_COST)
-            .map_err(|e| hbb_common::anyhow::anyhow!("Failed to hash password: {}", e))?;
+            .map_err(|e| core_common::anyhow::anyhow!("Failed to hash password: {}", e))?;
         
         let mut conn = self.pool.get().await?;
         sqlx::query("update users set password_hash = ?, updated_at = current_timestamp where id = ?")
@@ -578,7 +578,7 @@ impl Database {
 
 #[cfg(test)]
 mod tests {
-    use hbb_common::tokio;
+    use core_common::tokio;
     #[test]
     fn test_insert() {
         insert();
@@ -608,6 +608,6 @@ mod tests {
             });
             jobs.push(a);
         }
-        hbb_common::futures::future::join_all(jobs).await;
+        core_common::futures::future::join_all(jobs).await;
     }
 }

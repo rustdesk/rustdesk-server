@@ -1,6 +1,6 @@
 use crate::common::*;
 use crate::peer::*;
-use hbb_common::{
+use core_common::{
     allow_err, bail,
     bytes::{Bytes, BytesMut},
     bytes_codec::BytesCodec,
@@ -112,7 +112,7 @@ impl RendezvousServer {
         let mut socket = create_udp_listener(port, rmem).await?;
         let (tx, mut rx) = mpsc::unbounded_channel::<Data>();
         let software_url = get_arg("software-url");
-        let version = hbb_common::get_version_from_url(&software_url);
+        let version = core_common::get_version_from_url(&software_url);
         if !version.is_empty() {
             log::info!("software_url: {}, version: {}", software_url, version);
         }
@@ -1209,7 +1209,7 @@ impl RendezvousServer {
                 Some(peer) => {
                     let pk = peer.read().await.pk.clone();
                     sign::sign(
-                        &hbb_common::message_proto::IdPk {
+                        &core_common::message_proto::IdPk {
                             id,
                             pk,
                             ..Default::default()

@@ -2,7 +2,7 @@ use clap::App;
 mod common;
 mod relay_server;
 use flexi_logger::*;
-use hbb_common::{config::RELAY_PORT, ResultType};
+use core_common::{config::RELAY_PORT, ResultType};
 use relay_server::*;
 mod version;
 

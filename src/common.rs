@@ -1,5 +1,5 @@
 use clap::App;
-use hbb_common::{
+use core_common::{
     allow_err, anyhow::{Context, Result}, get_version_number, log, tokio, ResultType
 };
 use ini::Ini;
@@ -156,8 +156,8 @@ pub fn gen_sk(wait: u64) -> (String, Option<sign::SecretKey>) {
 
 #[cfg(unix)]
 pub async fn listen_signal() -> Result<()> {
-    use hbb_common::tokio;
-    use hbb_common::tokio::signal::unix::{signal, SignalKind};
+    use core_common::tokio;
+    use core_common::tokio::signal::unix::{signal, SignalKind};
 
     tokio::spawn(async {
         let mut s = signal(SignalKind::terminate())?;
@@ -199,8 +199,8 @@ pub fn check_software_update() {
 }
 
 #[tokio::main(flavor = "current_thread")]
-async fn check_software_update_() -> hbb_common::ResultType<()> {
-    let (request, url) = hbb_common::version_check_request(hbb_common::VER_TYPE_RUSTDESK_SERVER.to_string());
+async fn check_software_update_() -> core_common::ResultType<()> {
+    let (request, url) = core_common::version_check_request(core_common::VER_TYPE_RUSTDESK_SERVER.to_string());
     let latest_release_response = reqwest::Client::builder().build()?
         .post(url)
         .json(&request)
@@ -208,7 +208,7 @@ async fn check_software_update_() -> hbb_common::ResultType<()> {
         .await?;
 
     let bytes = latest_release_response.bytes().await?;
-    let resp: hbb_common::VersionCheckResponse = serde_json::from_slice(&bytes)?;
+    let resp: core_common::VersionCheckResponse = serde_json::from_slice(&bytes)?;
     let response_url = resp.url;
     let latest_release_version = response_url.rsplit('/').next().unwrap_or_default();
     if get_version_number(&latest_release_version) > get_version_number(crate::version::VERSION) {

@@ -1,6 +1,6 @@
 use crate::common::*;
 use crate::database;
-use hbb_common::{
+use core_common::{
     bytes::Bytes,
     log,
     rendezvous_proto::*,
@@ -71,7 +71,7 @@ impl PeerMap {
             let mut db = "db_v2.sqlite3".to_owned();
             #[cfg(all(windows, not(debug_assertions)))]
             {
-                if let Some(path) = hbb_common::config::Config::icon_path().parent() {
+                if let Some(path) = core_common::config::Config::icon_path().parent() {
                     db = format!("{}\\{}", path.to_str().unwrap_or("."), db);
                 }
             }

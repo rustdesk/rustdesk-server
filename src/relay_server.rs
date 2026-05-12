@@ -1,6 +1,6 @@
 use async_speed_limit::Limiter;
 use async_trait::async_trait;
-use hbb_common::{
+use core_common::{
     allow_err, bail,
     bytes::{Bytes, BytesMut},
     futures_util::{sink::SinkExt, stream::StreamExt},
@@ -363,7 +363,7 @@ async fn handle_connection(
     key: &str,
     ws: bool,
 ) {
-    let ip = hbb_common::try_into_v4(addr).ip();
+    let ip = core_common::try_into_v4(addr).ip();
     if !ws && ip.is_loopback() {
         let limiter = limiter.clone();
         tokio::spawn(async move {

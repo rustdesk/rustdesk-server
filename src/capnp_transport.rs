@@ -3,7 +3,7 @@
 
 use crate::capnp_serialization::{CapnpSerializer, CapnpDeserializer, CapnpError};
 use bytes::{Bytes, BytesMut};
-use hbb_common::{allow_err, bytes_codec::BytesCodec, ResultType};
+use core_common::{allow_err, bytes_codec::BytesCodec, ResultType};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UdpSocket;
 use tokio_util::codec::Framed;
@@ -27,11 +27,11 @@ impl CapnpTransport {
     {
         // 序列化消息为Cap'n Proto格式
         let serialized = CapnpSerializer::serialize_message(message)
-            .map_err(|e| hbb_common::bail!("Failed to serialize message: {}", e))?;
+            .map_err(|e| core_common::bail!("Failed to serialize message: {}", e))?;
         
         // 发送UDP数据包
         self.socket.send_to(&serialized, addr).await
-            .map_err(|e| hbb_common::bail!("Failed to send message: {}", e))?;
+            .map_err(|e| core_common::bail!("Failed to send message: {}", e))?;
         
         Ok(())
     }
@@ -47,14 +47,14 @@ impl CapnpTransport {
         let (bytes, addr) = match self.socket.recv_from().await {
             Some(result) => match result {
                 Ok((data, src_addr)) => (Bytes::from(data), src_addr),
-                Err(e) => return Err(hbb_common::bail!("Failed to receive message: {}", e)),
+                Err(e) => return Err(core_common::bail!("Failed to receive message: {}", e)),
             },
-            None => return Err(hbb_common::bail!("No data received")),
+            None => return Err(core_common::bail!("No data received")),
         };
         
         // 反序列化Cap'n Proto消息
         let message = CapnpDeserializer::deserialize_message::<M>(&bytes)
-            .map_err(|e| hbb_common::bail!("Failed to deserialize message: {}", e))?;
+            .map_err(|e| core_common::bail!("Failed to deserialize message: {}", e))?;
         
         // 调用回调函数
         callback(message).await
@@ -88,12 +88,12 @@ impl CapnpFramedTransport {
                 Ok(bytes) => {
                     // 反序列化Cap'n Proto消息
                     let message = CapnpDeserializer::deserialize_message::<M>(&bytes)
-                        .map_err(|e| hbb_common::bail!("Failed to deserialize message: {}", e))?;
+                        .map_err(|e| core_common::bail!("Failed to deserialize message: {}", e))?;
                     
                     // 调用回调函数
                     callback(message).await?;
                 }
-                Err(e) => return Err(hbb_common::bail!("Failed to read frame: {}", e)),
+                Err(e) => return Err(core_common::bail!("Failed to read frame: {}", e)),
             }
         }
         

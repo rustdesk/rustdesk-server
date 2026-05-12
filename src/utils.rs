@@ -1,5 +1,5 @@
 use dns_lookup::{lookup_addr, lookup_host};
-use hbb_common::{bail, ResultType};
+use core_common::{bail, ResultType};
 use sodiumoxide::crypto::sign;
 use std::{
     env,

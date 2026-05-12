@@ -3,7 +3,7 @@
 
 use crate::common::*;
 use crate::peer::*;
-use hbb_common::{
+use core_common::{
     allow_err, bail,
     bytes::{Bytes, BytesMut},
     bytes_codec::BytesCodec,
@@ -141,7 +141,7 @@ impl RendezvousServer {
         // 获取软件更新URL
         let software_url = get_arg("software-url");
         // 获取版本信息
-        let version = hbb_common::get_version_from_url(&software_url);
+        let version = core_common::get_version_from_url(&software_url);
         if !version.is_empty() {
             log::info!("software_url: {}, version: {}", software_url, version);
         }

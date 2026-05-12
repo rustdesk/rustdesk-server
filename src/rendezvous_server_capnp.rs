@@ -5,7 +5,7 @@ use crate::common::*;
 use crate::peer::*;
 use crate::capnp_serialization::{CapnpSerializer, CapnpDeserializer, CapnpError};
 use crate::capnp_transport::{CapnpTransport, CapnpFramedTransport};
-use hbb_common::{
+use core_common::{
     allow_err, bail,
     bytes::{Bytes, BytesMut},
     bytes_codec::BytesCodec,
@@ -41,7 +41,7 @@ use std::{
 };
 
 // 导入capnp生成的模块
-use hbb_common::protos::rendezvous_capnp;
+use core_common::protos::rendezvous_capnp;
 
 // 数据类型枚举，用于处理不同类型的消息
 #[derive(Clone, Debug)]
@@ -100,7 +100,7 @@ impl RendezvousServerCapnp {
         let mut socket = create_udp_listener(port, rmem).await?;
         let (tx, mut rx) = mpsc::unbounded_channel::<Data>();
         let software_url = get_arg("software-url");
-        let version = hbb_common::get_version_from_url(&software_url);
+        let version = core_common::get_version_from_url(&software_url);
         if !version.is_empty() {
             log::info!("software_url: {}, version: {}", software_url, version);
         }

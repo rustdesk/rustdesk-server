@@ -3,5 +3,5 @@ fn main() {
     println!("cargo:rustc-env=PROTO_PATH=protos");
     
     // Generate version.rs file
-    hbb_common::gen_version();
+    core_common::gen_version();
 }

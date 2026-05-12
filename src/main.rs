@@ -2,7 +2,7 @@
 // https://blog.csdn.net/bytxl/article/details/44344855
 
 use flexi_logger::*;
-use hbb_common::{bail, config::RENDEZVOUS_PORT, ResultType, log};
+use core_common::{bail, config::RENDEZVOUS_PORT, ResultType, log};
 use hbbs::common::{init_args, get_arg, get_arg_or};
 use hbbs::{web::create_web_router, api::create_api_router, RendezvousServer};
 use tokio::net::TcpListener;
@@ -42,7 +42,7 @@ async fn main() -> ResultType<()> {
         let mut db = "db_v2.sqlite3".to_owned();
         #[cfg(all(windows, not(debug_assertions)))]
         {
-            if let Some(path) = hbb_common::config::Config::icon_path().parent() {
+            if let Some(path) = core_common::config::Config::icon_path().parent() {
                 db = format!("{}\\{}", path.to_str().unwrap_or("."), db);
             }
         }

@@ -4,7 +4,7 @@ use axum::{
     http::StatusCode,
     response::{Json, IntoResponse, Html},
 };
-use hbb_common::log;
+use core_common::log;
 
 // 密码重置相关API函数
 pub async fn forgot_password(

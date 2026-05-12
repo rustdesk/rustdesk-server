@@ -1,12 +1,12 @@
 use crate::database::{Database, CreateUserRequest, CreateDeviceRequest, User, UserDevice};
-use hbb_common::{log, ResultType};
+use core_common::{log, ResultType};
 use sqlx::{Row, SqlitePool};
 
 impl Database {
     // 使用动态查询避免编译时检查问题
     pub async fn create_user_v2(&self, request: &CreateUserRequest) -> ResultType<i64> {
         let password_hash = bcrypt::hash(&request.password, bcrypt::DEFAULT_COST)
-            .map_err(|e| hbb_common::anyhow::anyhow!("Failed to hash password: {}", e))?;
+            .map_err(|e| core_common::anyhow::anyhow!("Failed to hash password: {}", e))?;
         
         let pool = self.pool.get().await?;
         let result = sqlx::query("insert into users (username, email, password_hash) values (?, ?, ?)")
@@ -131,7 +131,7 @@ impl Database {
             .unwrap_or(0);
         
         if device_count >= 10 {
-            return Err(hbb_common::anyhow::anyhow!("用户设备数量已达到上限（10个）"));
+            return Err(core_common::anyhow::anyhow!("用户设备数量已达到上限（10个）"));
         }
         
         let result = sqlx::query("insert or replace into user_devices (user_id, device_id, device_name) values (?, ?, ?)")
