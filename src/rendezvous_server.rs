@@ -1,7 +1,7 @@
 // NAT打洞穿透服务器实现
 // 实现了完整的NAT穿透协议，包括UDP打洞、TCP打洞、中继服务器等功能
-
 use crate::common::*;
+/// Peer模块
 use crate::peer::*;
 use core_common::{
     allow_err, bail,
@@ -55,56 +55,83 @@ enum Data {
 }
 /// 注册超时时间（毫秒）
 const REG_TIMEOUT: i32 = 30_000;
+// TCP流分割 sink
 type TcpStreamSink = SplitSink<Framed<TcpStream, BytesCodec>, Bytes>;
+// WebSocket流分割 sink
 type WsSink = SplitSink<tokio_tungstenite::WebSocketStream<TcpStream>, tungstenite::Message>;
+// sink枚举
 enum Sink {
     TcpStream(TcpStreamSink),
     Ws(WsSink),
 }
+// 发送数据类型
 type Sender = mpsc::UnboundedSender<Data>;
+// 接收数据类型
 type Receiver = mpsc::UnboundedReceiver<Data>;
+// 轮询中继服务器索引
 static ROTATION_RELAY_SERVER: AtomicUsize = AtomicUsize::new(0);
+// 中继服务器列表类型
 type RelayServers = Vec<String>;
 /// 检查中继服务器超时时间
 const CHECK_RELAY_TIMEOUT: u64 = 3_000;
+// 总是使用中继服务器
 static ALWAYS_USE_RELAY: AtomicBool = AtomicBool::new(false);
 
 // Store punch hole requests
 use once_cell::sync::Lazy;
 use tokio::sync::Mutex as TokioMutex; // differentiate if needed
+/// 打洞请求条目
 #[derive(Clone)]
 struct PunchReqEntry { tm: Instant, from_ip: String, to_ip: String, to_id: String }
+/// 打洞请求列表
 static PUNCH_REQS: Lazy<TokioMutex<Vec<PunchReqEntry>>> = Lazy::new(|| TokioMutex::new(Vec::new()));
+/// 打洞请求去重时间（秒）
 const PUNCH_REQ_DEDUPE_SEC: u64 = 60;
-
+/// 内部数据结构
 #[derive(Clone)]
 struct Inner {
+    /// 序列号
     serial: i32,
+    /// 版本号
     version: String,
+    /// 软件更新URL
     software_url: String,
+    /// 子网掩码
     mask: Option<Ipv4Network>,
+    /// 本地IP地址
     local_ip: String,
     sk: Option<sign::SecretKey>,
 }
-
+/// Rendezvous服务器结构体
 #[derive(Clone)]
 pub struct RendezvousServer {
+    /// TCP打洞连接映射
     tcp_punch: Arc<Mutex<HashMap<SocketAddr, Sink>>>,
+    /// Peer映射
     pm: PeerMap,
+    /// 发送数据通道
     tx: Sender,
+    /// 中继服务器列表
     relay_servers: Arc<RelayServers>,
+    /// 中继服务器列表（字符串格式）
     relay_servers0: Arc<RelayServers>,
+    /// Rendezvous服务器列表
     rendezvous_servers: Arc<Vec<String>>,
+    /// 内部数据
     inner: Arc<Inner>,
 }
-
+/// 循环失败类型
 enum LoopFailure {
+    /// UDP套接字创建失败
     UdpSocket,
+    /// 监听器3创建失败
     Listener3,
+    /// 监听器2创建失败
     Listener2,
+    /// 监听器创建失败
     Listener,
 }
-
+/// Rendezvous服务器实现
 impl RendezvousServer {
     /// 启动服务器的主函数
     #[tokio::main(flavor = "multi_thread")]
@@ -1376,9 +1403,10 @@ async fn create_udp_listener(port: i32, rmem: usize) -> ResultType<FramedSocket>
     log::debug!("listen on udp {:?}", s.local_addr());
     Ok(s)
 }
-
+/// 创建TCP监听器
 #[inline]
 async fn create_tcp_listener(port: i32) -> ResultType<TcpListener> {
+    //
     let s = listen_any(port as _).await?;
     log::debug!("listen on tcp {:?}", s.local_addr());
     Ok(s)
