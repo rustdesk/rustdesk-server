@@ -5,18 +5,19 @@ use core_common::{bail, config::RENDEZVOUS_PORT, log, ResultType};
 use flexi_logger::*;
 use hbbs::common::{get_arg, get_arg_or, init_args};
 use hbbs::{web::create_web_router, RendezvousServer};
-use tokio::runtime::Runtime;
 
 const RMEM: usize = 0;
 const API_PORT: i32 = 8080;
 
 #[tokio::main]
 async fn main() -> ResultType<()> {
+    // 使用 Direct 模式：确保日志立即写出，程序崩溃时也不会丢失日志
     let _logger = Logger::try_with_env_or_str("info")?
         .log_to_stdout()
         .format(opt_format)
-        .write_mode(WriteMode::Async)
+        .write_mode(WriteMode::Direct)
         .start()?;
+
     let args = format!(
         "-c --config=[FILE] +takes_value 'Sets a custom config file'
         -p, --port=[NUMBER(default={RENDEZVOUS_PORT})] 'Sets the listening port'
@@ -66,29 +67,37 @@ async fn main() -> ResultType<()> {
     let api_addr = format!("0.0.0.0:{}", API_PORT).parse()?;
     log::info!("API 服务器启动在端口: {}", API_PORT);
 
-    // 启动 API 和 Rendezvous 服务器
-    let rt = Runtime::new().unwrap();
-    let api_server = rt.spawn(async move {
+    // 修复：直接用当前 #[tokio::main] 的 runtime 启动 API server，
+    // 不再额外创建 Runtime::new()，避免嵌套 runtime 冲突。
+    let api_server = tokio::spawn(async move {
         axum::Server::bind(&api_addr)
             .serve(web_router.into_make_service())
             .await
     });
-    let rendezvous_server = rt.spawn_blocking(move || {
-        RendezvousServer::start(port, serial, &get_arg_or("key", "-".to_owned()), rmem)
+
+    // 修复：RendezvousServer::start 自身带有 #[tokio::main]，必须在独立 OS 线程中运行，
+    // 不能用 spawn_blocking（spawn_blocking 依赖当前 runtime，会与内部 #[tokio::main] 冲突）。
+    // 用 oneshot channel 把结果传回异步上下文。
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let key = get_arg_or("key", "-".to_owned());
+    std::thread::spawn(move || {
+        let result = RendezvousServer::start(port, serial, &key, rmem);
+        let _ = tx.send(result);
     });
 
     tokio::select! {
         result = api_server => {
             match result {
-                Ok(_) => log::info!("API 服务器正常关闭"),
-                Err(e) => log::error!("API 服务器错误: {}", e),
+                Ok(Ok(_)) => log::info!("API 服务器正常关闭"),
+                Ok(Err(e)) => log::error!("API 服务器错误: {}", e),
+                Err(e) => log::error!("API 服务器任务错误: {}", e),
             }
         }
-        result = rendezvous_server => {
+        result = rx => {
             match result {
                 Ok(Ok(_)) => log::info!("Rendezvous 服务器正常关闭"),
                 Ok(Err(e)) => log::error!("Rendezvous 服务器错误: {}", e),
-                Err(e) => log::error!("Rendezvous 服务器任务错误: {}", e),
+                Err(_) => log::error!("Rendezvous 服务器线程异常退出"),
             }
         }
     }

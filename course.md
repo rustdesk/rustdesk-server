@@ -104,3 +104,18 @@ views::UserInfo 增加 role（供以后服务端渲染用）。
 控制台 / 设备页：带 nav-admin-only 的「用户管理」入口与控制台卡片仅在 user.role === 'admin' 时显示（dashboard.html、devices.html）。
 用户管理页：非管理员跳转控制台；列表增加 角色列；对他人可 下拉修改角色（调 PUT .../role）；新建用户改为 POST /api/users（需管理员 JWT）。
 部署说明：已有数据库在首次启动新版本时会加列并自动保证至少一名管理员；生产环境建议设置 BOOTSTRAP_ADMIN_USERNAME 明确首个管理员账号。旧 JWT 无 role 字段时会按 普通用户 处理，管理员在升级后应 重新登录 以拿到带 role 的新令牌。
+
+
+
+
+---
+
+**问题总结（三层叠加）：**
+
+1. **死锁（根本原因）**：`create_tables()` 持有连接池里唯一一个连接（`MAX_DATABASE_CONNECTIONS=1`），然后调用 `migrate_users_add_role_column()` 和 `bootstrap_admin_if_none()`，这两个函数也试图从同一个池获取连接，永远等待 → 程序挂死。修复：在调用它们之前显式 `drop(conn)`。
+
+2. **嵌套 Runtime**：`main` 已有 `#[tokio::main]` runtime，代码里又 `Runtime::new()` 创建第二个，`RendezvousServer::start` 自身还有第三个 `#[tokio::main]`。修复：去掉多余的 `Runtime::new()`，API server 改用 `tokio::spawn`，RendezvousServer 改用 `std::thread::spawn` + `oneshot channel`。
+
+3. **日志丢失**：`WriteMode::Async` 在程序异常退出时缓冲区来不及刷新。修复：改为 `WriteMode::Direct`。
+
+现在日志正常输出，8080 端口正常监听，HTTP 返回 200。

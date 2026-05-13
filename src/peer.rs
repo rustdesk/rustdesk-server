@@ -21,6 +21,23 @@ type IpBlockMap = HashMap<String, ((u32, Instant), (HashSet<String>, Instant))>;
 type UserStatusMap = HashMap<Vec<u8>, Arc<(Option<Vec<u8>>, bool)>>;
 // IP变化映射类型：存储IP地址到变化记录的映射
 type IpChangesMap = HashMap<String, (Instant, HashMap<String, i32>)>;
+use once_cell::sync::Lazy;
+use std::sync::RwLock as StdRwLock;
+
+/// 在线连接信息（跨 tokio runtime 共享，用 std::sync::RwLock）
+#[derive(Clone, Debug)]
+pub struct OnlineConn {
+    pub peer_id: String,
+    pub ip: String,
+    pub user_id: Option<i64>,
+    pub connected_at: chrono::DateTime<chrono::Utc>,
+    pub last_seen: std::time::Instant,
+}
+
+/// 全局在线 Peer 表（peer_id → OnlineConn）
+pub static ONLINE_PEERS: Lazy<StdRwLock<std::collections::HashMap<String, OnlineConn>>> =
+    Lazy::new(|| StdRwLock::new(std::collections::HashMap::new()));
+
 // 全局静态变量定义
 lazy_static::lazy_static! {
     /// IP阻塞器：存储IP地址的阻塞信息
@@ -269,6 +286,25 @@ impl PeerMap {
                 return register_pk_response::Result::SERVER_ERROR;
             }
             log::info!("pk updated instead of insert");
+        }
+        // 记录/更新在线状态
+        {
+            let (ip_str, uid) = {
+                let r = peer.read().await;
+                (r.info.ip.clone(), r.user_id)
+            };
+            if let Ok(mut map) = ONLINE_PEERS.write() {
+                let entry = map.entry(id.clone()).or_insert_with(|| OnlineConn {
+                    peer_id: id.clone(),
+                    ip: ip_str.clone(),
+                    user_id: uid,
+                    connected_at: chrono::Utc::now(),
+                    last_seen: std::time::Instant::now(),
+                });
+                entry.last_seen = std::time::Instant::now();
+                entry.ip = ip_str;
+                entry.user_id = uid;
+            }
         }
         register_pk_response::Result::OK
     }

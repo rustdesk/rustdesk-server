@@ -1,7 +1,8 @@
 use async_trait::async_trait;
 use core_common::{log, ResultType};
 use sqlx::{
-    sqlite::SqliteConnectOptions, ConnectOptions, Connection, Error as SqlxError, SqliteConnection, Row,
+    sqlite::SqliteConnectOptions, ConnectOptions, Connection, Error as SqlxError, Row,
+    SqliteConnection,
 };
 use std::{ops::DerefMut, str::FromStr};
 use uuid::Uuid;
@@ -116,7 +117,7 @@ impl Database {
 
     async fn create_tables(&self) -> ResultType<()> {
         let mut conn = self.pool.get().await?;
-        
+
         // peer 表：先创建与上游兼容的基础结构（便于旧库升级），再追加列与索引
         sqlx::query(
             "
@@ -164,7 +165,8 @@ impl Database {
         }
 
         // 创建用户表
-        sqlx::query("
+        sqlx::query(
+            "
             create table if not exists users (
                 id integer primary key autoincrement,
                 username varchar(50) unique not null,
@@ -177,12 +179,14 @@ impl Database {
             create index if not exists index_users_username on users (username);
             create index if not exists index_users_email on users (email);
             create index if not exists index_users_active on users (is_active);
-        ")
+        ",
+        )
         .execute(&mut *conn)
         .await?;
 
         // 创建用户设备关系表
-        sqlx::query("
+        sqlx::query(
+            "
             create table if not exists user_devices (
                 id integer primary key autoincrement,
                 user_id integer not null,
@@ -196,7 +200,8 @@ impl Database {
             create index if not exists index_user_devices_user_id on user_devices (user_id);
             create index if not exists index_user_devices_device_id on user_devices (device_id);
             create index if not exists index_user_devices_active on user_devices (is_active);
-        ")
+        ",
+        )
         .execute(&mut *conn)
         .await?;
 
@@ -217,6 +222,11 @@ impl Database {
         ")
         .execute(&mut *conn)
         .await?;
+
+        // 必须先 drop conn，释放连接池里唯一的连接，
+        // 否则下面的 migrate_users_add_role_column / bootstrap_admin_if_none
+        // 再次调用 pool.get() 时会永远等待，造成死锁。
+        drop(conn);
 
         self.migrate_users_add_role_column().await?;
         self.bootstrap_admin_if_none().await?;
@@ -396,21 +406,26 @@ impl Database {
     ) -> ResultType<Vec<u8>> {
         let mut conn = self.pool.get().await?;
         let guid = Uuid::new_v4().as_bytes().to_vec();
-        sqlx::query(
-            "insert or replace into peer(guid, id, uuid, pk, info) values (?, ?, ?, ?, ?)",
-        )
-        .bind(&guid)
-        .bind(id)
-        .bind(uuid)
-        .bind(pk)
-        .bind(info)
-        .execute(conn.deref_mut())
-        .await?;
+        sqlx::query("insert or replace into peer(guid, id, uuid, pk, info) values (?, ?, ?, ?, ?)")
+            .bind(&guid)
+            .bind(id)
+            .bind(uuid)
+            .bind(pk)
+            .bind(info)
+            .execute(conn.deref_mut())
+            .await?;
         Ok(guid)
     }
 
-    pub async fn insert_peer_with_user(&self, id: &str, uuid: &[u8], pk: &[u8], info: &str, 
-        user_id: Option<i64>, device_id: Option<i64>) -> ResultType<Vec<u8>> {
+    pub async fn insert_peer_with_user(
+        &self,
+        id: &str,
+        uuid: &[u8],
+        pk: &[u8],
+        info: &str,
+        user_id: Option<i64>,
+        device_id: Option<i64>,
+    ) -> ResultType<Vec<u8>> {
         let mut conn = self.pool.get().await?;
         let guid = Uuid::new_v4().as_bytes().to_vec();
         sqlx::query(
@@ -440,20 +455,25 @@ impl Database {
         Ok(())
     }
 
-    pub async fn update_pk_with_user(&self, guid: &[u8], id: &str, pk: &[u8], info: &str,
-        user_id: Option<i64>, device_id: Option<i64>) -> ResultType<()> {
+    pub async fn update_pk_with_user(
+        &self,
+        guid: &[u8],
+        id: &str,
+        pk: &[u8],
+        info: &str,
+        user_id: Option<i64>,
+        device_id: Option<i64>,
+    ) -> ResultType<()> {
         let mut conn = self.pool.get().await?;
-        sqlx::query(
-            "update peer set pk=?, info=?, user_id=?, device_id=? where guid=? and id=?",
-        )
-        .bind(pk)
-        .bind(info)
-        .bind(user_id)
-        .bind(device_id)
-        .bind(guid)
-        .bind(id)
-        .execute(conn.deref_mut())
-        .await?;
+        sqlx::query("update peer set pk=?, info=?, user_id=?, device_id=? where guid=? and id=?")
+            .bind(pk)
+            .bind(info)
+            .bind(user_id)
+            .bind(device_id)
+            .bind(guid)
+            .bind(id)
+            .execute(conn.deref_mut())
+            .await?;
         Ok(())
     }
 
@@ -461,18 +481,18 @@ impl Database {
     pub async fn create_user(&self, request: &CreateUserRequest) -> ResultType<i64> {
         let password_hash = bcrypt::hash(&request.password, bcrypt::DEFAULT_COST)
             .map_err(|e| core_common::anyhow::anyhow!("Failed to hash password: {}", e))?;
-        
+
         let mut conn = self.pool.get().await?;
         let result = sqlx::query(
             "insert into users (username, email, password_hash, role) values (?, ?, ?, ?)",
         )
-            .bind(&request.username)
-            .bind(&request.email)
-            .bind(&password_hash)
-            .bind(USER_ROLE_USER)
-            .execute(&mut *conn)
-            .await?;
-        
+        .bind(&request.username)
+        .bind(&request.email)
+        .bind(&password_hash)
+        .bind(USER_ROLE_USER)
+        .execute(&mut *conn)
+        .await?;
+
         Ok(result.last_insert_rowid())
     }
 
@@ -482,7 +502,7 @@ impl Database {
             .bind(user_id)
             .fetch_optional(&mut *conn)
             .await?;
-        
+
         if let Some(row) = row {
             Ok(Some(User {
                 id: row.get("id"),
@@ -505,7 +525,7 @@ impl Database {
             .bind(username)
             .fetch_optional(&mut *conn)
             .await?;
-        
+
         if let Some(row) = row {
             Ok(Some(User {
                 id: row.get("id"),
@@ -528,7 +548,7 @@ impl Database {
             .bind(email)
             .fetch_optional(&mut *conn)
             .await?;
-        
+
         if let Some(row) = row {
             Ok(Some(User {
                 id: row.get("id"),
@@ -545,28 +565,33 @@ impl Database {
         }
     }
 
-    pub async fn update_user(&self, user_id: i64, username: Option<&str>, email: Option<&str>) -> ResultType<()> {
+    pub async fn update_user(
+        &self,
+        user_id: i64,
+        username: Option<&str>,
+        email: Option<&str>,
+    ) -> ResultType<()> {
         let mut query = "update users set updated_at = current_timestamp".to_string();
         let mut params = Vec::new();
-        
+
         if let Some(username) = username {
             query.push_str(", username = ?");
             params.push(username);
         }
-        
+
         if let Some(email) = email {
             query.push_str(", email = ?");
             params.push(email);
         }
-        
+
         query.push_str(" where id = ?");
-        
+
         let mut q = sqlx::query(&query);
         for param in params {
             q = q.bind(param);
         }
         q = q.bind(user_id);
-        
+
         q.execute(self.pool.get().await?.deref_mut()).await?;
         Ok(())
     }
@@ -579,17 +604,21 @@ impl Database {
         Ok(())
     }
 
-    pub async fn list_users(&self, limit: Option<i64>, offset: Option<i64>) -> ResultType<Vec<User>> {
+    pub async fn list_users(
+        &self,
+        limit: Option<i64>,
+        offset: Option<i64>,
+    ) -> ResultType<Vec<User>> {
         let limit = limit.unwrap_or(50);
         let offset = offset.unwrap_or(0);
-        
+
         let mut conn = self.pool.get().await?;
         let users = sqlx::query("select id, username, email, password_hash, created_at, updated_at, is_active, role from users order by created_at desc limit ? offset ?")
             .bind(limit)
             .bind(offset)
             .fetch_all(&mut *conn)
             .await?;
-        
+
         let mut user_list = Vec::new();
         for row in users {
             user_list.push(User {
@@ -603,34 +632,40 @@ impl Database {
                 role: row.get::<String, _>("role"),
             });
         }
-        
+
         Ok(user_list)
     }
 
     // 设备管理方法
     pub async fn add_device_to_user(&self, request: &CreateDeviceRequest) -> ResultType<i64> {
         // 验证用户存在且活跃
-        let user_exists: bool = sqlx::query_scalar("select count(*) from users where id = ? and is_active = 1")
-            .bind(request.user_id)
-            .fetch_one(self.pool.get().await?.deref_mut())
-            .await
-            .unwrap_or(0) > 0;
-        
+        let user_exists: bool =
+            sqlx::query_scalar("select count(*) from users where id = ? and is_active = 1")
+                .bind(request.user_id)
+                .fetch_one(self.pool.get().await?.deref_mut())
+                .await
+                .unwrap_or(0)
+                > 0;
+
         if !user_exists {
             return Err(core_common::anyhow::anyhow!("用户不存在或已被禁用"));
         }
-        
+
         // 检查用户设备数量限制
-        let device_count: i64 = sqlx::query_scalar("select count(*) from user_devices where user_id = ? and is_active = 1")
-            .bind(request.user_id)
-            .fetch_one(self.pool.get().await?.deref_mut())
-            .await
-            .unwrap_or(0);
-        
+        let device_count: i64 = sqlx::query_scalar(
+            "select count(*) from user_devices where user_id = ? and is_active = 1",
+        )
+        .bind(request.user_id)
+        .fetch_one(self.pool.get().await?.deref_mut())
+        .await
+        .unwrap_or(0);
+
         if device_count >= 10 {
-            return Err(core_common::anyhow::anyhow!("用户设备数量已达到上限（10个）"));
+            return Err(core_common::anyhow::anyhow!(
+                "用户设备数量已达到上限（10个）"
+            ));
         }
-        
+
         // 检查设备ID是否已存在（同一用户下不能重复）
         let device_exists: bool = sqlx::query_scalar("select count(*) from user_devices where user_id = ? and device_id = ? and is_active = 1")
             .bind(request.user_id)
@@ -638,21 +673,21 @@ impl Database {
             .fetch_one(self.pool.get().await?.deref_mut())
             .await
             .unwrap_or(0) > 0;
-        
+
         if device_exists {
             return Err(core_common::anyhow::anyhow!("设备ID已存在"));
         }
-        
+
         let result = sqlx::query("insert or replace into user_devices (user_id, device_id, device_name) values (?, ?, ?)")
             .bind(request.user_id)
             .bind(&request.device_id)
             .bind(&request.device_name)
             .execute(self.pool.get().await?.deref_mut())
             .await?;
-        
+
         Ok(result.last_insert_rowid())
     }
-    
+
     /// 获取用户的所有活跃设备
     pub async fn get_user_devices(&self, user_id: i64) -> ResultType<Vec<UserDevice>> {
         let mut conn = self.pool.get().await?;
@@ -660,7 +695,7 @@ impl Database {
             .bind(user_id)
             .fetch_all(&mut *conn)
             .await?;
-        
+
         let mut device_list = Vec::new();
         for row in devices {
             device_list.push(UserDevice {
@@ -672,19 +707,23 @@ impl Database {
                 is_active: row.get("is_active"),
             });
         }
-        
+
         Ok(device_list)
     }
-    
+
     /// 验证设备是否属于指定用户
-    pub async fn validate_device_ownership(&self, user_id: i64, device_id: &str) -> ResultType<bool> {
+    pub async fn validate_device_ownership(
+        &self,
+        user_id: i64,
+        device_id: &str,
+    ) -> ResultType<bool> {
         let count: i64 = sqlx::query_scalar("select count(*) from user_devices where user_id = ? and device_id = ? and is_active = 1")
             .bind(user_id)
             .bind(device_id)
             .fetch_one(self.pool.get().await?.deref_mut())
             .await
             .unwrap_or(0);
-        
+
         Ok(count > 0)
     }
 
@@ -703,7 +742,7 @@ impl Database {
             .bind(device_id)
             .fetch_optional(&mut *conn)
             .await?;
-        
+
         if let Some(row) = user {
             Ok(Some(User {
                 id: row.get("id"),
@@ -727,19 +766,21 @@ impl Database {
     // 密码重置相关方法
     pub async fn create_password_reset_token(&self, user_id: i64) -> ResultType<String> {
         use uuid::Uuid;
-        
+
         // 生成唯一的重置令牌
         let token = Uuid::new_v4().to_string();
         let expires_at = chrono::Utc::now() + chrono::Duration::hours(1); // 1小时后过期
-        
+
         let mut conn = self.pool.get().await?;
-        sqlx::query("insert into password_reset_tokens (user_id, token, expires_at) values (?, ?, ?)")
-            .bind(user_id)
-            .bind(&token)
-            .bind(expires_at)
-            .execute(&mut *conn)
-            .await?;
-        
+        sqlx::query(
+            "insert into password_reset_tokens (user_id, token, expires_at) values (?, ?, ?)",
+        )
+        .bind(user_id)
+        .bind(&token)
+        .bind(expires_at)
+        .execute(&mut *conn)
+        .await?;
+
         Ok(token)
     }
 
@@ -749,7 +790,7 @@ impl Database {
             .bind(token)
             .fetch_optional(&mut *conn)
             .await?;
-        
+
         if let Some(row) = row {
             Ok(Some(row.get("user_id")))
         } else {
@@ -760,32 +801,41 @@ impl Database {
     pub async fn reset_password(&self, user_id: i64, new_password: &str) -> ResultType<()> {
         let password_hash = bcrypt::hash(new_password, bcrypt::DEFAULT_COST)
             .map_err(|e| core_common::anyhow::anyhow!("Failed to hash password: {}", e))?;
-        
+
         let mut conn = self.pool.get().await?;
-        
+
         // 开始事务
         let mut tx = conn.begin().await?;
-        
+
         // 更新密码
-        sqlx::query("update users set password_hash = ?, updated_at = current_timestamp where id = ?")
-            .bind(&password_hash)
-            .bind(user_id)
-            .execute(&mut *tx)
-            .await?;
-        
+        sqlx::query(
+            "update users set password_hash = ?, updated_at = current_timestamp where id = ?",
+        )
+        .bind(&password_hash)
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+
         // 标记该用户的所有重置令牌为已使用
-        sqlx::query("update password_reset_tokens set is_used = 1 where user_id = ? and is_used = 0")
-            .bind(user_id)
-            .execute(&mut *tx)
-            .await?;
-        
+        sqlx::query(
+            "update password_reset_tokens set is_used = 1 where user_id = ? and is_used = 0",
+        )
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+
         // 提交事务
         tx.commit().await?;
-        
+
         Ok(())
     }
 
-    pub async fn update_password(&self, user_id: i64, old_password: &str, new_password: &str) -> ResultType<()> {
+    pub async fn update_password(
+        &self,
+        user_id: i64,
+        old_password: &str,
+        new_password: &str,
+    ) -> ResultType<()> {
         // 首先验证旧密码
         match self.get_user_by_id(user_id).await? {
             Some(user) => {
@@ -797,32 +847,36 @@ impl Database {
                 return Err(core_common::anyhow::anyhow!("用户不存在"));
             }
         }
-        
+
         // 更新密码
         let password_hash = bcrypt::hash(new_password, bcrypt::DEFAULT_COST)
             .map_err(|e| core_common::anyhow::anyhow!("Failed to hash password: {}", e))?;
-        
+
         let mut conn = self.pool.get().await?;
-        sqlx::query("update users set password_hash = ?, updated_at = current_timestamp where id = ?")
-            .bind(&password_hash)
-            .bind(user_id)
-            .execute(&mut *conn)
-            .await?;
-        
+        sqlx::query(
+            "update users set password_hash = ?, updated_at = current_timestamp where id = ?",
+        )
+        .bind(&password_hash)
+        .bind(user_id)
+        .execute(&mut *conn)
+        .await?;
+
         Ok(())
     }
 
     pub async fn change_password(&self, user_id: i64, new_password: &str) -> ResultType<()> {
         let password_hash = bcrypt::hash(new_password, bcrypt::DEFAULT_COST)
             .map_err(|e| core_common::anyhow::anyhow!("Failed to hash password: {}", e))?;
-        
+
         let mut conn = self.pool.get().await?;
-        sqlx::query("update users set password_hash = ?, updated_at = current_timestamp where id = ?")
-            .bind(&password_hash)
-            .bind(user_id)
-            .execute(&mut *conn)
-            .await?;
-        
+        sqlx::query(
+            "update users set password_hash = ?, updated_at = current_timestamp where id = ?",
+        )
+        .bind(&password_hash)
+        .bind(user_id)
+        .execute(&mut *conn)
+        .await?;
+
         Ok(())
     }
 }

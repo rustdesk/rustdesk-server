@@ -66,3 +66,10 @@ pub struct UsersTemplate {
     pub title: String,
     pub current_user: Option<UserInfo>,
 }
+
+#[derive(Template)]
+#[template(path = "monitor.html")]
+pub struct MonitorTemplate {
+    pub title: String,
+    pub current_user: Option<UserInfo>,
+}
