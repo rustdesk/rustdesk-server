@@ -1,143 +1,112 @@
-{% extends "layout.html" %}
-
-{% block title %}设备管理 - {% endblock %}
-
-{% block nav_links %}
+{% extends "layout.html" %} {% block title %}设备管理 - {% endblock %} {% block
+nav_links %}
 <a href="/dashboard">控制台</a>
 <a href="/devices" class="active">设备管理</a>
-<a href="/users" class="nav-admin-only" style="display:none">用户管理</a>
+<a href="/users" class="nav-admin-only" style="display: none">用户管理</a>
 <a href="/monitor">连接监控</a>
-{% endblock %}
-
-{% block extra_css %}
+{% endblock %} {% block extra_css %}
 <style>
-    .toolbar {
-        background: white;
-        padding: 1rem;
-        border-radius: 10px;
-        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-        margin-bottom: 2rem;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
-    
-    .search-box {
-        display: flex;
-        gap: 0.5rem;
-        align-items: center;
-    }
-    
-    .search-box input {
-        padding: 0.5rem;
-        border: 2px solid #e1e5e9;
-        border-radius: 5px;
-        font-size: 1rem;
-    }
-    
-    .search-box input:focus {
-        outline: none;
-        border-color: #667eea;
-    }
-    
-    .devices-grid {
-        display: grid;
-        gap: 1rem;
-    }
-    
-    .device-card {
-        background: white;
-        padding: 1.5rem;
-        border-radius: 10px;
-        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        transition: transform 0.2s;
-    }
-    
-    .device-card:hover {
-        transform: translateY(-2px);
-    }
-    
-    .device-info h3 {
-        color: #667eea;
-        margin-bottom: 0.5rem;
-    }
-    
-    .device-info p {
-        color: #666;
-        margin-bottom: 0.25rem;
-    }
-    
-    .device-status {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        margin-bottom: 0.5rem;
-    }
-    
-    .status-dot {
-        width: 10px;
-        height: 10px;
-        border-radius: 50%;
-    }
-    
-    .status-online {
-        background: #28a745;
-    }
-    
-    .status-offline {
-        background: #dc3545;
-    }
-    
-    .device-info code {
-        font-size: 0.9rem;
-        background: #f4f4f8;
-        padding: 0.15rem 0.35rem;
-        border-radius: 4px;
+    /* 设备 ID 代码样式 */
+    td code {
+        font-size: 12px;
+        background: rgba(0, 0, 0, 0.05);
+        color: var(--text2);
+        padding: 2px 7px;
+        border-radius: var(--radius-xs);
+        font-family: "SF Mono", "Fira Code", monospace;
+        letter-spacing: 0.3px;
     }
 </style>
-{% endblock %}
+{% endblock %} {% block content %}
 
-{% block content %}
+<!-- 工具栏 -->
 <div class="toolbar">
-    <div class="search-box">
-        <input type="text" id="search-input" placeholder="搜索设备..." onkeyup="searchDevices()">
-        <button class="btn btn-secondary" onclick="refreshDevices()">刷新</button>
+    <div class="toolbar-left">
+        <input
+            class="search-input"
+            type="text"
+            id="search-input"
+            placeholder="搜索设备名称或 ID…"
+            oninput="searchDevices()"
+        />
     </div>
-    <button class="btn" onclick="showAddDeviceModal()">添加设备</button>
+    <div class="toolbar-right">
+        <button class="btn btn-secondary" onclick="refreshDevices()">
+            刷新
+        </button>
+        <button class="btn btn-primary" onclick="showAddDeviceModal()">
+            + 添加设备
+        </button>
+    </div>
 </div>
 
-<div class="devices-grid" id="devices-grid">
-    <!-- 设备列表将通过JavaScript动态加载 -->
+<!-- 设备表格 -->
+<div class="table-wrap">
+    <table>
+        <thead>
+            <tr>
+                <th>设备名称</th>
+                <th>设备 ID</th>
+                <th>状态</th>
+                <th>登记时间</th>
+                <th>操作</th>
+            </tr>
+        </thead>
+        <tbody id="devices-grid">
+            <tr>
+                <td colspan="5">
+                    <div class="empty-state">
+                        <div class="empty-icon">🖥️</div>
+                        <p>正在加载设备列表…</p>
+                    </div>
+                </td>
+            </tr>
+        </tbody>
+    </table>
 </div>
 
 <!-- 添加设备模态框 -->
-<div class="modal" id="add-device-modal">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h2>添加新设备</h2>
-        </div>
+<div class="modal-overlay" id="add-device-modal">
+    <div class="modal-box">
+        <div class="modal-title">添加设备</div>
         <form id="add-device-form">
             <div class="form-group">
                 <label for="device-id">设备 ID（RustDesk 本机 ID）</label>
-                <input type="text" id="device-id" name="device_id" required placeholder="例如 9 位数字字母 ID">
+                <input
+                    type="text"
+                    id="device-id"
+                    name="device_id"
+                    required
+                    placeholder="例如 9 位数字字母 ID"
+                />
+                <div class="hint">
+                    登记后该设备 ID 将与当前账号绑定，可登记多台。
+                </div>
             </div>
             <div class="form-group">
-                <label for="device-name">设备名称</label>
-                <input type="text" id="device-name" name="device_name">
+                <label for="device-name">设备名称（可选）</label>
+                <input
+                    type="text"
+                    id="device-name"
+                    name="device_name"
+                    placeholder="例如：我的主机、办公室电脑"
+                />
             </div>
             <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" onclick="hideAddDeviceModal()">取消</button>
-                <button type="submit" class="btn">添加</button>
+                <button
+                    type="button"
+                    class="btn btn-secondary"
+                    onclick="hideAddDeviceModal()"
+                >
+                    取消
+                </button>
+                <button type="submit" class="btn btn-primary">添加</button>
             </div>
         </form>
     </div>
 </div>
-{% endblock %}
 
-{% block extra_js %}
+{% endblock %} {% block extra_js %}
 <script>
     /** 当前登录用户在 `user_devices` 中的全部记录（一对多） */
     let allDevices = [];
@@ -145,179 +114,223 @@
 
     function escapeHtml(s) {
         return String(s)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;');
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;");
     }
 
     function authHeaders() {
-        const token = localStorage.getItem('jwt_token');
+        const token = localStorage.getItem("jwt_token");
         return {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer ' + token
+            "Content-Type": "application/json",
+            Authorization: "Bearer " + (token || ""),
         };
     }
 
-    document.addEventListener('DOMContentLoaded', function() {
+    document.addEventListener("DOMContentLoaded", function () {
         currentUser = checkAuth();
         if (!currentUser) return;
-
-        const uh = document.querySelector('.user-info');
-        if (uh) {
-            uh.innerHTML = '<span>' + escapeHtml(currentUser.username) + '</span>'
-                + '<button type="button" class="logout-btn" onclick="logout()">退出</button>';
+        if (currentUser.role === "admin") {
+            document.querySelectorAll(".nav-admin-only").forEach(function (el) {
+                el.style.display = "";
+            });
         }
-        if (currentUser.role === 'admin') {
-            document.querySelectorAll('.nav-admin-only').forEach(function(el) { el.style.display = ''; });
-        }
-
         loadDevices();
     });
 
     async function loadDevices() {
         try {
-            const res = await fetch('/api/users/' + currentUser.id + '/devices', {
-                method: 'GET',
-                headers: authHeaders()
-            });
+            const res = await fetch(
+                "/api/users/" + currentUser.id + "/devices",
+                {
+                    method: "GET",
+                    headers: authHeaders(),
+                },
+            );
             if (res.status === 401 || res.status === 403) {
-                showError('登录已失效，请重新登录');
-                setTimeout(function() { window.location.href = '/login'; }, 1500);
+                showError("登录已失效，请重新登录");
+                setTimeout(function () {
+                    window.location.href = "/login";
+                }, 1500);
                 return;
             }
             const result = await res.json();
             if (!result.success) {
-                showError(result.message || '加载设备列表失败');
+                showError(result.message || "加载设备列表失败");
                 return;
             }
             allDevices = result.data || [];
-            const term = document.getElementById('search-input').value.trim().toLowerCase();
+            const term = document
+                .getElementById("search-input")
+                .value.trim()
+                .toLowerCase();
             renderDevices(filterDevicesByTerm(allDevices, term));
         } catch (error) {
-            console.error('加载设备列表失败:', error);
-            showError('加载设备列表失败');
+            console.error("加载设备列表失败:", error);
+            showError("加载设备列表失败");
         }
     }
 
     function filterDevicesByTerm(list, term) {
         if (!term) return list;
-        return list.filter(function(d) {
-            const id = (d.device_id || '').toLowerCase();
-            const name = (d.device_name || '').toLowerCase();
+        return list.filter(function (d) {
+            const id = (d.device_id || "").toLowerCase();
+            const name = (d.device_name || "").toLowerCase();
             return id.includes(term) || name.includes(term);
         });
     }
 
     function renderDevices(list) {
-        const grid = document.getElementById('devices-grid');
-        grid.innerHTML = '';
+        const tbody = document.getElementById("devices-grid");
+        tbody.innerHTML = "";
 
         if (!list.length) {
-            grid.innerHTML = '<p style="text-align: center; color: #666;">暂无设备，请点击「添加设备」登记 RustDesk 本机 ID（同一用户可登记多台）</p>';
+            tbody.innerHTML =
+                '<tr><td colspan="5">' +
+                '<div class="empty-state">' +
+                '<div class="empty-icon">🖥️</div>' +
+                "<p>暂无设备，点击「添加设备」登记 RustDesk 本机 ID（同一用户可登记多台）</p>" +
+                "</div></td></tr>";
             return;
         }
 
-        list.forEach(function(d) {
-            const name = d.device_name || d.device_id;
-            const active = d.is_active !== false;
-            const statusClass = active ? 'online' : 'offline';
-            const statusText = active ? '已登记' : '已停用';
-            const card = document.createElement('div');
-            card.className = 'device-card';
+        list.forEach(function (d) {
+            const name = escapeHtml(d.device_name || d.device_id);
             const did = d.device_id;
-            card.innerHTML = ''
-                + '<div class="device-info">'
-                + '<h3>' + escapeHtml(name) + '</h3>'
-                + '<div class="device-status">'
-                + '<div class="status-dot status-' + statusClass + '"></div>'
-                + '<span>' + statusText + '</span>'
-                + '</div>'
-                + '<p>设备 ID: <code>' + escapeHtml(did) + '</code></p>'
-                + '<p>登记时间: ' + escapeHtml(d.created_at || '—') + '</p>'
-                + '</div>'
-                + '<div class="device-actions">'
-                + '<button type="button" class="btn btn-small btn-danger" data-device-id="' + escapeHtml(did) + '">删除</button>'
-                + '</div>';
-            card.querySelector('button.btn-danger').addEventListener('click', function() {
-                removeDevice(did);
-            });
-            grid.appendChild(card);
+            const active = d.is_active !== false;
+            const badge = active
+                ? '<span class="badge badge-green">已登记</span>'
+                : '<span class="badge badge-gray">已停用</span>';
+            const createdAt = escapeHtml(d.created_at || "—");
+
+            const tr = document.createElement("tr");
+            tr.innerHTML =
+                "" +
+                "<td>" +
+                name +
+                "</td>" +
+                "<td><code>" +
+                escapeHtml(did) +
+                "</code></td>" +
+                "<td>" +
+                badge +
+                "</td>" +
+                '<td style="color:var(--text2);font-size:13px">' +
+                createdAt +
+                "</td>" +
+                "<td>" +
+                '<button type="button" class="btn btn-xs btn-danger" data-device-id="' +
+                escapeHtml(did) +
+                '">删除</button>' +
+                "</td>";
+
+            tr.querySelector("button.btn-danger").addEventListener(
+                "click",
+                function () {
+                    removeDevice(did);
+                },
+            );
+            tbody.appendChild(tr);
         });
     }
 
     function searchDevices() {
-        const term = document.getElementById('search-input').value.trim().toLowerCase();
+        const term = document
+            .getElementById("search-input")
+            .value.trim()
+            .toLowerCase();
         renderDevices(filterDevicesByTerm(allDevices, term));
     }
 
     function refreshDevices() {
         loadDevices();
-        showSuccess('设备列表已刷新');
+        showSuccess("设备列表已刷新");
     }
 
     function showAddDeviceModal() {
-        document.getElementById('add-device-modal').style.display = 'flex';
+        document.getElementById("add-device-modal").classList.add("open");
     }
 
     function hideAddDeviceModal() {
-        document.getElementById('add-device-modal').style.display = 'none';
-        document.getElementById('add-device-form').reset();
+        document.getElementById("add-device-modal").classList.remove("open");
+        document.getElementById("add-device-form").reset();
     }
+
+    /* 点击遮罩层关闭 */
+    document
+        .getElementById("add-device-modal")
+        .addEventListener("click", function (ev) {
+            if (ev.target === this) hideAddDeviceModal();
+        });
 
     async function removeDevice(deviceId) {
-        if (!confirm('确定从当前用户下移除该设备吗？（软删除）')) return;
+        if (!confirm("确定从当前用户下移除该设备吗？（软删除）")) return;
         try {
-            const url = '/api/users/' + currentUser.id + '/devices/' + encodeURIComponent(deviceId);
-            const res = await fetch(url, { method: 'DELETE', headers: authHeaders() });
+            const url =
+                "/api/users/" +
+                currentUser.id +
+                "/devices/" +
+                encodeURIComponent(deviceId);
+            const res = await fetch(url, {
+                method: "DELETE",
+                headers: authHeaders(),
+            });
             if (res.status === 401 || res.status === 403) {
-                showError('无权限或登录已失效');
+                showError("无权限或登录已失效");
                 return;
             }
             const result = await res.json();
             if (!result.success) {
-                showError(result.message || '删除失败');
+                showError(result.message || "删除失败");
                 return;
             }
-            showSuccess('设备已移除');
+            showSuccess("设备已移除");
             await loadDevices();
         } catch (error) {
-            console.error('删除设备失败:', error);
-            showError('删除设备失败');
+            console.error("删除设备失败:", error);
+            showError("删除设备失败");
         }
     }
 
-    document.getElementById('add-device-form').addEventListener('submit', async function(e) {
-        e.preventDefault();
-        const deviceId = document.getElementById('device-id').value.trim();
-        const deviceNameRaw = document.getElementById('device-name').value.trim();
-        if (!deviceId) {
-            showError('请填写设备 ID');
-            return;
-        }
-        const body = { device_id: deviceId, device_name: deviceNameRaw || null };
-        try {
-            const res = await fetch('/api/devices', {
-                method: 'POST',
-                headers: authHeaders(),
-                body: JSON.stringify(body)
-            });
-            if (res.status === 401 || res.status === 403) {
-                showError('无权限或登录已失效');
+    document
+        .getElementById("add-device-form")
+        .addEventListener("submit", async function (e) {
+            e.preventDefault();
+            const deviceId = document.getElementById("device-id").value.trim();
+            const deviceNameRaw = document
+                .getElementById("device-name")
+                .value.trim();
+            if (!deviceId) {
+                showError("请填写设备 ID");
                 return;
             }
-            const result = await res.json();
-            if (!result.success) {
-                showError(result.message || '添加失败');
-                return;
+            const body = {
+                device_id: deviceId,
+                device_name: deviceNameRaw || null,
+            };
+            try {
+                const res = await fetch("/api/devices", {
+                    method: "POST",
+                    headers: authHeaders(),
+                    body: JSON.stringify(body),
+                });
+                if (res.status === 401 || res.status === 403) {
+                    showError("无权限或登录已失效");
+                    return;
+                }
+                const result = await res.json();
+                if (!result.success) {
+                    showError(result.message || "添加失败");
+                    return;
+                }
+                hideAddDeviceModal();
+                showSuccess("设备已添加");
+                await loadDevices();
+            } catch (error) {
+                console.error("添加设备失败:", error);
+                showError("添加设备失败");
             }
-            hideAddDeviceModal();
-            showSuccess('设备已添加');
-            await loadDevices();
-        } catch (error) {
-            console.error('添加设备失败:', error);
-            showError('添加设备失败');
-        }
-    });
+        });
 </script>
 {% endblock %}

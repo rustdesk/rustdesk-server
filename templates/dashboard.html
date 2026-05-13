@@ -1,136 +1,147 @@
-{% extends "layout.html" %}
-
-{% block title %}控制台 - {% endblock %}
-
-{% block nav_links %}
+{% extends "layout.html" %} {% block title %}控制台 - {% endblock %} {% block
+nav_links %}
 <a href="/dashboard" class="active">控制台</a>
 <a href="/devices">设备管理</a>
-<a href="/users" class="nav-admin-only" style="display:none">用户管理</a>
+<a href="/users" class="nav-admin-only" style="display: none">用户管理</a>
 <a href="/monitor">连接监控</a>
-{% endblock %}
-
-{% block extra_css %}
+{% endblock %} {% block extra_css %}
 <style>
-    .dashboard-grid {
+    .feature-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-        gap: 2rem;
-        margin-bottom: 2rem;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 16px;
     }
-    
-    .stats-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-        gap: 1rem;
-        margin-bottom: 2rem;
+    .feature-card {
+        background: var(--surface);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        padding: 28px 24px;
+        cursor: pointer;
+        transition:
+            box-shadow 0.2s,
+            transform 0.15s;
+        text-decoration: none;
+        color: inherit;
+        display: block;
     }
-    
-    .stat-card {
-        background: white;
-        padding: 1rem;
-        border-radius: 10px;
-        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-        text-align: center;
+    .feature-card:hover {
+        box-shadow: var(--shadow-l);
+        transform: translateY(-2px);
     }
-    
-    .stat-number {
-        font-size: 2rem;
-        font-weight: bold;
-        color: #667eea;
+    .feature-icon {
+        font-size: 28px;
+        margin-bottom: 12px;
     }
-    
-    .stat-label {
-        color: #666;
-        font-size: 0.9rem;
-        margin-top: 0.5rem;
+    .feature-title {
+        font-size: 17px;
+        font-weight: 600;
+        color: var(--text);
+        margin-bottom: 6px;
+        letter-spacing: -0.2px;
+    }
+    .feature-desc {
+        font-size: 13px;
+        color: var(--text2);
+        line-height: 1.5;
     }
 </style>
-{% endblock %}
+{% endblock %} {% block content %}
 
-{% block content %}
-<div class="stats-grid">
+<!-- 统计卡片 -->
+<div class="stats-row">
     <div class="stat-card">
-        <div class="stat-number" id="total-devices">-</div>
+        <div class="stat-num" id="total-devices">—</div>
         <div class="stat-label">设备总数</div>
     </div>
     <div class="stat-card">
-        <div class="stat-number" id="active-devices">-</div>
+        <div class="stat-num" id="active-devices">—</div>
         <div class="stat-label">在线设备</div>
     </div>
     <div class="stat-card">
-        <div class="stat-number" id="total-users">-</div>
+        <div class="stat-num" id="total-users">—</div>
         <div class="stat-label">用户总数</div>
     </div>
     <div class="stat-card">
-        <div class="stat-number" id="active-connections">-</div>
+        <div class="stat-num" id="active-connections">—</div>
         <div class="stat-label">活跃连接</div>
     </div>
 </div>
 
-<div class="dashboard-grid">
-    <div class="card">
-        <h3>设备管理</h3>
-        <p>管理所有连接到NAT服务器的设备，查看设备状态和配置信息。</p>
-        <button class="btn" onclick="window.location.href='/devices'">进入设备管理</button>
-    </div>
-    
-    <div class="card nav-admin-only" style="display:none">
-        <h3>用户管理</h3>
-        <p>管理系统用户、角色与权限（仅管理员）。</p>
-        <button class="btn" onclick="window.location.href='/users'">进入用户管理</button>
-    </div>
-    
-    <div class="card">
-        <h3>连接监控</h3>
-        <p>实时监控NAT连接状态，查看网络流量和连接统计。</p>
-        <button class="btn" onclick="window.location.href='/monitor'">进入连接监控</button>
-    </div>
-    
-    <div class="card">
-        <h3>系统设置</h3>
-        <p>配置NAT服务器参数，调整网络设置和安全策略。</p>
-        <button class="btn" onclick="window.location.href='/settings'">进入系统设置</button>
-    </div>
-</div>
-{% endblock %}
+<!-- 功能入口 -->
+<div class="feature-grid">
+    <a class="feature-card" href="/devices">
+        <div class="feature-icon">🖥️</div>
+        <div class="feature-title">设备管理</div>
+        <div class="feature-desc">
+            管理所有连接到 NAT 服务器的设备，查看设备状态与配置信息。
+        </div>
+    </a>
 
-{% block extra_js %}
+    <a class="feature-card nav-admin-only" href="/users" style="display: none">
+        <div class="feature-icon">👥</div>
+        <div class="feature-title">用户管理</div>
+        <div class="feature-desc">
+            管理系统用户、角色与权限（仅管理员可见）。
+        </div>
+    </a>
+
+    <a class="feature-card" href="/monitor">
+        <div class="feature-icon">📡</div>
+        <div class="feature-title">连接监控</div>
+        <div class="feature-desc">
+            实时监控 NAT 连接状态，查看在线 Peer 与连接统计。
+        </div>
+    </a>
+
+    <a
+        class="feature-card"
+        href="/settings"
+        onclick="
+            event.preventDefault();
+            showInfo('系统设置功能即将推出');
+        "
+    >
+        <div class="feature-icon">⚙️</div>
+        <div class="feature-title">系统设置</div>
+        <div class="feature-desc">
+            配置 NAT 服务器参数，调整网络设置和安全策略。（即将推出）
+        </div>
+    </a>
+</div>
+
+{% endblock %} {% block extra_js %}
 <script>
-    // 检查用户登录状态
-    document.addEventListener('DOMContentLoaded', function() {
+    document.addEventListener("DOMContentLoaded", function () {
         const user = checkAuth();
         if (!user) return;
-
-        const uh = document.querySelector('.user-info');
-        if (uh) {
-            uh.innerHTML = '<span>' + escapeHtml(user.username) + '</span>'
-                + '<button type="button" class="logout-btn" onclick="logout()">退出</button>';
+        if (user.role === "admin") {
+            document.querySelectorAll(".nav-admin-only").forEach(function (el) {
+                el.style.display = "";
+            });
         }
-        if (user.role === 'admin') {
-            document.querySelectorAll('.nav-admin-only').forEach(function(el) { el.style.display = ''; });
-        }
-
         loadStats();
     });
 
-    function escapeHtml(s) {
-        return String(s)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;');
-    }
-    
-    // 加载统计数据
     async function loadStats() {
         try {
-            // 模拟统计数据（实际应该从API获取）
-            document.getElementById('total-devices').textContent = Math.floor(Math.random() * 100) + 50;
-            document.getElementById('active-devices').textContent = Math.floor(Math.random() * 50) + 20;
-            document.getElementById('total-users').textContent = Math.floor(Math.random() * 200) + 100;
-            document.getElementById('active-connections').textContent = Math.floor(Math.random() * 150) + 80;
-        } catch (error) {
-            console.error('加载统计数据失败:', error);
+            const token = localStorage.getItem("jwt_token") || "";
+            const res = await fetch("/api/monitor/stats", {
+                headers: { Authorization: "Bearer " + token },
+            });
+            const json = await res.json();
+            if (json.success && json.data) {
+                const d = json.data;
+                document.getElementById("total-devices").textContent =
+                    d.total_peers != null ? d.total_peers : "—";
+                document.getElementById("active-devices").textContent =
+                    d.online_count != null ? d.online_count : "—";
+                document.getElementById("total-users").textContent =
+                    d.total_users != null ? d.total_users : "—";
+                document.getElementById("active-connections").textContent =
+                    d.online_count != null ? d.online_count : "—";
+            }
+        } catch (e) {
+            console.error("加载统计数据失败:", e);
         }
     }
 </script>

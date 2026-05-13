@@ -1,228 +1,228 @@
-{% extends "layout.html" %}
-
-{% block title %}连接监控 - {% endblock %}
-
-{% block nav_links %}
+{% extends "layout.html" %} {% block title %}连接监控 - {% endblock %} {% block
+nav_links %}
 <a href="/dashboard">控制台</a>
 <a href="/devices">设备管理</a>
-<a href="/users" class="nav-admin-only" style="display:none">用户管理</a>
+<a href="/users" class="nav-admin-only" style="display: none">用户管理</a>
 <a href="/monitor" class="active">连接监控</a>
-{% endblock %}
-
-{% block extra_css %}
+{% endblock %} {% block extra_css %}
 <style>
-    .stats-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-        gap: 1rem;
-        margin-bottom: 2rem;
-    }
-    .stat-card {
-        background: white;
-        padding: 1.2rem;
-        border-radius: 10px;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.08);
-        text-align: center;
-    }
-    .stat-number {
-        font-size: 2.2rem;
-        font-weight: bold;
-        color: #667eea;
-    }
-    .stat-label {
-        color: #666;
-        font-size: 0.85rem;
-        margin-top: 0.4rem;
-    }
-    .section-header {
+    /* 页面标题区 */
+    .page-header {
         display: flex;
+        align-items: flex-end;
         justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 28px;
+        flex-wrap: wrap;
+    }
+    .page-header-left h1 {
+        font-size: 26px;
+        font-weight: 700;
+        letter-spacing: -0.5px;
+        color: var(--text);
+        line-height: 1.2;
+    }
+    .page-header-left p {
+        margin-top: 4px;
+        font-size: 14px;
+        color: var(--text2);
+    }
+    .page-header-right {
+        display: flex;
         align-items: center;
-        margin-bottom: 1rem;
+        gap: 10px;
+        flex-shrink: 0;
     }
-    .section-header h2 { color: #333; }
-    .badge-online {
+    .refresh-hint {
+        font-size: 12px;
+        color: var(--text3);
+    }
+
+    /* 在线脉冲点 */
+    .pulse-dot {
         display: inline-block;
-        background: #28a745;
-        color: white;
-        border-radius: 12px;
-        padding: 2px 10px;
-        font-size: 0.78rem;
-        vertical-align: middle;
-    }
-    table {
-        width: 100%;
-        border-collapse: collapse;
-        background: white;
-        border-radius: 10px;
-        overflow: hidden;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.08);
-    }
-    th {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        padding: 0.85rem 1rem;
-        text-align: left;
-        font-weight: 500;
-    }
-    td {
-        padding: 0.75rem 1rem;
-        border-bottom: 1px solid #f0f0f0;
-        font-size: 0.92rem;
-    }
-    tr:last-child td { border-bottom: none; }
-    tr:hover td { background: #f8f9ff; }
-    .status-dot {
-        display: inline-block;
-        width: 8px; height: 8px;
+        width: 8px;
+        height: 8px;
         border-radius: 50%;
-        background: #28a745;
-        margin-right: 6px;
-        animation: pulse 2s infinite;
+        background: var(--green);
+        margin-right: 7px;
+        vertical-align: middle;
+        animation: pulse 2s ease-in-out infinite;
     }
     @keyframes pulse {
-        0%,100% { opacity: 1; }
-        50% { opacity: 0.4; }
-    }
-    .empty-state {
-        text-align: center;
-        padding: 3rem;
-        color: #999;
-        background: white;
-        border-radius: 10px;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.08);
-    }
-    .refresh-info {
-        font-size: 0.82rem;
-        color: #999;
-    }
-    .toolbar {
-        display: flex;
-        gap: 0.5rem;
-        align-items: center;
+        0%,
+        100% {
+            opacity: 1;
+            transform: scale(1);
+        }
+        50% {
+            opacity: 0.45;
+            transform: scale(0.85);
+        }
     }
 </style>
-{% endblock %}
+{% endblock %} {% block content %}
 
-{% block content %}
+<!-- 页面标题区 -->
+<div class="page-header">
+    <div class="page-header-left">
+        <h1>连接监控</h1>
+        <p>实时查看在线 Peer 与连接状态，每 10 秒自动刷新</p>
+    </div>
+    <div class="page-header-right">
+        <span class="refresh-hint" id="last-refresh">—</span>
+        <button class="btn btn-secondary" onclick="loadData()">立即刷新</button>
+    </div>
+</div>
+
 <!-- 统计卡片 -->
-<div class="stats-grid">
+<div class="stats-row">
     <div class="stat-card">
-        <div class="stat-number" id="stat-online">-</div>
-        <div class="stat-label">当前在线连接</div>
+        <div class="stat-num" id="stat-online">—</div>
+        <div class="stat-label">在线连接</div>
     </div>
     <div class="stat-card">
-        <div class="stat-number" id="stat-peers">-</div>
-        <div class="stat-label">注册 Peer 总数</div>
+        <div class="stat-num" id="stat-peers">—</div>
+        <div class="stat-label">Peer 总数</div>
     </div>
     <div class="stat-card">
-        <div class="stat-number" id="stat-users">-</div>
+        <div class="stat-num" id="stat-users">—</div>
         <div class="stat-label">用户总数</div>
     </div>
 </div>
 
-<!-- 连接列表 -->
-<div class="card" style="padding:1.5rem">
-    <div class="section-header">
-        <h2>实时连接列表 <span class="badge-online" id="online-badge">0 在线</span></h2>
-        <div class="toolbar">
-            <span class="refresh-info" id="last-refresh">-</span>
-            <button class="btn btn-small" onclick="loadData()">立即刷新</button>
-        </div>
-    </div>
-    <div id="table-container">
-        <div class="empty-state">正在加载...</div>
-    </div>
+<!-- 连接表格 -->
+<div class="table-wrap" id="connections-wrap">
+    <table>
+        <thead>
+            <tr>
+                <th>Peer ID</th>
+                <th>IP 地址</th>
+                <th>绑定用户</th>
+                <th>首次连接</th>
+                <th>最后活跃</th>
+            </tr>
+        </thead>
+        <tbody id="connections-tbody">
+            <tr>
+                <td colspan="5">
+                    <div class="empty-state">
+                        <div class="empty-icon">📡</div>
+                        <p>正在加载连接数据…</p>
+                    </div>
+                </td>
+            </tr>
+        </tbody>
+    </table>
 </div>
-{% endblock %}
 
-{% block extra_js %}
+{% endblock %} {% block extra_js %}
 <script>
-document.addEventListener('DOMContentLoaded', function() {
-    const user = checkAuth();
-    if (!user) return;
-
-    const uh = document.querySelector('.user-info');
-    if (uh) {
-        uh.innerHTML = '<span>' + escapeHtml(user.username) + '</span>'
-            + '<button type="button" class="logout-btn" onclick="logout()">退出</button>';
-    }
-    if (user.role === 'admin') {
-        document.querySelectorAll('.nav-admin-only').forEach(function(el) { el.style.display = ''; });
-    }
-
-    loadData();
-    setInterval(loadData, 10000); // 每 10 秒自动刷新
-});
-
-function escapeHtml(s) {
-    return String(s)
-        .replace(/&/g,'&amp;').replace(/</g,'&lt;')
-        .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-function getToken() {
-    return localStorage.getItem('jwt_token') || '';
-}
-
-async function loadData() {
-    await Promise.all([loadStats(), loadConnections()]);
-    document.getElementById('last-refresh').textContent =
-        '最后刷新: ' + new Date().toLocaleTimeString();
-}
-
-async function loadStats() {
-    try {
-        const res = await fetch('/api/monitor/stats', {
-            headers: { 'Authorization': 'Bearer ' + getToken() }
-        });
-        const json = await res.json();
-        if (json.success && json.data) {
-            document.getElementById('stat-online').textContent = json.data.online_count;
-            document.getElementById('stat-peers').textContent  = json.data.total_peers;
-            document.getElementById('stat-users').textContent  = json.data.total_users;
-            document.getElementById('online-badge').textContent = json.data.online_count + ' 在线';
+    document.addEventListener("DOMContentLoaded", function () {
+        const user = checkAuth();
+        if (!user) return;
+        if (user.role === "admin") {
+            document.querySelectorAll(".nav-admin-only").forEach(function (el) {
+                el.style.display = "";
+            });
         }
-    } catch(e) { console.error('stats error', e); }
-}
+        loadData();
+        setInterval(loadData, 10000); // 每 10 秒自动刷新
+    });
 
-async function loadConnections() {
-    try {
-        const res = await fetch('/api/monitor/connections', {
-            headers: { 'Authorization': 'Bearer ' + getToken() }
-        });
-        const json = await res.json();
-        const container = document.getElementById('table-container');
-
-        if (!json.success || !json.data || json.data.length === 0) {
-            container.innerHTML = '<div class="empty-state">暂无在线连接</div>';
-            return;
-        }
-
-        const rows = json.data.map(function(c) {
-            const connAt = new Date(c.connected_at).toLocaleString();
-            const lastSeen = c.last_seen_secs < 5 ? '刚刚' : c.last_seen_secs + ' 秒前';
-            const userId = c.user_id != null ? ('<a href="/users">#' + c.user_id + '</a>') : '<span style="color:#ccc">—</span>';
-            return '<tr>'
-                + '<td><span class="status-dot"></span>' + escapeHtml(c.peer_id) + '</td>'
-                + '<td>' + escapeHtml(c.ip) + '</td>'
-                + '<td>' + userId + '</td>'
-                + '<td>' + connAt + '</td>'
-                + '<td>' + lastSeen + '</td>'
-                + '</tr>';
-        }).join('');
-
-        container.innerHTML = '<table>'
-            + '<thead><tr>'
-            + '<th>Peer ID</th><th>IP 地址</th><th>绑定用户</th><th>首次连接</th><th>最后活跃</th>'
-            + '</tr></thead>'
-            + '<tbody>' + rows + '</tbody>'
-            + '</table>';
-    } catch(e) {
-        console.error('connections error', e);
-        document.getElementById('table-container').innerHTML =
-            '<div class="empty-state">加载失败，请刷新重试</div>';
+    function getToken() {
+        return localStorage.getItem("jwt_token") || "";
     }
-}
+
+    async function loadData() {
+        await Promise.all([loadStats(), loadConnections()]);
+        document.getElementById("last-refresh").textContent =
+            "最后刷新：" + new Date().toLocaleTimeString();
+    }
+
+    async function loadStats() {
+        try {
+            const res = await fetch("/api/monitor/stats", {
+                headers: { Authorization: "Bearer " + getToken() },
+            });
+            const json = await res.json();
+            if (json.success && json.data) {
+                const d = json.data;
+                document.getElementById("stat-online").textContent =
+                    d.online_count != null ? d.online_count : "—";
+                document.getElementById("stat-peers").textContent =
+                    d.total_peers != null ? d.total_peers : "—";
+                document.getElementById("stat-users").textContent =
+                    d.total_users != null ? d.total_users : "—";
+            }
+        } catch (e) {
+            console.error("stats error", e);
+        }
+    }
+
+    async function loadConnections() {
+        const tbody = document.getElementById("connections-tbody");
+        try {
+            const res = await fetch("/api/monitor/connections", {
+                headers: { Authorization: "Bearer " + getToken() },
+            });
+            const json = await res.json();
+
+            if (!json.success || !json.data || json.data.length === 0) {
+                tbody.innerHTML =
+                    '<tr><td colspan="5">' +
+                    '<div class="empty-state">' +
+                    '<div class="empty-icon">📡</div>' +
+                    "<p>暂无在线连接</p>" +
+                    "</div></td></tr>";
+                return;
+            }
+
+            const rows = json.data
+                .map(function (c) {
+                    const connAt = new Date(c.connected_at).toLocaleString();
+                    const lastSeen =
+                        c.last_seen_secs < 5
+                            ? "刚刚"
+                            : c.last_seen_secs + " 秒前";
+                    const userId =
+                        c.user_id != null
+                            ? '<a href="/users" style="color:var(--blue);text-decoration:none">#' +
+                              c.user_id +
+                              "</a>"
+                            : '<span style="color:var(--text3)">—</span>';
+                    return (
+                        "<tr>" +
+                        '<td><span class="pulse-dot"></span>' +
+                        escapeHtml(c.peer_id) +
+                        "</td>" +
+                        '<td style="font-family:monospace;font-size:13px">' +
+                        escapeHtml(c.ip) +
+                        "</td>" +
+                        "<td>" +
+                        userId +
+                        "</td>" +
+                        '<td style="color:var(--text2);font-size:13px">' +
+                        escapeHtml(connAt) +
+                        "</td>" +
+                        '<td style="color:var(--text2);font-size:13px">' +
+                        escapeHtml(lastSeen) +
+                        "</td>" +
+                        "</tr>"
+                    );
+                })
+                .join("");
+
+            tbody.innerHTML = rows;
+        } catch (e) {
+            console.error("connections error", e);
+            tbody.innerHTML =
+                '<tr><td colspan="5">' +
+                '<div class="empty-state">' +
+                '<div class="empty-icon">⚠️</div>' +
+                "<p>加载失败，请点击「立即刷新」重试</p>" +
+                "</div></td></tr>";
+        }
+    }
 </script>
 {% endblock %}

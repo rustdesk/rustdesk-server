@@ -1,258 +1,660 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}NAT Server{% endblock %}</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: #f5f5f5;
-            color: #333;
-        }
-        
-        .header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 1rem 2rem;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        
-        .header h1 {
-            font-size: 1.5rem;
-        }
-        
-        .nav-links {
-            display: flex;
-            gap: 1rem;
-        }
-        
-        .nav-links a {
-            color: white;
-            text-decoration: none;
-            padding: 0.5rem 1rem;
-            border-radius: 5px;
-            transition: background 0.3s;
-        }
-        
-        .nav-links a:hover,
-        .nav-links a.active {
-            background: rgba(255, 255, 255, 0.2);
-        }
-        
-        .user-info {
-            display: flex;
-            align-items: center;
-            gap: 1rem;
-        }
-        
-        .logout-btn {
-            background: rgba(255, 255, 255, 0.2);
-            border: 1px solid rgba(255, 255, 255, 0.3);
-            color: white;
-            padding: 0.5rem 1rem;
-            border-radius: 5px;
-            cursor: pointer;
-            transition: background 0.3s;
-        }
-        
-        .logout-btn:hover {
-            background: rgba(255, 255, 255, 0.3);
-        }
-        
-        .container {
-            max-width: 1200px;
-            margin: 2rem auto;
-            padding: 0 1rem;
-        }
-        
-        .error-message {
-            background: #fee;
-            color: #c33;
-            padding: 0.75rem;
-            border-radius: 5px;
-            margin-bottom: 1rem;
-            display: none;
-        }
-        
-        .success-message {
-            background: #efe;
-            color: #3c3;
-            padding: 0.75rem;
-            border-radius: 5px;
-            margin-bottom: 1rem;
-            display: none;
-        }
-        
-        .btn {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border: none;
-            padding: 0.5rem 1rem;
-            border-radius: 5px;
-            cursor: pointer;
-            transition: transform 0.2s;
-        }
-        
-        .btn:hover {
-            transform: translateY(-2px);
-        }
-        
-        .btn-secondary {
-            background: #6c757d;
-        }
-        
-        .btn-danger {
-            background: #dc3545;
-        }
-        
-        .btn-small {
-            padding: 0.25rem 0.5rem;
-            font-size: 0.8rem;
-        }
-        
-        .card {
-            background: white;
-            padding: 1.5rem;
-            border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-            transition: transform 0.2s;
-        }
-        
-        .card:hover {
-            transform: translateY(-2px);
-        }
-        
-        .form-group {
-            margin-bottom: 1rem;
-        }
-        
-        .form-group label {
-            display: block;
-            margin-bottom: 0.5rem;
-            color: #333;
-            font-weight: 500;
-        }
-        
-        .form-group input {
-            width: 100%;
-            padding: 0.75rem;
-            border: 2px solid #e1e5e9;
-            border-radius: 5px;
-            font-size: 1rem;
-        }
-        
-        .form-group input:focus {
-            outline: none;
-            border-color: #667eea;
-        }
-        
-        .modal {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.5);
-            justify-content: center;
-            align-items: center;
-        }
-        
-        .modal-content {
-            background: white;
-            padding: 2rem;
-            border-radius: 10px;
-            max-width: 400px;
-            width: 90%;
-        }
-        
-        .modal-header {
-            margin-bottom: 1rem;
-        }
-        
-        .modal-header h2 {
-            color: #667eea;
-        }
-        
-        .modal-footer {
-            display: flex;
-            gap: 1rem;
-            justify-content: flex-end;
-        }
-    </style>
-    {% block extra_css %}{% endblock %}
-</head>
-<body>
-    <div class="header">
-        <h1>NAT Server</h1>
-        <div class="nav-links">
-            {% block nav_links %}
-            <a href="/">首页</a>
-            <a href="/login">登录</a>
-            <a href="/register">注册</a>
-            {% endblock %}
-        </div>
-        <div class="user-info">
-            {% if let Some(user) = current_user %}
-            <span>{{ user.username }}</span>
-            <button class="logout-btn" onclick="logout()">退出</button>
-            {% endif %}
-        </div>
-    </div>
-    
-    <div class="container">
-        <div class="error-message" id="error-message"></div>
-        <div class="success-message" id="success-message"></div>
-        
-        {% block content %}{% endblock %}
-    </div>
-    
-    <script>
-        function showError(message) {
-            const errorDiv = document.getElementById('error-message');
-            errorDiv.textContent = message;
-            errorDiv.style.display = 'block';
-            setTimeout(function() {
-                errorDiv.style.display = 'none';
-            }, 5000);
-        }
-        
-        function showSuccess(message) {
-            const successDiv = document.getElementById('success-message');
-            successDiv.textContent = message;
-            successDiv.style.display = 'block';
-            setTimeout(function() {
-                successDiv.style.display = 'none';
-            }, 3000);
-        }
-        
-        function logout() {
-            localStorage.removeItem('jwt_token');
-            localStorage.removeItem('user_info');
-            window.location.href = '/login';
-        }
-        
-        function checkAuth() {
-            const token = localStorage.getItem('jwt_token');
-            const userInfo = localStorage.getItem('user_info');
-            
-            if (!token || !userInfo) {
-                window.location.href = '/login';
-                return false;
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>{% block title %}NAT Server{% endblock %}</title>
+        <style>
+            /* ── Apple 设计系统变量 ─────────────────────────────── */
+            :root {
+                --blue: #0071e3;
+                --blue-h: #0077ed;
+                --green: #34c759;
+                --red: #ff3b30;
+                --orange: #ff9500;
+                --bg: #f5f5f7;
+                --surface: #ffffff;
+                --surface2: #f5f5f7;
+                --text: #1d1d1f;
+                --text2: #6e6e73;
+                --text3: #aeaeb2;
+                --border: rgba(0, 0, 0, 0.08);
+                --shadow: 0 2px 12px rgba(0, 0, 0, 0.07);
+                --shadow-l: 0 8px 32px rgba(0, 0, 0, 0.1);
+                --radius: 14px;
+                --radius-s: 9px;
+                --radius-xs: 6px;
+                --nav-h: 52px;
+                --font:
+                    -apple-system, BlinkMacSystemFont, "SF Pro Display",
+                    "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
             }
-            
-            return JSON.parse(userInfo);
-        }
-    </script>
-    {% block extra_js %}{% endblock %}
-</body>
+
+            /* ── Reset ─────────────────────────────────────────── */
+            *,
+            *::before,
+            *::after {
+                box-sizing: border-box;
+                margin: 0;
+                padding: 0;
+            }
+            html {
+                -webkit-font-smoothing: antialiased;
+            }
+
+            body {
+                font-family: var(--font);
+                background: var(--bg);
+                color: var(--text);
+                font-size: 15px;
+                line-height: 1.5;
+                min-height: 100vh;
+            }
+
+            /* ── 顶部导航栏（毛玻璃） ───────────────────────────── */
+            .nav {
+                position: sticky;
+                top: 0;
+                z-index: 200;
+                height: var(--nav-h);
+                background: rgba(255, 255, 255, 0.82);
+                -webkit-backdrop-filter: saturate(180%) blur(20px);
+                backdrop-filter: saturate(180%) blur(20px);
+                border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+                display: flex;
+                align-items: center;
+                padding: 0 24px;
+                gap: 0;
+            }
+
+            .nav-brand {
+                font-size: 17px;
+                font-weight: 600;
+                color: var(--text);
+                text-decoration: none;
+                letter-spacing: -0.3px;
+                margin-right: 32px;
+                white-space: nowrap;
+            }
+            .nav-brand span {
+                color: var(--blue);
+            }
+
+            .nav-links {
+                display: flex;
+                align-items: center;
+                gap: 2px;
+                flex: 1;
+            }
+
+            .nav-links a {
+                color: var(--text2);
+                text-decoration: none;
+                font-size: 14px;
+                font-weight: 500;
+                padding: 6px 12px;
+                border-radius: var(--radius-xs);
+                transition:
+                    background 0.15s,
+                    color 0.15s;
+                white-space: nowrap;
+            }
+            .nav-links a:hover {
+                background: rgba(0, 0, 0, 0.05);
+                color: var(--text);
+            }
+            .nav-links a.active {
+                color: var(--blue);
+                background: rgba(0, 113, 227, 0.08);
+            }
+
+            .nav-end {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                margin-left: auto;
+            }
+
+            .nav-user {
+                font-size: 14px;
+                font-weight: 500;
+                color: var(--text2);
+            }
+
+            .nav-logout {
+                font-size: 13px;
+                font-weight: 500;
+                color: var(--blue);
+                background: none;
+                border: none;
+                cursor: pointer;
+                padding: 5px 10px;
+                border-radius: var(--radius-xs);
+                transition: background 0.15s;
+            }
+            .nav-logout:hover {
+                background: rgba(0, 113, 227, 0.08);
+            }
+
+            /* ── 页面主体 ────────────────────────────────────────── */
+            .page {
+                max-width: 1100px;
+                margin: 0 auto;
+                padding: 32px 24px 64px;
+            }
+
+            /* ── 通用卡片 ────────────────────────────────────────── */
+            .card {
+                background: var(--surface);
+                border-radius: var(--radius);
+                box-shadow: var(--shadow);
+                padding: 24px;
+            }
+
+            /* ── 按钮 ────────────────────────────────────────────── */
+            .btn {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                gap: 6px;
+                font-family: var(--font);
+                font-size: 14px;
+                font-weight: 500;
+                padding: 8px 18px;
+                border-radius: var(--radius-xs);
+                border: none;
+                cursor: pointer;
+                text-decoration: none;
+                transition:
+                    opacity 0.15s,
+                    transform 0.1s;
+                white-space: nowrap;
+                -webkit-user-select: none;
+                user-select: none;
+            }
+            .btn:active {
+                transform: scale(0.97);
+            }
+
+            .btn-primary {
+                background: var(--blue);
+                color: #fff;
+            }
+            .btn-primary:hover {
+                background: var(--blue-h);
+            }
+            .btn-secondary {
+                background: rgba(0, 0, 0, 0.06);
+                color: var(--text);
+            }
+            .btn-secondary:hover {
+                background: rgba(0, 0, 0, 0.1);
+            }
+            .btn-danger {
+                background: var(--red);
+                color: #fff;
+            }
+            .btn-danger:hover {
+                opacity: 0.88;
+            }
+            .btn-ghost {
+                background: transparent;
+                color: var(--blue);
+                padding: 6px 10px;
+            }
+            .btn-ghost:hover {
+                background: rgba(0, 113, 227, 0.08);
+            }
+
+            .btn-sm {
+                font-size: 13px;
+                padding: 5px 12px;
+            }
+            .btn-xs {
+                font-size: 12px;
+                padding: 4px 9px;
+                border-radius: 5px;
+            }
+            .btn:disabled {
+                opacity: 0.4;
+                cursor: not-allowed;
+                transform: none;
+            }
+
+            /* ── 表单 ────────────────────────────────────────────── */
+            .form-group {
+                margin-bottom: 16px;
+            }
+            .form-group label {
+                display: block;
+                font-size: 13px;
+                font-weight: 500;
+                color: var(--text2);
+                margin-bottom: 6px;
+                text-transform: uppercase;
+                letter-spacing: 0.3px;
+            }
+            .form-group input,
+            .form-group select,
+            .form-group textarea {
+                width: 100%;
+                padding: 10px 14px;
+                border: 1.5px solid var(--border);
+                border-radius: var(--radius-s);
+                font-family: var(--font);
+                font-size: 15px;
+                color: var(--text);
+                background: var(--surface2);
+                transition:
+                    border-color 0.2s,
+                    box-shadow 0.2s;
+                outline: none;
+            }
+            .form-group input:focus,
+            .form-group select:focus,
+            .form-group textarea:focus {
+                border-color: var(--blue);
+                box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.15);
+                background: #fff;
+            }
+            .form-group .hint {
+                margin-top: 5px;
+                font-size: 12px;
+                color: var(--text3);
+                line-height: 1.5;
+            }
+            .form-group .hint code {
+                font-size: 11px;
+                background: rgba(0, 0, 0, 0.06);
+                padding: 1px 4px;
+                border-radius: 3px;
+            }
+
+            /* ── Toast 通知 ──────────────────────────────────────── */
+            .toast-wrap {
+                position: fixed;
+                top: calc(var(--nav-h) + 12px);
+                left: 50%;
+                transform: translateX(-50%);
+                z-index: 999;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                gap: 8px;
+                pointer-events: none;
+            }
+            .toast {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                padding: 11px 20px;
+                border-radius: 20px;
+                font-size: 14px;
+                font-weight: 500;
+                color: #fff;
+                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.18);
+                animation: toastIn 0.25s cubic-bezier(0.34, 1.56, 0.64, 1)
+                    forwards;
+                pointer-events: auto;
+            }
+            .toast.success {
+                background: rgba(52, 199, 89, 0.96);
+            }
+            .toast.error {
+                background: rgba(255, 59, 48, 0.96);
+            }
+            .toast.info {
+                background: rgba(0, 113, 227, 0.96);
+            }
+            .toast.hide {
+                animation: toastOut 0.2s ease forwards;
+            }
+            @keyframes toastIn {
+                from {
+                    opacity: 0;
+                    transform: translateY(-12px) scale(0.9);
+                }
+                to {
+                    opacity: 1;
+                    transform: translateY(0) scale(1);
+                }
+            }
+            @keyframes toastOut {
+                from {
+                    opacity: 1;
+                    transform: translateY(0) scale(1);
+                }
+                to {
+                    opacity: 0;
+                    transform: translateY(-8px) scale(0.95);
+                }
+            }
+
+            /* ── 模态框 ──────────────────────────────────────────── */
+            .modal-overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0, 0, 0, 0.35);
+                -webkit-backdrop-filter: blur(4px);
+                backdrop-filter: blur(4px);
+                z-index: 300;
+                justify-content: center;
+                align-items: center;
+            }
+            .modal-overlay.open {
+                display: flex;
+            }
+            .modal-box {
+                background: var(--surface);
+                border-radius: var(--radius);
+                box-shadow: var(--shadow-l);
+                padding: 28px;
+                width: 90%;
+                max-width: 420px;
+                animation: modalIn 0.22s cubic-bezier(0.34, 1.4, 0.64, 1);
+            }
+            .modal-box-wide {
+                max-width: 680px;
+            }
+            @keyframes modalIn {
+                from {
+                    opacity: 0;
+                    transform: scale(0.94) translateY(10px);
+                }
+                to {
+                    opacity: 1;
+                    transform: scale(1) translateY(0);
+                }
+            }
+            .modal-title {
+                font-size: 18px;
+                font-weight: 600;
+                color: var(--text);
+                margin-bottom: 20px;
+                letter-spacing: -0.2px;
+            }
+            .modal-footer {
+                display: flex;
+                justify-content: flex-end;
+                gap: 10px;
+                margin-top: 24px;
+            }
+
+            /* ── 表格 ────────────────────────────────────────────── */
+            .table-wrap {
+                background: var(--surface);
+                border-radius: var(--radius);
+                box-shadow: var(--shadow);
+                overflow: hidden;
+            }
+            table {
+                width: 100%;
+                border-collapse: collapse;
+            }
+            thead tr {
+                border-bottom: 1.5px solid var(--border);
+            }
+            th {
+                padding: 12px 16px;
+                text-align: left;
+                font-size: 12px;
+                font-weight: 600;
+                color: var(--text2);
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                background: var(--surface2);
+            }
+            td {
+                padding: 13px 16px;
+                font-size: 14px;
+                color: var(--text);
+                border-bottom: 1px solid var(--border);
+                vertical-align: middle;
+            }
+            tbody tr:last-child td {
+                border-bottom: none;
+            }
+            tbody tr:hover td {
+                background: rgba(0, 113, 227, 0.03);
+            }
+
+            /* ── 徽章 ────────────────────────────────────────────── */
+            .badge {
+                display: inline-flex;
+                align-items: center;
+                gap: 4px;
+                font-size: 12px;
+                font-weight: 600;
+                padding: 3px 9px;
+                border-radius: 20px;
+                letter-spacing: 0.2px;
+            }
+            .badge-green {
+                background: rgba(52, 199, 89, 0.12);
+                color: #1a8a37;
+            }
+            .badge-red {
+                background: rgba(255, 59, 48, 0.1);
+                color: #c0281f;
+            }
+            .badge-blue {
+                background: rgba(0, 113, 227, 0.1);
+                color: #0059b3;
+            }
+            .badge-gray {
+                background: rgba(0, 0, 0, 0.06);
+                color: var(--text2);
+            }
+            .badge-orange {
+                background: rgba(255, 149, 0, 0.12);
+                color: #c47400;
+            }
+            .badge-dot {
+                width: 6px;
+                height: 6px;
+                border-radius: 50%;
+                background: currentColor;
+            }
+
+            /* ── 分隔线 ──────────────────────────────────────────── */
+            .divider {
+                height: 1px;
+                background: var(--border);
+                margin: 20px 0;
+            }
+
+            /* ── 空状态 ──────────────────────────────────────────── */
+            .empty-state {
+                text-align: center;
+                padding: 56px 24px;
+                color: var(--text3);
+            }
+            .empty-state .empty-icon {
+                font-size: 40px;
+                margin-bottom: 12px;
+                opacity: 0.5;
+            }
+            .empty-state p {
+                font-size: 15px;
+            }
+
+            /* ── 统计卡片 ─────────────────────────────────────────── */
+            .stats-row {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+                gap: 14px;
+                margin-bottom: 28px;
+            }
+            .stat-card {
+                background: var(--surface);
+                border-radius: var(--radius);
+                box-shadow: var(--shadow);
+                padding: 20px;
+                text-align: center;
+            }
+            .stat-num {
+                font-size: 32px;
+                font-weight: 700;
+                color: var(--blue);
+                letter-spacing: -1px;
+                line-height: 1.1;
+            }
+            .stat-label {
+                margin-top: 4px;
+                font-size: 13px;
+                color: var(--text2);
+            }
+
+            /* ── 工具栏 ──────────────────────────────────────────── */
+            .toolbar {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 12px;
+                margin-bottom: 20px;
+                flex-wrap: wrap;
+            }
+            .toolbar-left,
+            .toolbar-right {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+            .search-input {
+                padding: 8px 14px;
+                border: 1.5px solid var(--border);
+                border-radius: var(--radius-s);
+                font-family: var(--font);
+                font-size: 14px;
+                background: var(--surface2);
+                color: var(--text);
+                outline: none;
+                width: 220px;
+                transition:
+                    border-color 0.2s,
+                    box-shadow 0.2s;
+            }
+            .search-input:focus {
+                border-color: var(--blue);
+                box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.12);
+                background: #fff;
+            }
+
+            /* ── 响应式 ──────────────────────────────────────────── */
+            @media (max-width: 640px) {
+                .page {
+                    padding: 20px 16px 48px;
+                }
+                .nav {
+                    padding: 0 16px;
+                }
+                .nav-brand {
+                    margin-right: 16px;
+                }
+            }
+        </style>
+        {% block extra_css %}{% endblock %}
+    </head>
+    <body>
+        <!-- 顶部导航 -->
+        <nav class="nav">
+            <a class="nav-brand" href="/dashboard">NAT <span>Server</span></a>
+            <div class="nav-links">
+                {% block nav_links %}
+                <a href="/login">登录</a>
+                <a href="/register">注册</a>
+                {% endblock %}
+            </div>
+            <div class="nav-end" id="nav-end">
+                {% if let Some(user) = current_user %}
+                <span class="nav-user">{{ user.username }}</span>
+                <button class="nav-logout" onclick="logout()">退出</button>
+                {% endif %}
+            </div>
+        </nav>
+
+        <!-- Toast 容器 -->
+        <div class="toast-wrap" id="toast-wrap"></div>
+
+        <!-- 主内容 -->
+        <main class="page">{% block content %}{% endblock %}</main>
+
+        <script>
+            /* ── Toast ─────────────────────────────────────────────── */
+            function showToast(msg, type) {
+                type = type || "info";
+                const wrap = document.getElementById("toast-wrap");
+                const el = document.createElement("div");
+                el.className = "toast " + type;
+                el.textContent = msg;
+                wrap.appendChild(el);
+                setTimeout(function () {
+                    el.classList.add("hide");
+                    setTimeout(function () {
+                        el.remove();
+                    }, 220);
+                }, 3200);
+            }
+            function showSuccess(msg) {
+                showToast(msg, "success");
+            }
+            function showError(msg) {
+                showToast(msg, "error");
+            }
+            function showInfo(msg) {
+                showToast(msg, "info");
+            }
+
+            /* 兼容旧代码中可能使用 error-message/success-message div 的场景 */
+            const _legacyEl = {
+                "error-message": null,
+                "success-message": null,
+            };
+
+            /* ── Auth ───────────────────────────────────────────────── */
+            function logout() {
+                localStorage.removeItem("jwt_token");
+                localStorage.removeItem("user_info");
+                window.location.href = "/login";
+            }
+
+            function checkAuth() {
+                const token = localStorage.getItem("jwt_token");
+                const info = localStorage.getItem("user_info");
+                if (!token || !info) {
+                    window.location.href = "/login";
+                    return null;
+                }
+                return JSON.parse(info);
+            }
+
+            /* ── 动态填充导航栏用户信息 ─────────────────────────────── */
+            document.addEventListener("DOMContentLoaded", function () {
+                const token = localStorage.getItem("jwt_token");
+                const info = localStorage.getItem("user_info");
+                if (!token || !info) return;
+                const user = JSON.parse(info);
+                const navEnd = document.getElementById("nav-end");
+                /* 若服务端已渲染用户信息则跳过 */
+                if (navEnd && !navEnd.querySelector(".nav-user")) {
+                    navEnd.innerHTML =
+                        '<span class="nav-user">' +
+                        escapeHtml(user.username) +
+                        "</span>" +
+                        '<button class="nav-logout" onclick="logout()">退出</button>';
+                }
+            });
+
+            /* ── 工具函数 ────────────────────────────────────────────── */
+            function escapeHtml(s) {
+                return String(s)
+                    .replace(/&/g, "&amp;")
+                    .replace(/</g, "&lt;")
+                    .replace(/>/g, "&gt;")
+                    .replace(/"/g, "&quot;");
+            }
+        </script>
+        {% block extra_js %}{% endblock %}
+    </body>
 </html>

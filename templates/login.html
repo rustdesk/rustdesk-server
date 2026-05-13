@@ -1,165 +1,179 @@
-{% extends "layout.html" %}
-
-{% block title %}用户登录 - {% endblock %}
-
-{% block nav_links %}
-<a href="/">首页</a>
+{% extends "layout.html" %} {% block title %}用户登录 - {% endblock %} {% block
+nav_links %}
 <a href="/login" class="active">登录</a>
 <a href="/register">注册</a>
-{% endblock %}
-
-{% block extra_css %}
+{% endblock %} {% block extra_css %}
 <style>
-    .login-container {
-        background: white;
-        padding: 2rem;
-        border-radius: 10px;
-        box-shadow: 0 15px 35px rgba(0, 0, 0, 0.1);
-        width: 100%;
-        max-width: 400px;
-        margin: 2rem auto;
-    }
-    
-    .login-header {
-        text-align: center;
-        margin-bottom: 2rem;
-    }
-    
-    .login-header h1 {
-        color: #333;
-        font-size: 2rem;
-        margin-bottom: 0.5rem;
-    }
-    
-    .login-header p {
-        color: #666;
-        font-size: 0.9rem;
-    }
-    
-    .register-link {
-        text-align: center;
-        margin-top: 1.5rem;
-        color: #666;
-    }
-    
-    .register-link a {
-        color: #667eea;
-        text-decoration: none;
-        font-weight: 500;
-    }
-    
-    .register-link a:hover {
-        text-decoration: underline;
-    }
-    
-    .forgot-link {
-        text-align: center;
-        margin-top: 1rem;
-    }
-    
-    .forgot-link a {
-        color: #667eea;
-        text-decoration: none;
-        font-size: 0.9rem;
-    }
-    
-    .forgot-link a:hover {
-        text-decoration: underline;
+    /* 让 auth 页撑满视口，覆盖 .page 默认内边距 */
+    .page {
+        padding: 0;
     }
 
-    .field-hint {
-        margin: 0.4rem 0 0;
-        font-size: 0.8rem;
-        color: #777;
-        line-height: 1.4;
+    .auth-wrap {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: calc(100vh - var(--nav-h));
+        padding: 24px;
     }
-    .field-hint code {
-        font-size: 0.75rem;
-        background: #f0f0f0;
-        padding: 0.1rem 0.25rem;
-        border-radius: 3px;
+
+    .auth-card {
+        background: var(--surface);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow-l);
+        padding: 40px 36px;
+        width: 100%;
+        max-width: 380px;
+    }
+
+    .auth-icon {
+        font-size: 40px;
+        margin-bottom: 16px;
+        display: block;
+        text-align: center;
+    }
+
+    .auth-title {
+        font-size: 24px;
+        font-weight: 700;
+        letter-spacing: -0.5px;
+        color: var(--text);
+        text-align: center;
+        margin-bottom: 4px;
+    }
+
+    .auth-sub {
+        font-size: 14px;
+        color: var(--text2);
+        text-align: center;
+        margin-bottom: 28px;
+    }
+
+    .btn-full {
+        width: 100%;
+        margin-top: 4px;
+        padding: 12px;
+        font-size: 15px;
+        border-radius: var(--radius-s);
+    }
+
+    .auth-links {
+        margin-top: 20px;
+        display: flex;
+        justify-content: space-between;
+        font-size: 14px;
+    }
+
+    .auth-links a {
+        color: var(--blue);
+        text-decoration: none;
+    }
+
+    .auth-links a:hover {
+        text-decoration: underline;
     }
 </style>
-{% endblock %}
+{% endblock %} {% block content %}
+<div class="auth-wrap">
+    <div class="auth-card">
+        <span class="auth-icon">🔐</span>
+        <h1 class="auth-title">欢迎回来</h1>
+        <p class="auth-sub">登录 NAT Server 管理控制台</p>
 
-{% block content %}
-<div class="login-container">
-    <div class="login-header">
-        <h1>用户登录</h1>
-        <p>欢迎使用 NAT Server</p>
-    </div>
-    
-    <form id="login-form">
-        <div class="form-group">
-            <label for="username">用户名</label>
-            <input type="text" id="username" name="username" required>
-        </div>
-        
-        <div class="form-group">
-            <label for="password">密码</label>
-            <input type="password" id="password" name="password" required>
-        </div>
+        <form id="login-form">
+            <div class="form-group">
+                <label for="username">用户名</label>
+                <input
+                    type="text"
+                    id="username"
+                    name="username"
+                    required
+                    autocomplete="username"
+                />
+            </div>
 
-        <div class="form-group">
-            <label for="device_id">设备 ID（可选）</label>
-            <input type="text" id="device_id" name="device_id" placeholder="与 RustDesk 本机 ID 一致，须已在账户下登记" autocomplete="off">
-            <p class="field-hint">填写后，登录颁发的 JWT 会绑定该设备，便于在客户端 RegisterPk 中携带 <code>user_token</code> 做中继/登记校验。</p>
+            <div class="form-group">
+                <label for="password">密码</label>
+                <input
+                    type="password"
+                    id="password"
+                    name="password"
+                    required
+                    autocomplete="current-password"
+                />
+            </div>
+
+            <div class="form-group">
+                <label for="device_id">设备 ID（可选）</label>
+                <input
+                    type="text"
+                    id="device_id"
+                    name="device_id"
+                    placeholder="与 RustDesk 本机 ID 一致，须已在账户下登记"
+                    autocomplete="off"
+                />
+                <p class="hint">
+                    填写后，登录颁发的 JWT 会绑定该设备，便于在客户端 RegisterPk
+                    中携带
+                    <code>user_token</code> 做中继/登记校验。
+                </p>
+            </div>
+
+            <button type="submit" class="btn btn-primary btn-full">登录</button>
+        </form>
+
+        <div class="auth-links">
+            <a href="/register">还没有账户？立即注册</a>
+            <a href="/forgot-password">忘记密码？</a>
         </div>
-        
-        <button type="submit" class="login-btn">登录</button>
-    </form>
-    
-    <div class="register-link">
-        还没有账户？ <a href="/register">立即注册</a>
-    </div>
-    
-    <div class="forgot-link">
-        <a href="/forgot-password">忘记密码？</a>
     </div>
 </div>
-{% endblock %}
-
-{% block extra_js %}
+{% endblock %} {% block extra_js %}
 <script>
-    document.getElementById('login-form').addEventListener('submit', async function(e) {
-        e.preventDefault();
-        
-        const username = document.getElementById('username').value;
-        const password = document.getElementById('password').value;
-        const deviceIdRaw = document.getElementById('device_id').value.trim();
-        const payload = { username, password };
-        if (deviceIdRaw) {
-            payload.device_id = deviceIdRaw;
-        }
+    document
+        .getElementById("login-form")
+        .addEventListener("submit", async function (e) {
+            e.preventDefault();
 
-        try {
-            const response = await fetch('/api/login', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(payload),
-            });
-            
-            const result = await response.json();
-            
-            if (result.success) {
-                showSuccess('登录成功！正在跳转...');
-                
-                // 保存token到localStorage
-                localStorage.setItem('jwt_token', result.data.token);
-                localStorage.setItem('user_info', JSON.stringify(result.data.user));
-                
-                // 跳转到主页或仪表板
-                setTimeout(function() {
-                    window.location.href = '/dashboard';
-                }, 1500);
-            } else {
-                showError(result.message);
+            const username = document.getElementById("username").value;
+            const password = document.getElementById("password").value;
+            const deviceIdRaw = document
+                .getElementById("device_id")
+                .value.trim();
+            const payload = { username, password };
+            if (deviceIdRaw) {
+                payload.device_id = deviceIdRaw;
             }
-        } catch (error) {
-            showError('网络错误，请重试');
-        }
-    });
+
+            try {
+                const response = await fetch("/api/login", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload),
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showSuccess("登录成功！正在跳转...");
+
+                    // 保存 token 到 localStorage
+                    localStorage.setItem("jwt_token", result.data.token);
+                    localStorage.setItem(
+                        "user_info",
+                        JSON.stringify(result.data.user),
+                    );
+
+                    // 跳转到仪表板
+                    setTimeout(function () {
+                        window.location.href = "/dashboard";
+                    }, 1500);
+                } else {
+                    showError(result.message);
+                }
+            } catch (error) {
+                showError("网络错误，请重试");
+            }
+        });
 </script>
 {% endblock %}

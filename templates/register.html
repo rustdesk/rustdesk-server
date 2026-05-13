@@ -1,139 +1,180 @@
-{% extends "layout.html" %}
-
-{% block title %}用户注册 - {% endblock %}
-
-{% block nav_links %}
-<a href="/">首页</a>
+{% extends "layout.html" %} {% block title %}用户注册 - {% endblock %} {% block
+nav_links %}
 <a href="/login">登录</a>
 <a href="/register" class="active">注册</a>
-{% endblock %}
-
-{% block extra_css %}
+{% endblock %} {% block extra_css %}
 <style>
-    .register-container {
-        background: white;
-        padding: 2rem;
-        border-radius: 10px;
-        box-shadow: 0 15px 35px rgba(0, 0, 0, 0.1);
+    /* 让 auth 页撑满视口，覆盖 .page 默认内边距 */
+    .page {
+        padding: 0;
+    }
+
+    .auth-wrap {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: calc(100vh - var(--nav-h));
+        padding: 24px;
+    }
+
+    .auth-card {
+        background: var(--surface);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow-l);
+        padding: 40px 36px;
         width: 100%;
-        max-width: 400px;
-        margin: 2rem auto;
+        max-width: 380px;
     }
-    
-    .register-header {
+
+    .auth-icon {
+        font-size: 40px;
+        margin-bottom: 16px;
+        display: block;
         text-align: center;
-        margin-bottom: 2rem;
     }
-    
-    .register-header h1 {
-        color: #333;
-        font-size: 2rem;
-        margin-bottom: 0.5rem;
-    }
-    
-    .register-header p {
-        color: #666;
-        font-size: 0.9rem;
-    }
-    
-    .login-link {
+
+    .auth-title {
+        font-size: 24px;
+        font-weight: 700;
+        letter-spacing: -0.5px;
+        color: var(--text);
         text-align: center;
-        margin-top: 1.5rem;
-        color: #666;
+        margin-bottom: 4px;
     }
-    
-    .login-link a {
-        color: #667eea;
+
+    .auth-sub {
+        font-size: 14px;
+        color: var(--text2);
+        text-align: center;
+        margin-bottom: 28px;
+    }
+
+    .btn-full {
+        width: 100%;
+        margin-top: 4px;
+        padding: 12px;
+        font-size: 15px;
+        border-radius: var(--radius-s);
+    }
+
+    .auth-footer {
+        margin-top: 20px;
+        text-align: center;
+        font-size: 14px;
+        color: var(--text2);
+    }
+
+    .auth-footer a {
+        color: var(--blue);
         text-decoration: none;
-        font-weight: 500;
     }
-    
-    .login-link a:hover {
+
+    .auth-footer a:hover {
         text-decoration: underline;
     }
 </style>
-{% endblock %}
+{% endblock %} {% block content %}
+<div class="auth-wrap">
+    <div class="auth-card">
+        <span class="auth-icon">👤</span>
+        <h1 class="auth-title">创建账户</h1>
+        <p class="auth-sub">注册 NAT Server 账户</p>
 
-{% block content %}
-<div class="register-container">
-    <div class="register-header">
-        <h1>用户注册</h1>
-        <p>创建您的 NAT Server 账户</p>
-    </div>
-    
-    <form id="register-form">
-        <div class="form-group">
-            <label for="username">用户名</label>
-            <input type="text" id="username" name="username" required>
-        </div>
-        
-        <div class="form-group">
-            <label for="email">邮箱</label>
-            <input type="email" id="email" name="email" required>
-        </div>
-        
-        <div class="form-group">
-            <label for="password">密码</label>
-            <input type="password" id="password" name="password" required>
-        </div>
-        
-        <div class="form-group">
-            <label for="confirm_password">确认密码</label>
-            <input type="password" id="confirm_password" name="confirm_password" required>
-        </div>
-        
-        <button type="submit" class="register-btn">注册</button>
-    </form>
-    
-    <div class="login-link">
-        已有账户？ <a href="/login">立即登录</a>
+        <form id="register-form">
+            <div class="form-group">
+                <label for="username">用户名</label>
+                <input
+                    type="text"
+                    id="username"
+                    name="username"
+                    required
+                    autocomplete="username"
+                />
+            </div>
+
+            <div class="form-group">
+                <label for="email">邮箱</label>
+                <input
+                    type="email"
+                    id="email"
+                    name="email"
+                    required
+                    autocomplete="email"
+                />
+            </div>
+
+            <div class="form-group">
+                <label for="password">密码</label>
+                <input
+                    type="password"
+                    id="password"
+                    name="password"
+                    required
+                    autocomplete="new-password"
+                />
+            </div>
+
+            <div class="form-group">
+                <label for="confirm_password">确认密码</label>
+                <input
+                    type="password"
+                    id="confirm_password"
+                    name="confirm_password"
+                    required
+                    autocomplete="new-password"
+                />
+            </div>
+
+            <button type="submit" class="btn btn-primary btn-full">注册</button>
+        </form>
+
+        <div class="auth-footer">已有账户？<a href="/login">立即登录</a></div>
     </div>
 </div>
-{% endblock %}
-
-{% block extra_js %}
+{% endblock %} {% block extra_js %}
 <script>
-    document.getElementById('register-form').addEventListener('submit', async function(e) {
-        e.preventDefault();
-        
-        const username = document.getElementById('username').value;
-        const email = document.getElementById('email').value;
-        const password = document.getElementById('password').value;
-        const confirm_password = document.getElementById('confirm_password').value;
-        
-        if (password !== confirm_password) {
-            showError('两次输入的密码不一致');
-            return;
-        }
-        
-        try {
-            const response = await fetch('/api/register', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ 
-                    username, 
-                    email, 
-                    password, 
-                    confirm_password 
-                }),
-            });
-            
-            const result = await response.json();
-            
-            if (result.success) {
-                showSuccess('注册成功！正在跳转到登录页面...');
-                
-                setTimeout(function() {
-                    window.location.href = '/login';
-                }, 2000);
-            } else {
-                showError(result.message);
+    document
+        .getElementById("register-form")
+        .addEventListener("submit", async function (e) {
+            e.preventDefault();
+
+            const username = document.getElementById("username").value;
+            const email = document.getElementById("email").value;
+            const password = document.getElementById("password").value;
+            const confirm_password =
+                document.getElementById("confirm_password").value;
+
+            if (password !== confirm_password) {
+                showError("两次输入的密码不一致");
+                return;
             }
-        } catch (error) {
-            showError('网络错误，请重试');
-        }
-    });
+
+            try {
+                const response = await fetch("/api/register", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        username,
+                        email,
+                        password,
+                        confirm_password,
+                    }),
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showSuccess("注册成功！正在跳转到登录页面...");
+
+                    setTimeout(function () {
+                        window.location.href = "/login";
+                    }, 2000);
+                } else {
+                    showError(result.message);
+                }
+            } catch (error) {
+                showError("网络错误，请重试");
+            }
+        });
 </script>
 {% endblock %}
