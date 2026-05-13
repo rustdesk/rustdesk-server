@@ -1,0 +1,7 @@
+[2026-05-13 14:18:50.256605 +08:00] INFO [src\main.rs:57] 数据库初始化完成: C:\Users\gento\Documents\GitHub\nat-server\db_v2.sqlite3
+[2026-05-13 14:18:50.256657 +08:00] WARN [src\main.rs:61] JWT_SECRET 环境变量未设置，使用默认密钥（生产环境请设置）
+[2026-05-13 14:18:50.257295 +08:00] INFO [src\main.rs:67] API 服务器启动在端口: 8080
+[2026-05-13 14:18:50.360121 +08:00] INFO [src\common.rs:184] Private key comes from id_ed25519
+[2026-05-13 14:18:50.360183 +08:00] INFO [src\rendezvous_server.rs:1305] Key: SSIaHWkGriXgyTcPqc12krMDtCCZqgc4SxaeNIQP9XQ=
+[2026-05-13 14:18:50.360206 +08:00] INFO [src\peer.rs:142] DB_URL=C:\Users\gento\Documents\GitHub\nat-server\db_v2.sqlite3
+[2026-05-13 14:18:50.361642 +08:00] ERROR [src\main.rs:84] API 服务器错误: task 25 panicked with message "error binding to 0.0.0.0:8080: error creating server listener: 通常每个套接字地址(协议/网络地址/端口)只允许使用一次。 (os error 10048)"

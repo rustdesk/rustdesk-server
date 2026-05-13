@@ -4,8 +4,7 @@
 use flexi_logger::*;
 use core_common::{bail, config::RENDEZVOUS_PORT, ResultType, log};
 use hbbs::common::{init_args, get_arg, get_arg_or};
-use hbbs::{web::create_web_router, api::create_api_router, RendezvousServer};
-use tokio::net::TcpListener;
+use hbbs::{web::create_web_router, RendezvousServer};
 use tokio::runtime::Runtime;
 
 const RMEM: usize = 0;
@@ -39,7 +38,7 @@ async fn main() -> ResultType<()> {
     
     // 获取数据库路径
     let db_url = std::env::var("DB_URL").unwrap_or_else(|_| {
-        let mut db = "db_v2.sqlite3".to_owned();
+        let db = "db_v2.sqlite3".to_owned();
         #[cfg(all(windows, not(debug_assertions)))]
         {
             if let Some(path) = core_common::config::Config::icon_path().parent() {

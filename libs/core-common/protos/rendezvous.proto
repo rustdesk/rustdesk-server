@@ -92,6 +92,8 @@ message RegisterPk {
   bytes pk = 3;
   string old_id = 4;
   bool no_register_device = 5;
+  // Optional JWT from /api/login (same secret as JWT_SECRET). Used to bind this RustDesk id to users.user_devices.
+  string user_token = 6;
 }
 
 message RegisterPkResponse {

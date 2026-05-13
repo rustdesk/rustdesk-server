@@ -1,19 +1,18 @@
-use crate::database::{Database, CreateUserRequest, CreateDeviceRequest, User, UserDevice};
+use crate::database::{Database, CreateUserRequest, User, UserDevice};
 use crate::database_simple::*;
 use crate::device_pages;
 use crate::device_api;
-use crate::password_reset::{forgot_password, reset_password, change_password, forgot_password_page, reset_password_page};
+use crate::password_reset::change_password;
+use crate::web::{forgot_password, forgot_password_page, reset_password, reset_password_page};
 use axum::{
-    extract::{Path, Query, Extension},
-    http::StatusCode,
-    response::{Json, IntoResponse, Html},
-    routing::{get, post, put, delete},
+    extract::{Extension, Path, Query},
+    http::{header, HeaderMap, StatusCode},
+    response::{IntoResponse, Json},
+    routing::{delete, get, post},
     Router,
-    Server,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use jsonwebtoken::{encode, EncodingKey, Header};
 use chrono::{Duration, Utc};
@@ -22,6 +21,40 @@ use chrono::{Duration, Utc};
 pub struct ApiState {
     pub db: Database,
     pub jwt_secret: String,
+}
+
+/// Resolve `users.id` from `Authorization: Bearer <jwt>` (same secret as login).
+pub(crate) fn jwt_user_id_from_headers(jwt_secret: &str, headers: &HeaderMap) -> Result<i64, StatusCode> {
+    let raw = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+    let token = if let Some(rest) = raw.strip_prefix("Bearer ") {
+        rest.trim()
+    } else {
+        raw.trim()
+    };
+    if token.is_empty() {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    jwt_sub_user_id(jwt_secret, token).map_err(|_| StatusCode::UNAUTHORIZED)
+}
+
+fn jwt_sub_user_id(secret: &str, token: &str) -> Result<i64, ()> {
+    use jsonwebtoken::{decode, DecodingKey, Validation};
+    use serde_json::Value;
+    let td = decode::<Value>(
+        token,
+        &DecodingKey::from_secret(secret.as_ref()),
+        &Validation::default(),
+    )
+    .map_err(|_| ())?;
+    let sub = td.claims.get("sub").ok_or(())?;
+    match sub {
+        Value::Number(n) => n.as_i64().ok_or(()),
+        Value::String(s) => s.trim().parse().map_err(|_| ()),
+        _ => Err(()),
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -53,6 +86,9 @@ impl<T> ApiResponse<T> {
 pub struct LoginRequest {
     pub username: String,
     pub password: String,
+    /// Optional RustDesk peer id / `user_devices.device_id` to embed `udid` (row id) in JWT for rendezvous binding.
+    #[serde(default)]
+    pub device_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -115,6 +151,9 @@ pub struct Claims {
     pub username: String,
     pub exp: i64,
     pub iat: i64,
+    /// `user_devices.id` when client selected a device at login (optional).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub udid: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -233,6 +272,11 @@ curl -X POST http://localhost:8080/api/login \
   -H "Content-Type: application/json" \
   -d '{"username": "admin", "password": "password"}'
 
+# Login with device binding (optional device_id = RustDesk ID registered in user_devices)
+curl -X POST http://localhost:8080/api/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "password", "device_id": "123456789"}'
+
 # Register
 curl -X POST http://localhost:8080/api/register \
   -H "Content-Type: application/json" \
@@ -264,12 +308,32 @@ async fn login(
             
             match state.db.verify_password(&request.password, &user.password_hash).await {
                 Ok(true) => {
+                    let udid = match request
+                        .device_id
+                        .as_ref()
+                        .map(|s| s.trim())
+                        .filter(|s| !s.is_empty())
+                    {
+                        None => None,
+                        Some(did) => match state.db.get_user_device_row_id(user.id, did).await {
+                            Ok(Some(id)) => Some(id),
+                            Ok(None) => {
+                                return Ok(Json(ApiResponse::error(
+                                    "指定的设备不属于当前用户或未激活".to_string(),
+                                )));
+                            }
+                            Err(_) => {
+                                return Ok(Json(ApiResponse::error("查询设备失败".to_string())));
+                            }
+                        },
+                    };
                     let expiration = Utc::now() + Duration::hours(24);
                     let claims = Claims {
                         sub: user.id.to_string(),
                         username: user.username.clone(),
                         exp: expiration.timestamp(),
                         iat: Utc::now().timestamp(),
+                        udid,
                     };
                     
                     let token = encode(
@@ -428,8 +492,13 @@ pub async fn delete_user(
 
 pub async fn get_user_devices(
     Extension(state): Extension<ApiState>,
+    headers: HeaderMap,
     Path(user_id): Path<i64>,
 ) -> Result<Json<ApiResponse<Vec<DeviceInfo>>>, StatusCode> {
+    let caller = jwt_user_id_from_headers(&state.jwt_secret, &headers)?;
+    if caller != user_id {
+        return Err(StatusCode::FORBIDDEN);
+    }
     match state.db.get_user_devices_simple(user_id).await {
         Ok(devices) => {
             let device_infos: Vec<DeviceInfo> = devices.into_iter().map(|d| d.into()).collect();
@@ -441,8 +510,13 @@ pub async fn get_user_devices(
 
 pub async fn remove_device(
     Extension(state): Extension<ApiState>,
+    headers: HeaderMap,
     Path((user_id, device_id)): Path<(i64, String)>,
 ) -> Result<Json<ApiResponse<()>>, StatusCode> {
+    let caller = jwt_user_id_from_headers(&state.jwt_secret, &headers)?;
+    if caller != user_id {
+        return Err(StatusCode::FORBIDDEN);
+    }
     match state.db.remove_device_from_user_simple(user_id, &device_id).await {
         Ok(_) => Ok(Json(ApiResponse::success(()))),
         Err(e) => Ok(Json(ApiResponse::<()>::error(format!("移除设备失败: {}", e)))),

@@ -4,6 +4,7 @@ use sqlx::{
     sqlite::SqliteConnectOptions, ConnectOptions, Connection, Error as SqlxError, SqliteConnection, Row,
 };
 use std::{ops::DerefMut, str::FromStr};
+use uuid::Uuid;
 //use sqlx::postgres::PgPoolOptions;
 //use sqlx::mysql::MySqlPoolOptions;
 
@@ -45,6 +46,10 @@ pub struct Peer {
     pub info: String,
     pub status: Option<i64>,
     pub created_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// `users.id` when bound via RegisterPk + JWT
+    pub bound_user_id: Option<i64>,
+    /// `user_devices.id` (PK) when bound
+    pub bound_device_row_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -107,8 +112,9 @@ impl Database {
     async fn create_tables(&self) -> ResultType<()> {
         let mut conn = self.pool.get().await?;
         
-        // 创建 peer 表（原有功能）
-        sqlx::query("
+        // peer 表：先创建与上游兼容的基础结构（便于旧库升级），再追加列与索引
+        sqlx::query(
+            "
             create table if not exists peer (
                 guid blob primary key not null,
                 id varchar(100) not null,
@@ -124,9 +130,33 @@ impl Database {
             create index if not exists index_peer_user on peer (user);
             create index if not exists index_peer_created_at on peer (created_at);
             create index if not exists index_peer_status on peer (status);
-        ")
+        ",
+        )
         .execute(&mut *conn)
         .await?;
+
+        for sql in [
+            "ALTER TABLE peer ADD COLUMN user_id INTEGER",
+            "ALTER TABLE peer ADD COLUMN device_id INTEGER",
+            "ALTER TABLE peer ADD COLUMN disabled boolean NOT NULL DEFAULT 0",
+        ] {
+            if let Err(e) = sqlx::query(sql).execute(&mut *conn).await {
+                let msg = e.to_string();
+                if !msg.contains("duplicate column name") {
+                    log::warn!("peer column migration `{}`: {}", sql, e);
+                }
+            }
+        }
+
+        for sql in [
+            "create index if not exists index_peer_user_id on peer (user_id)",
+            "create index if not exists index_peer_device_id on peer (device_id)",
+            "create index if not exists index_peer_disabled on peer (disabled)",
+        ] {
+            if let Err(e) = sqlx::query(sql).execute(&mut *conn).await {
+                log::warn!("peer index migration `{}`: {}", sql, e);
+            }
+        }
 
         // 创建用户表
         sqlx::query("
@@ -188,11 +218,13 @@ impl Database {
 
     pub async fn get_peer(&self, id: &str) -> ResultType<Option<Peer>> {
         let mut conn = self.pool.get().await?;
-        let row = sqlx::query("select guid, id, uuid, pk, user, status, info from peer where id = ?")
+        let row = sqlx::query(
+            "select guid, id, uuid, pk, user, status, info, created_at, user_id, device_id from peer where id = ?",
+        )
             .bind(id)
             .fetch_optional(&mut *conn)
             .await?;
-        
+
         if let Some(row) = row {
             Ok(Some(Peer {
                 guid: row.get("guid"),
@@ -203,10 +235,71 @@ impl Database {
                 info: serde_json::from_str(row.get::<&str, _>("info")).unwrap_or_default(),
                 status: row.get("status"),
                 created_at: row.get("created_at"),
+                bound_user_id: row.get::<Option<i64>, _>("user_id"),
+                bound_device_row_id: row.get::<Option<i64>, _>("device_id"),
             }))
         } else {
             Ok(None)
         }
+    }
+
+    /// Resolve `user_devices.id` for rendezvous binding: JWT may carry explicit `udid`, else match RustDesk peer id string.
+    pub async fn resolve_peer_device_binding(
+        &self,
+        user_id: i64,
+        udid_from_claim: Option<i64>,
+        rustdesk_peer_id: &str,
+    ) -> ResultType<i64> {
+        let mut conn = self.pool.get().await?;
+        if let Some(udid) = udid_from_claim {
+            let dev: Option<String> = sqlx::query_scalar(
+                "select device_id from user_devices where id = ? and user_id = ? and is_active = 1",
+            )
+            .bind(udid)
+            .bind(user_id)
+            .fetch_optional(&mut *conn)
+            .await?;
+            let dev = dev.ok_or_else(|| {
+                core_common::anyhow::anyhow!("JWT udid is not a valid device for this user")
+            })?;
+            if dev != rustdesk_peer_id {
+                return Err(core_common::anyhow::anyhow!(
+                    "JWT device does not match registering peer id"
+                )
+                .into());
+            }
+            return Ok(udid);
+        }
+        let row: Option<i64> = sqlx::query_scalar(
+            "select id from user_devices where user_id = ? and device_id = ? and is_active = 1 limit 1",
+        )
+        .bind(user_id)
+        .bind(rustdesk_peer_id)
+        .fetch_optional(&mut *conn)
+        .await?;
+        row.ok_or_else(|| {
+            core_common::anyhow::anyhow!(
+                "Peer id is not registered as a device for this user (login with device_id or add device first)"
+            )
+            .into()
+        })
+    }
+
+    /// For login: optional device row id embedded in JWT when client passes RustDesk `device_id` string.
+    pub async fn get_user_device_row_id(
+        &self,
+        user_id: i64,
+        device_id: &str,
+    ) -> ResultType<Option<i64>> {
+        let mut conn = self.pool.get().await?;
+        let row: Option<i64> = sqlx::query_scalar(
+            "select id from user_devices where user_id = ? and device_id = ? and is_active = 1 limit 1",
+        )
+        .bind(user_id)
+        .bind(device_id)
+        .fetch_optional(&mut *conn)
+        .await?;
+        Ok(row)
     }
 
     pub async fn insert_peer(
@@ -216,37 +309,66 @@ impl Database {
         pk: &[u8],
         info: &str,
     ) -> ResultType<Vec<u8>> {
-        let guid = uuid::Uuid::new_v4().as_bytes().to_vec();
         let mut conn = self.pool.get().await?;
-        sqlx::query("insert into peer(guid, id, uuid, pk, info) values(?, ?, ?, ?, ?)")
-            .bind(&guid)
-            .bind(id)
-            .bind(uuid)
-            .bind(pk)
-            .bind(info)
-            .execute(&mut *conn)
-            .await?;
-        
+        let guid = Uuid::new_v4().as_bytes().to_vec();
+        sqlx::query(
+            "insert or replace into peer(guid, id, uuid, pk, info) values (?, ?, ?, ?, ?)",
+        )
+        .bind(&guid)
+        .bind(id)
+        .bind(uuid)
+        .bind(pk)
+        .bind(info)
+        .execute(conn.deref_mut())
+        .await?;
         Ok(guid)
     }
 
-    pub async fn update_pk(
-        &self,
-        guid: &Vec<u8>,
-        id: &str,
-        pk: &[u8],
-        info: &str,
-    ) -> ResultType<()> {
+    pub async fn insert_peer_with_user(&self, id: &str, uuid: &[u8], pk: &[u8], info: &str, 
+        user_id: Option<i64>, device_id: Option<i64>) -> ResultType<Vec<u8>> {
         let mut conn = self.pool.get().await?;
-        sqlx::query("update peer set id=?, pk=?, info=? where guid=?")
-            .bind(id)
+        let guid = Uuid::new_v4().as_bytes().to_vec();
+        sqlx::query(
+            "insert or replace into peer(guid, id, uuid, pk, info, user_id, device_id) values (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&guid)
+        .bind(id)
+        .bind(uuid)
+        .bind(pk)
+        .bind(info)
+        .bind(user_id)
+        .bind(device_id)
+        .execute(conn.deref_mut())
+        .await?;
+        Ok(guid)
+    }
+
+    pub async fn update_pk(&self, guid: &[u8], id: &str, pk: &[u8], info: &str) -> ResultType<()> {
+        let mut conn = self.pool.get().await?;
+        sqlx::query("update peer set pk=?, info=? where guid=? and id=?")
             .bind(pk)
             .bind(info)
             .bind(guid)
-            .execute(&mut *conn)
+            .bind(id)
+            .execute(conn.deref_mut())
             .await?;
-        
-        log::info!("pk updated instead of insert");
+        Ok(())
+    }
+
+    pub async fn update_pk_with_user(&self, guid: &[u8], id: &str, pk: &[u8], info: &str,
+        user_id: Option<i64>, device_id: Option<i64>) -> ResultType<()> {
+        let mut conn = self.pool.get().await?;
+        sqlx::query(
+            "update peer set pk=?, info=?, user_id=?, device_id=? where guid=? and id=?",
+        )
+        .bind(pk)
+        .bind(info)
+        .bind(user_id)
+        .bind(device_id)
+        .bind(guid)
+        .bind(id)
+        .execute(conn.deref_mut())
+        .await?;
         Ok(())
     }
 
@@ -395,6 +517,17 @@ impl Database {
 
     // 设备管理方法
     pub async fn add_device_to_user(&self, request: &CreateDeviceRequest) -> ResultType<i64> {
+        // 验证用户存在且活跃
+        let user_exists: bool = sqlx::query_scalar("select count(*) from users where id = ? and is_active = 1")
+            .bind(request.user_id)
+            .fetch_one(self.pool.get().await?.deref_mut())
+            .await
+            .unwrap_or(0) > 0;
+        
+        if !user_exists {
+            return Err(core_common::anyhow::anyhow!("用户不存在或已被禁用"));
+        }
+        
         // 检查用户设备数量限制
         let device_count: i64 = sqlx::query_scalar("select count(*) from user_devices where user_id = ? and is_active = 1")
             .bind(request.user_id)
@@ -406,6 +539,18 @@ impl Database {
             return Err(core_common::anyhow::anyhow!("用户设备数量已达到上限（10个）"));
         }
         
+        // 检查设备ID是否已存在（同一用户下不能重复）
+        let device_exists: bool = sqlx::query_scalar("select count(*) from user_devices where user_id = ? and device_id = ? and is_active = 1")
+            .bind(request.user_id)
+            .bind(&request.device_id)
+            .fetch_one(self.pool.get().await?.deref_mut())
+            .await
+            .unwrap_or(0) > 0;
+        
+        if device_exists {
+            return Err(core_common::anyhow::anyhow!("设备ID已存在"));
+        }
+        
         let result = sqlx::query("insert or replace into user_devices (user_id, device_id, device_name) values (?, ?, ?)")
             .bind(request.user_id)
             .bind(&request.device_id)
@@ -415,7 +560,8 @@ impl Database {
         
         Ok(result.last_insert_rowid())
     }
-
+    
+    /// 获取用户的所有活跃设备
     pub async fn get_user_devices(&self, user_id: i64) -> ResultType<Vec<UserDevice>> {
         let mut conn = self.pool.get().await?;
         let devices = sqlx::query("select id, user_id, device_id, device_name, created_at, is_active from user_devices where user_id = ? and is_active = 1 order by created_at desc")
@@ -437,9 +583,21 @@ impl Database {
         
         Ok(device_list)
     }
+    
+    /// 验证设备是否属于指定用户
+    pub async fn validate_device_ownership(&self, user_id: i64, device_id: &str) -> ResultType<bool> {
+        let count: i64 = sqlx::query_scalar("select count(*) from user_devices where user_id = ? and device_id = ? and is_active = 1")
+            .bind(user_id)
+            .bind(device_id)
+            .fetch_one(self.pool.get().await?.deref_mut())
+            .await
+            .unwrap_or(0);
+        
+        Ok(count > 0)
+    }
 
     pub async fn remove_device_from_user(&self, user_id: i64, device_id: &str) -> ResultType<()> {
-        sqlx::query("update user_devices set is_active = 0 where user_id = ? and device_id = ?")
+        sqlx::query("update user_devices set is_active = 0, deleted_at = current_timestamp where user_id = ? and device_id = ?")
             .bind(user_id)
             .bind(device_id)
             .execute(self.pool.get().await?.deref_mut())

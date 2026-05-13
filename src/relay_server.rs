@@ -35,7 +35,7 @@ use std::{
 /// 连接使用情况类型定义
 /// 包含运行时间、总流量、最高速度和当前速度统计
 type Usage = (usize, usize, usize, usize);
-/// 全局静态变量定义
+// 全局静态变量定义
 lazy_static::lazy_static! {
     /// 存储所有连接的Peer信息
     static ref PEERS: Mutex<HashMap<String, Box<dyn StreamTrait>>> = Default::default();

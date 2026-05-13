@@ -3,7 +3,7 @@ use axum::{
     extract::{Extension, Path, Query},
     http::StatusCode,
     response::{Html, IntoResponse, Json},
-    routing::{get, post, delete},
+    routing::{get, post, delete, put},
     Router,
 };
 use askama_axum::Template;
@@ -19,6 +19,7 @@ pub struct ResetPasswordRequest {
     pub token: String,
     pub password: String,
 }
+
 use std::collections::HashMap;
 
 use crate::{
@@ -88,27 +89,20 @@ pub async fn dashboard_page(
 pub async fn devices_page(
     Extension(_state): Extension<ApiState>,
 ) -> Result<impl IntoResponse, StatusCode> {
-    // 这里应该从JWT令牌中获取用户信息，暂时使用模拟数据
-    let current_user = Some(crate::views::UserInfo {
-        id: 1,
-        username: "test_user".to_string(),
-        email: "test@example.com".to_string(),
-    });
-    
     let template = DevicesTemplate {
         title: "设备管理".to_string(),
-        current_user,
+        current_user: None,
     };
     Ok(Html(template.render().unwrap_or_else(|_| "Template error".to_string())))
 }
 
 // API handlers for password reset
 pub async fn forgot_password(
-    Extension(state): Extension<ApiState>,
+    Extension(_state): Extension<ApiState>,
     Json(request): Json<ForgotPasswordRequest>,
 ) -> Result<Json<ApiResponse<String>>, StatusCode> {
     // 检查用户是否存在
-    match state.db.get_user_by_email(&request.email).await {
+    match _state.db.get_user_by_email(&request.email).await {
         Ok(Some(_user)) => {
             // 在实际应用中，这里应该发送邮件
             // 为了演示，我们只是返回成功消息
@@ -132,7 +126,7 @@ pub async fn forgot_password(
 }
 
 pub async fn reset_password(
-    Extension(state): Extension<ApiState>,
+    Extension(_state): Extension<ApiState>,
     Json(request): Json<ResetPasswordRequest>,
 ) -> Result<Json<ApiResponse<String>>, StatusCode> {
     // 在实际应用中，这里应该验证token的有效性
@@ -161,26 +155,45 @@ pub async fn reset_password(
 
 // API handlers (保持原有逻辑)
 pub async fn login(
-    Extension(state): Extension<ApiState>,
+    Extension(_state): Extension<ApiState>,
     Json(request): Json<LoginRequest>,
 ) -> Result<Json<ApiResponse<crate::api::LoginResponse>>, StatusCode> {
-    match state.db.get_user_by_username(&request.username).await {
+    match _state.db.get_user_by_username(&request.username).await {
         Ok(Some(user)) => {
-            match state.db.verify_password(&request.password, &user.password_hash).await {
+            match _state.db.verify_password(&request.password, &user.password_hash).await {
                 Ok(true) => {
-                    // 生成JWT令牌
+                    let udid = match request
+                        .device_id
+                        .as_ref()
+                        .map(|s| s.trim())
+                        .filter(|s| !s.is_empty())
+                    {
+                        None => None,
+                        Some(did) => match _state.db.get_user_device_row_id(user.id, did).await {
+                            Ok(Some(id)) => Some(id),
+                            Ok(None) => {
+                                return Ok(Json(ApiResponse::error(
+                                    "指定的设备不属于当前用户或未激活".to_string(),
+                                )));
+                            }
+                            Err(_) => {
+                                return Ok(Json(ApiResponse::error("查询设备失败".to_string())));
+                            }
+                        },
+                    };
                     let now = chrono::Utc::now();
                     let claims = crate::api::Claims {
                         sub: user.id.to_string(),
                         username: user.username.clone(),
                         exp: (now + chrono::Duration::hours(24)).timestamp(),
                         iat: now.timestamp(),
+                        udid,
                     };
                     
                     let token = match jsonwebtoken::encode(
                         &jsonwebtoken::Header::default(),
                         &claims,
-                        &jsonwebtoken::EncodingKey::from_secret(state.jwt_secret.as_ref()),
+                        &jsonwebtoken::EncodingKey::from_secret(_state.jwt_secret.as_ref()),
                     ) {
                         Ok(token) => token,
                         Err(_) => {
@@ -213,7 +226,7 @@ pub async fn login(
 }
 
 pub async fn register(
-    Extension(state): Extension<ApiState>,
+    Extension(_state): Extension<ApiState>,
     Json(request): Json<RegisterRequest>,
 ) -> Result<Json<ApiResponse<UserInfo>>, StatusCode> {
     // 验证密码确认
@@ -222,7 +235,7 @@ pub async fn register(
     }
     
     // 检查用户名是否已存在
-    match state.db.get_user_by_username(&request.username).await {
+    match _state.db.get_user_by_username(&request.username).await {
         Ok(Some(_)) => {
             return Ok(Json(ApiResponse::<UserInfo>::error("用户名已存在".to_string())));
         }
@@ -233,7 +246,7 @@ pub async fn register(
     }
     
     // 检查邮箱是否已存在
-    match state.db.get_user_by_email(&request.email).await {
+    match _state.db.get_user_by_email(&request.email).await {
         Ok(Some(_)) => {
             return Ok(Json(ApiResponse::<UserInfo>::error("邮箱已存在".to_string())));
         }
@@ -249,10 +262,10 @@ pub async fn register(
         password: request.password.clone(),
     };
     
-    match state.db.create_user(&create_request).await {
+    match _state.db.create_user(&create_request).await {
         Ok(user_id) => {
             // 获取刚创建的用户信息
-            match state.db.get_user_by_id(user_id).await {
+            match _state.db.get_user_by_id(user_id).await {
                 Ok(Some(user)) => {
                     Ok(Json(ApiResponse::success(user.into())))
                 }

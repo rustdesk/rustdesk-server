@@ -1,6 +1,6 @@
 use crate::database::{Database, CreateUserRequest, CreateDeviceRequest, User, UserDevice};
-use core_common::{log, ResultType};
-use sqlx::{Row, SqliteConnection};
+use core_common::ResultType;
+use sqlx::Row;
 
 impl Database {
     pub async fn create_user_simple(&self, request: &CreateUserRequest) -> ResultType<i64> {

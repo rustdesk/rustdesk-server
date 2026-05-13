@@ -91,9 +91,11 @@
         background: #dc3545;
     }
     
-    .device-actions {
-        display: flex;
-        gap: 0.5rem;
+    .device-info code {
+        font-size: 0.9rem;
+        background: #f4f4f8;
+        padding: 0.15rem 0.35rem;
+        border-radius: 4px;
     }
 </style>
 {% endblock %}
@@ -119,8 +121,8 @@
         </div>
         <form id="add-device-form">
             <div class="form-group">
-                <label for="device-id">设备ID</label>
-                <input type="text" id="device-id" name="device_id" required>
+                <label for="device-id">设备 ID（RustDesk 本机 ID）</label>
+                <input type="text" id="device-id" name="device_id" required placeholder="例如 9 位数字字母 ID">
             </div>
             <div class="form-group">
                 <label for="device-name">设备名称</label>
@@ -137,178 +139,178 @@
 
 {% block extra_js %}
 <script>
-    let devices = [];
+    /** 当前登录用户在 `user_devices` 中的全部记录（一对多） */
+    let allDevices = [];
     let currentUser = null;
-    
-    // 检查用户登录状态
+
+    function escapeHtml(s) {
+        return String(s)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
+
+    function authHeaders() {
+        const token = localStorage.getItem('jwt_token');
+        return {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + token
+        };
+    }
+
     document.addEventListener('DOMContentLoaded', function() {
         currentUser = checkAuth();
         if (!currentUser) return;
-        
-        // 加载设备列表
+
+        const uh = document.querySelector('.user-info');
+        if (uh) {
+            uh.innerHTML = '<span>' + escapeHtml(currentUser.username) + '</span>'
+                + '<button type="button" class="logout-btn" onclick="logout()">退出</button>';
+        }
+
         loadDevices();
     });
-    
-    // 加载设备列表
+
     async function loadDevices() {
         try {
-            // 模拟设备数据（实际应该从API获取）
-            devices = [
-                {
-                    id: 'device001',
-                    name: '办公室电脑',
-                    status: 'online',
-                    last_seen: '2024-01-15 10:30:00',
-                    ip_address: '192.168.1.100',
-                    user_id: currentUser.id
-                },
-                {
-                    id: 'device002',
-                    name: '家庭电脑',
-                    status: 'offline',
-                    last_seen: '2024-01-14 18:45:00',
-                    ip_address: '192.168.1.101',
-                    user_id: currentUser.id
-                },
-                {
-                    id: 'device003',
-                    name: '移动设备',
-                    status: 'online',
-                    last_seen: '2024-01-15 09:15:00',
-                    ip_address: '192.168.1.102',
-                    user_id: currentUser.id
-                }
-            ];
-            
-            renderDevices();
+            const res = await fetch('/api/users/' + currentUser.id + '/devices', {
+                method: 'GET',
+                headers: authHeaders()
+            });
+            if (res.status === 401 || res.status === 403) {
+                showError('登录已失效，请重新登录');
+                setTimeout(function() { window.location.href = '/login'; }, 1500);
+                return;
+            }
+            const result = await res.json();
+            if (!result.success) {
+                showError(result.message || '加载设备列表失败');
+                return;
+            }
+            allDevices = result.data || [];
+            const term = document.getElementById('search-input').value.trim().toLowerCase();
+            renderDevices(filterDevicesByTerm(allDevices, term));
         } catch (error) {
             console.error('加载设备列表失败:', error);
             showError('加载设备列表失败');
         }
     }
-    
-    // 渲染设备列表
-    function renderDevices() {
+
+    function filterDevicesByTerm(list, term) {
+        if (!term) return list;
+        return list.filter(function(d) {
+            const id = (d.device_id || '').toLowerCase();
+            const name = (d.device_name || '').toLowerCase();
+            return id.includes(term) || name.includes(term);
+        });
+    }
+
+    function renderDevices(list) {
         const grid = document.getElementById('devices-grid');
         grid.innerHTML = '';
-        
-        devices.forEach(device => {
+
+        if (!list.length) {
+            grid.innerHTML = '<p style="text-align: center; color: #666;">暂无设备，请点击「添加设备」登记 RustDesk 本机 ID（同一用户可登记多台）</p>';
+            return;
+        }
+
+        list.forEach(function(d) {
+            const name = d.device_name || d.device_id;
+            const active = d.is_active !== false;
+            const statusClass = active ? 'online' : 'offline';
+            const statusText = active ? '已登记' : '已停用';
             const card = document.createElement('div');
             card.className = 'device-card';
-            card.innerHTML = `
-                <div class="device-info">
-                    <h3>${device.name || device.id}</h3>
-                    <div class="device-status">
-                        <div class="status-dot status-${device.status}"></div>
-                        <span>${device.status === 'online' ? '在线' : '离线'}</span>
-                    </div>
-                    <p>设备ID: ${device.id}</p>
-                    <p>IP地址: ${device.ip_address}</p>
-                    <p>最后在线: ${device.last_seen}</p>
-                </div>
-                <div class="device-actions">
-                    <button class="btn btn-small" onclick="editDevice('${device.id}')">编辑</button>
-                    <button class="btn btn-small btn-danger" onclick="removeDevice('${device.id}')">删除</button>
-                </div>
-            `;
+            const did = d.device_id;
+            card.innerHTML = ''
+                + '<div class="device-info">'
+                + '<h3>' + escapeHtml(name) + '</h3>'
+                + '<div class="device-status">'
+                + '<div class="status-dot status-' + statusClass + '"></div>'
+                + '<span>' + statusText + '</span>'
+                + '</div>'
+                + '<p>设备 ID: <code>' + escapeHtml(did) + '</code></p>'
+                + '<p>登记时间: ' + escapeHtml(d.created_at || '—') + '</p>'
+                + '</div>'
+                + '<div class="device-actions">'
+                + '<button type="button" class="btn btn-small btn-danger" data-device-id="' + escapeHtml(did) + '">删除</button>'
+                + '</div>';
+            card.querySelector('button.btn-danger').addEventListener('click', function() {
+                removeDevice(did);
+            });
             grid.appendChild(card);
         });
     }
-    
-    // 搜索设备
+
     function searchDevices() {
-        const searchTerm = document.getElementById('search-input').value.toLowerCase();
-        const filteredDevices = devices.filter(device => 
-            device.id.toLowerCase().includes(searchTerm) ||
-            (device.name && device.name.toLowerCase().includes(searchTerm))
-        );
-        
-        const grid = document.getElementById('devices-grid');
-        grid.innerHTML = '';
-        
-        if (filteredDevices.length === 0) {
-            grid.innerHTML = '<p style="text-align: center; color: #666;">没有找到匹配的设备</p>';
-            return;
-        }
-        
-        devices = filteredDevices;
-        renderDevices();
-        devices = devices.concat(filteredDevices.filter(d => !devices.includes(d)));
+        const term = document.getElementById('search-input').value.trim().toLowerCase();
+        renderDevices(filterDevicesByTerm(allDevices, term));
     }
-    
-    // 刷新设备列表
+
     function refreshDevices() {
         loadDevices();
         showSuccess('设备列表已刷新');
     }
-    
-    // 显示添加设备模态框
+
     function showAddDeviceModal() {
         document.getElementById('add-device-modal').style.display = 'flex';
     }
-    
-    // 隐藏添加设备模态框
+
     function hideAddDeviceModal() {
         document.getElementById('add-device-modal').style.display = 'none';
         document.getElementById('add-device-form').reset();
     }
-    
-    // 编辑设备
-    function editDevice(deviceId) {
-        const device = devices.find(d => d.id === deviceId);
-        if (device) {
-            // 填充表单
-            document.getElementById('device-id').value = device.id;
-            document.getElementById('device-name').value = device.name || '';
-            
-            // 显示模态框
-            showAddDeviceModal();
-        }
-    }
-    
-    // 删除设备
+
     async function removeDevice(deviceId) {
-        if (!confirm('确定要删除这个设备吗？')) {
-            return;
-        }
-        
+        if (!confirm('确定从当前用户下移除该设备吗？（软删除）')) return;
         try {
-            const token = localStorage.getItem('jwt_token');
-            
-            // 模拟删除操作（实际应该调用API）
-            devices = devices.filter(d => d.id !== deviceId);
-            renderDevices();
-            showSuccess('设备已删除');
+            const url = '/api/users/' + currentUser.id + '/devices/' + encodeURIComponent(deviceId);
+            const res = await fetch(url, { method: 'DELETE', headers: authHeaders() });
+            if (res.status === 401 || res.status === 403) {
+                showError('无权限或登录已失效');
+                return;
+            }
+            const result = await res.json();
+            if (!result.success) {
+                showError(result.message || '删除失败');
+                return;
+            }
+            showSuccess('设备已移除');
+            await loadDevices();
         } catch (error) {
             console.error('删除设备失败:', error);
             showError('删除设备失败');
         }
     }
-    
-    // 添加设备表单提交
+
     document.getElementById('add-device-form').addEventListener('submit', async function(e) {
         e.preventDefault();
-        
-        const deviceId = document.getElementById('device-id').value;
-        const deviceName = document.getElementById('device-name').value;
-        
+        const deviceId = document.getElementById('device-id').value.trim();
+        const deviceNameRaw = document.getElementById('device-name').value.trim();
+        if (!deviceId) {
+            showError('请填写设备 ID');
+            return;
+        }
+        const body = { device_id: deviceId, device_name: deviceNameRaw || null };
         try {
-            const token = localStorage.getItem('jwt_token');
-            
-            // 模拟添加设备操作（实际应该调用API）
-            const newDevice = {
-                id: deviceId,
-                name: deviceName || deviceId,
-                status: 'offline',
-                last_seen: new Date().toLocaleString(),
-                ip_address: '未知',
-                user_id: currentUser.id
-            };
-            
-            devices.unshift(newDevice);
-            renderDevices();
+            const res = await fetch('/api/devices', {
+                method: 'POST',
+                headers: authHeaders(),
+                body: JSON.stringify(body)
+            });
+            if (res.status === 401 || res.status === 403) {
+                showError('无权限或登录已失效');
+                return;
+            }
+            const result = await res.json();
+            if (!result.success) {
+                showError(result.message || '添加失败');
+                return;
+            }
             hideAddDeviceModal();
             showSuccess('设备已添加');
+            await loadDevices();
         } catch (error) {
             console.error('添加设备失败:', error);
             showError('添加设备失败');

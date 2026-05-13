@@ -61,12 +61,14 @@ pub(crate) struct Peer {
     pub(crate) uuid: Bytes,
     /// 公钥字节数据
     pub(crate) pk: Bytes,
-    // 用户信息（已注释）
-    // pub(crate) user: Option<Vec<u8>>,
+    /// 关联的用户ID
+    pub(crate) user_id: Option<i64>,
+    /// 关联的设备ID
+    pub(crate) device_id: Option<i64>,
     /// Peer基本信息
     pub(crate) info: PeerInfo,
-    // 是否禁用（已注释）
-    // pub(crate) disabled: bool,
+    /// 是否被禁用
+    pub(crate) disabled: bool,
     /// 公钥注册频率和最后注册时间
     pub(crate) reg_pk: (u32, Instant), // how often register_pk
 }
@@ -85,12 +87,14 @@ impl Default for Peer {
             uuid: Bytes::new(),
             // 默认空公钥
             pk: Bytes::new(),
+            // 默认用户ID为空
+            user_id: None,
+            // 默认设备ID为空
+            device_id: None,
             // 默认Peer信息
             info: Default::default(),
-            // 默认用户信息（已注释）
-            // user: None,
-            // 默认不禁用（已注释）
-            // disabled: false,
+            // 默认不禁用
+            disabled: false,
             // 默认公钥注册频率为0，最后注册时间为过期时间
             reg_pk: (0, get_expired_time()),
         }
@@ -117,7 +121,7 @@ impl PeerMap {
     pub(crate) async fn new() -> ResultType<Self> {
         // 从环境变量获取数据库URL，或使用默认值
         let db = std::env::var("DB_URL").unwrap_or({
-            let mut db = "db_v2.sqlite3".to_owned();
+            let db = "db_v2.sqlite3".to_owned();
             // Windows平台配置
             #[cfg(all(windows, not(debug_assertions)))]
             {
@@ -146,7 +150,7 @@ impl PeerMap {
         Ok(pm)
     }
 
-    /// 更新Peer的公钥信息
+    /// 更新Peer的公钥信息并集成用户认证
     /// # 参数
     /// * `id` - Peer ID
     /// * `peer` - Peer锁实例
@@ -154,6 +158,7 @@ impl PeerMap {
     /// * `uuid` - UUID字节数据
     /// * `pk` - 公钥字节数据
     /// * `ip` - IP地址字符串
+    /// * `user_token` - 用户认证令牌（可选）
     /// # 返回值
     /// 返回注册结果
     #[inline]
@@ -165,9 +170,44 @@ impl PeerMap {
         uuid: Bytes,
         pk: Bytes,
         ip: String,
+        user_token: Option<&str>,
     ) -> register_pk_response::Result {
         // 记录更新操作
         log::info!("update_pk {} {:?} {:?} {:?}", id, addr, uuid, pk);
+
+        let token_trimmed = user_token.and_then(|t| {
+            let x = t.trim();
+            if x.is_empty() {
+                None
+            } else {
+                Some(x)
+            }
+        });
+
+        let require_jwt = std::env::var("REQUIRE_PEER_JWT")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        if require_jwt && token_trimmed.is_none() {
+            log::warn!(
+                "RegisterPk rejected: REQUIRE_PEER_JWT is set but user_token is missing for peer {}",
+                id
+            );
+            return register_pk_response::Result::SERVER_ERROR;
+        }
+
+        if let Some(token) = token_trimmed {
+            match self.validate_peer_token(token, &id).await {
+                Ok((user_id, device_row_id)) => {
+                    peer.write().await.user_id = Some(user_id);
+                    peer.write().await.device_id = Some(device_row_id);
+                }
+                Err(e) => {
+                    log::warn!("JWT validation failed for peer {}: {}", id, e);
+                    return register_pk_response::Result::SERVER_ERROR;
+                }
+            }
+        }
+        
         // 更新Peer信息并获取序列化字符串和GUID
         let (info_str, guid) = {
             let mut w = peer.write().await;
@@ -187,11 +227,13 @@ impl PeerMap {
                 w.guid.clone(),
             )
         };
+        
         // 如果GUID为空，说明是新Peer，需要插入数据库
         if guid.is_empty() {
-            match self.db.insert_peer(&id, &uuid, &pk, &info_str).await {
+            match self.db.insert_peer_with_user(&id, &uuid, &pk, &info_str, 
+                peer.read().await.user_id, peer.read().await.device_id).await {
                 Err(err) => {
-                    log::error!("db.insert_peer failed: {}", err);
+                    log::error!("db.insert_peer_with_user failed: {}", err);
                     return register_pk_response::Result::SERVER_ERROR;
                 }
                 Ok(guid) => {
@@ -201,13 +243,52 @@ impl PeerMap {
             }
         } else {
             // 如果GUID不为空，更新现有Peer的公钥
-            if let Err(err) = self.db.update_pk(&guid, &id, &pk, &info_str).await {
-                log::error!("db.update_pk failed: {}", err);
+            if let Err(err) = self.db.update_pk_with_user(&guid, &id, &pk, &info_str,
+                peer.read().await.user_id, peer.read().await.device_id).await {
+                log::error!("db.update_pk_with_user failed: {}", err);
                 return register_pk_response::Result::SERVER_ERROR;
             }
             log::info!("pk updated instead of insert");
         }
         register_pk_response::Result::OK
+    }
+    
+    /// Decode login JWT and bind `RegisterPk.id` to `users` + `user_devices` (row id in JWT claim `udid` or inferred by device_id string).
+    async fn validate_peer_token(&self, token: &str, pk_peer_id: &str) -> ResultType<(i64, i64)> {
+        use jsonwebtoken::{decode, DecodingKey, Validation};
+        use serde_json::Value;
+
+        let jwt_secret = std::env::var("JWT_SECRET")
+            .unwrap_or_else(|_| "your-secret-key-change-in-production".to_string());
+
+        let token_data = decode::<Value>(
+            token,
+            &DecodingKey::from_secret(jwt_secret.as_ref()),
+            &Validation::default(),
+        )?;
+
+        let claims = token_data.claims;
+        let sub = claims
+            .get("sub")
+            .ok_or_else(|| core_common::anyhow::anyhow!("JWT missing sub"))?;
+        let user_id = match sub {
+            Value::Number(n) => n
+                .as_i64()
+                .ok_or_else(|| core_common::anyhow::anyhow!("Invalid sub"))?,
+            Value::String(s) => s
+                .trim()
+                .parse::<i64>()
+                .map_err(|_| core_common::anyhow::anyhow!("Invalid sub (expected user id)"))?,
+            _ => return Err(core_common::anyhow::anyhow!("Invalid sub type").into()),
+        };
+
+        let udid = claims.get("udid").and_then(|v| v.as_i64());
+        let device_row_id = self
+            .db
+            .resolve_peer_device_binding(user_id, udid, pk_peer_id)
+            .await?;
+
+        Ok((user_id, device_row_id))
     }
 
     /// 获取Peer信息
@@ -228,10 +309,9 @@ impl PeerMap {
                 guid: v.guid,
                 uuid: v.uuid.into(),
                 pk: v.pk.into(),
-                // user: v.user, // 用户信息（已注释）
-                // 反序列化Peer信息
+                user_id: v.bound_user_id,
+                device_id: v.bound_device_row_id,
                 info: serde_json::from_str::<PeerInfo>(&v.info).unwrap_or_default(),
-                // disabled: v.status == Some(0), // 禁用状态（已注释）
                 ..Default::default()
             };
             // 创建Peer锁实例

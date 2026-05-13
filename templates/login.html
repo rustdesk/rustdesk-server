@@ -66,6 +66,19 @@
     .forgot-link a:hover {
         text-decoration: underline;
     }
+
+    .field-hint {
+        margin: 0.4rem 0 0;
+        font-size: 0.8rem;
+        color: #777;
+        line-height: 1.4;
+    }
+    .field-hint code {
+        font-size: 0.75rem;
+        background: #f0f0f0;
+        padding: 0.1rem 0.25rem;
+        border-radius: 3px;
+    }
 </style>
 {% endblock %}
 
@@ -85,6 +98,12 @@
         <div class="form-group">
             <label for="password">密码</label>
             <input type="password" id="password" name="password" required>
+        </div>
+
+        <div class="form-group">
+            <label for="device_id">设备 ID（可选）</label>
+            <input type="text" id="device_id" name="device_id" placeholder="与 RustDesk 本机 ID 一致，须已在账户下登记" autocomplete="off">
+            <p class="field-hint">填写后，登录颁发的 JWT 会绑定该设备，便于在客户端 RegisterPk 中携带 <code>user_token</code> 做中继/登记校验。</p>
         </div>
         
         <button type="submit" class="login-btn">登录</button>
@@ -107,14 +126,19 @@
         
         const username = document.getElementById('username').value;
         const password = document.getElementById('password').value;
-        
+        const deviceIdRaw = document.getElementById('device_id').value.trim();
+        const payload = { username, password };
+        if (deviceIdRaw) {
+            payload.device_id = deviceIdRaw;
+        }
+
         try {
             const response = await fetch('/api/login', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ username, password }),
+                body: JSON.stringify(payload),
             });
             
             const result = await response.json();

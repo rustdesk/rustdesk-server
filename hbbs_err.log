@@ -1,0 +1,7 @@
+
+thread 'tokio-rt-worker' (7664) panicked at C:\Users\gento\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hyper-0.14.32\src\server\server.rs:81:13:
+error binding to 0.0.0.0:8080: error creating server listener: 通常每个套接字地址(协议/网络地址/端口)只允许使用一次。 (os error 10048)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'main' (22556) panicked at C:\Users\gento\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.52.3\src\runtime\blocking\shutdown.rs:51:21:
+Cannot drop a runtime in a context where blocking is not allowed. This happens when a runtime is dropped from within an asynchronous context.
