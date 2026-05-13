@@ -88,6 +88,8 @@ pub(crate) struct Peer {
     pub(crate) disabled: bool,
     /// 公钥注册频率和最后注册时间
     pub(crate) reg_pk: (u32, Instant), // how often register_pk
+    /// 该 Peer 使用的线路协议（proto3 / capnp）
+    pub(crate) protocol: crate::codec::Protocol,
 }
 
 /// Peer的默认实现
@@ -114,6 +116,8 @@ impl Default for Peer {
             disabled: false,
             // 默认公钥注册频率为0，最后注册时间为过期时间
             reg_pk: (0, get_expired_time()),
+            // 默认使用 proto3（兼容旧客户端）
+            protocol: crate::codec::Protocol::Proto3,
         }
     }
 }

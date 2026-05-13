@@ -48,7 +48,7 @@ regex = "1.4"
 tower-http = { version = "0.3", features = ["fs", "trace", "cors"] }
 http = "0.2"
 flexi_logger = { version = "0.22", features = ["async", "use_chrono_for_offset", "dont_minimize_extra_stacks"] }
-capnp = "0.18"
+capnp = "0.20"
 prost = "0.12"
 criterion = { version = "0.5", features = ["html_reports"] }
 ipnetwork = "0.20"
@@ -68,6 +68,7 @@ reqwest = { git = "https://github.com/rustdesk-org/reqwest", features = ["blocki
 
 [build-dependencies]
 core_common = { path = "libs/core-common" }
+capnpc = "0.20"
 
 # "libs/hbb_common",
 [workspace]

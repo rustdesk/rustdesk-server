@@ -46,8 +46,8 @@ use std::{
 /// 数据类型枚举，用于处理不同类型的消息
 #[derive(Clone, Debug)]
 enum Data {
-    /// 消息和来源地址
-    Msg(Box<RendezvousMessage>, SocketAddr),
+    /// 消息、目标地址、目标协议
+    Msg(Box<RendezvousMessage>, SocketAddr, crate::codec::Protocol),
     /// 中继服务器列表（字符串格式）
     RelayServers0(String),
     /// 中继服务器列表（结构化格式）
@@ -82,7 +82,12 @@ use once_cell::sync::Lazy;
 use tokio::sync::Mutex as TokioMutex; // differentiate if needed
 /// 打洞请求条目
 #[derive(Clone)]
-struct PunchReqEntry { tm: Instant, from_ip: String, to_ip: String, to_id: String }
+struct PunchReqEntry {
+    tm: Instant,
+    from_ip: String,
+    to_ip: String,
+    to_id: String,
+}
 /// 打洞请求列表
 static PUNCH_REQS: Lazy<TokioMutex<Vec<PunchReqEntry>>> = Lazy::new(|| TokioMutex::new(Vec::new()));
 /// 打洞请求去重时间（秒）
@@ -292,7 +297,11 @@ impl RendezvousServer {
                 }
                 Some(data) = rx.recv() => {
                     match data {
-                        Data::Msg(msg, addr) => { allow_err!(socket.send(msg.as_ref(), addr).await); }
+                        Data::Msg(msg, addr, proto) => {
+                            if let Some(bytes) = crate::codec::serialize(msg.as_ref(), proto) {
+                                allow_err!(socket.send_bytes(bytes, addr).await);
+                            }
+                        }
                         Data::RelayServers0(rs) => { self.parse_relay_servers(&rs); }
                         Data::RelayServers(rs) => { self.relay_servers = Arc::new(rs); }
                     }
@@ -362,13 +371,14 @@ impl RendezvousServer {
         socket: &mut FramedSocket,
         key: &str,
     ) -> ResultType<()> {
-        if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(bytes) {
+        let proto = crate::codec::detect(bytes);
+        if let Some(msg_in) = crate::codec::parse(bytes) {
             match msg_in.union {
                 Some(rendezvous_message::Union::RegisterPeer(rp)) => {
                     // B registered
                     if !rp.id.is_empty() {
                         log::trace!("New peer registered: {:?} {:?}", &rp.id, &addr);
-                        self.update_addr(rp.id, addr, socket).await?;
+                        self.update_addr(rp.id, addr, socket, proto).await?;
                         if self.inner.serial > rp.serial {
                             let mut msg_out = RendezvousMessage::new();
                             msg_out.set_configure_update(ConfigUpdate {
@@ -376,7 +386,11 @@ impl RendezvousServer {
                                 rendezvous_servers: (*self.rendezvous_servers).clone(),
                                 ..Default::default()
                             });
-                            socket.send(&msg_out, addr).await?;
+                            if let Some(bytes) = crate::codec::serialize(&msg_out, proto) {
+                                socket.send_bytes(bytes, addr).await?;
+                            } else {
+                                socket.send(&msg_out, addr).await?;
+                            }
                         }
                     }
                 }
@@ -395,9 +409,9 @@ impl RendezvousServer {
                     };
                     let ip = addr.ip().to_string();
                     if id.len() < 6 {
-                        return send_rk_res(socket, addr, UUID_MISMATCH).await;
+                        return send_rk_res(socket, addr, UUID_MISMATCH, proto).await;
                     } else if !self.check_ip_blocker(&ip, &id).await {
-                        return send_rk_res(socket, addr, TOO_FREQUENT).await;
+                        return send_rk_res(socket, addr, TOO_FREQUENT, proto).await;
                     }
                     let peer = self.pm.get_or(&id).await;
                     let (changed, ip_changed) = {
@@ -416,7 +430,7 @@ impl RendezvousServer {
                                         peer.pk,
                                     );
                                     drop(peer);
-                                    return send_rk_res(socket, addr, UUID_MISMATCH).await;
+                                    return send_rk_res(socket, addr, UUID_MISMATCH, proto).await;
                                 }
                             } else {
                                 log::warn!(
@@ -426,7 +440,7 @@ impl RendezvousServer {
                                     peer.uuid
                                 );
                                 drop(peer);
-                                return send_rk_res(socket, addr, UUID_MISMATCH).await;
+                                return send_rk_res(socket, addr, UUID_MISMATCH, proto).await;
                             }
                             let ip_changed = peer.info.ip != ip;
                             (
@@ -439,7 +453,7 @@ impl RendezvousServer {
                     if req_pk.1.elapsed().as_secs() > 6 {
                         req_pk.0 = 0;
                     } else if req_pk.0 > 2 {
-                        return send_rk_res(socket, addr, TOO_FREQUENT).await;
+                        return send_rk_res(socket, addr, TOO_FREQUENT, proto).await;
                     }
                     req_pk.0 += 1;
                     req_pk.1 = Instant::now();
@@ -465,25 +479,45 @@ impl RendezvousServer {
                     }
                     if changed {
                         self.pm
-                            .update_pk(id, peer, addr, rk.uuid, rk.pk, ip, user_token.as_deref())
+                            .update_pk(
+                                id.clone(),
+                                peer.clone(),
+                                addr,
+                                rk.uuid,
+                                rk.pk,
+                                ip,
+                                user_token.as_deref(),
+                            )
                             .await;
+                    }
+                    // 记录该 peer 使用的协议
+                    {
+                        peer.write().await.protocol = proto;
                     }
                     let mut msg_out = RendezvousMessage::new();
                     msg_out.set_register_pk_response(RegisterPkResponse {
                         result: register_pk_response::Result::OK.into(),
                         ..Default::default()
                     });
-                    socket.send(&msg_out, addr).await?
+                    if let Some(bytes) = crate::codec::serialize(&msg_out, proto) {
+                        socket.send_bytes(bytes, addr).await?
+                    } else {
+                        socket.send(&msg_out, addr).await?
+                    }
                 }
                 Some(rendezvous_message::Union::PunchHoleRequest(ph)) => {
                     if self.pm.is_in_memory(&ph.id).await {
-                        self.handle_udp_punch_hole_request(addr, ph, key).await?;
+                        self.handle_udp_punch_hole_request(addr, ph, key, proto)
+                            .await?;
                     } else {
                         // not in memory, fetch from db with spawn in case blocking me
                         let mut me = self.clone();
                         let key = key.to_owned();
                         tokio::spawn(async move {
-                            allow_err!(me.handle_udp_punch_hole_request(addr, ph, &key).await);
+                            allow_err!(
+                                me.handle_udp_punch_hole_request(addr, ph, &key, proto)
+                                    .await
+                            );
                         });
                     }
                 }
@@ -521,7 +555,11 @@ impl RendezvousServer {
                             url: self.inner.software_url.clone(),
                             ..Default::default()
                         });
-                        socket.send(&msg_out, addr).await?;
+                        if let Some(bytes) = crate::codec::serialize(&msg_out, proto) {
+                            socket.send_bytes(bytes, addr).await?;
+                        } else {
+                            socket.send(&msg_out, addr).await?;
+                        }
                     }
                 }
                 _ => {}
@@ -539,14 +577,18 @@ impl RendezvousServer {
         key: &str,
         ws: bool,
     ) -> bool {
-        if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(bytes) {
+        let proto = crate::codec::detect(bytes);
+        if let Some(msg_in) = crate::codec::parse(bytes) {
             match msg_in.union {
                 Some(rendezvous_message::Union::PunchHoleRequest(ph)) => {
                     // there maybe several attempt, so sink can be none
                     if let Some(sink) = sink.take() {
                         self.tcp_punch.lock().await.insert(try_into_v4(addr), sink);
                     }
-                    allow_err!(self.handle_tcp_punch_hole_request(addr, ph, key, ws).await);
+                    allow_err!(
+                        self.handle_tcp_punch_hole_request(addr, ph, key, ws, proto)
+                            .await
+                    );
                     return true;
                 }
                 Some(rendezvous_message::Union::RequestRelay(mut rf)) => {
@@ -558,8 +600,13 @@ impl RendezvousServer {
                         let mut msg_out = RendezvousMessage::new();
                         rf.socket_addr = AddrMangle::encode(addr).into();
                         msg_out.set_request_relay(rf);
-                        let peer_addr = peer.read().await.socket_addr;
-                        self.tx.send(Data::Msg(msg_out.into(), peer_addr)).ok();
+                        let (peer_addr, target_proto) = {
+                            let r = peer.read().await;
+                            (r.socket_addr, r.protocol)
+                        };
+                        self.tx
+                            .send(Data::Msg(msg_out.into(), peer_addr, target_proto))
+                            .ok();
                     }
                     return true;
                 }
@@ -581,7 +628,10 @@ impl RendezvousServer {
                         }
                     }
                     msg_out.set_relay_response(rr);
-                    allow_err!(self.send_to_tcp_sync(msg_out, addr_b).await);
+                    allow_err!(
+                        self.send_to_tcp_sync(msg_out, addr_b, crate::codec::Protocol::Proto3,)
+                            .await
+                    );
                 }
                 Some(rendezvous_message::Union::PunchHoleSent(phs)) => {
                     allow_err!(self.handle_hole_sent(phs, addr, None).await);
@@ -602,7 +652,7 @@ impl RendezvousServer {
                         res.cu = MessageField::from_option(Some(cu));
                     }
                     msg_out.set_test_nat_response(res);
-                    Self::send_to_sink(sink, msg_out).await;
+                    Self::send_to_sink(sink, msg_out, proto).await;
                 }
                 Some(rendezvous_message::Union::RegisterPk(rf)) => {
                     let user_token = {
@@ -614,22 +664,31 @@ impl RendezvousServer {
                         }
                     };
 
-                    let res = self.pm.update_pk(
-                        rf.id.clone(),
-                        self.pm.get_or(&rf.id).await,
-                        addr,
-                        rf.uuid.clone(),
-                        rf.pk.clone(),
-                        addr.ip().to_string(),
-                        user_token.as_deref(),
-                    ).await;
-                    
+                    let peer = self.pm.get_or(&rf.id).await;
+                    let res = self
+                        .pm
+                        .update_pk(
+                            rf.id.clone(),
+                            peer.clone(),
+                            addr,
+                            rf.uuid.clone(),
+                            rf.pk.clone(),
+                            addr.ip().to_string(),
+                            user_token.as_deref(),
+                        )
+                        .await;
+
+                    // 记录 peer 协议
+                    {
+                        peer.write().await.protocol = proto;
+                    }
+
                     let mut msg_out = RendezvousMessage::new();
                     msg_out.set_register_pk_response(RegisterPkResponse {
                         result: res.into(),
                         ..Default::default()
                     });
-                    Self::send_to_sink(sink, msg_out).await;
+                    Self::send_to_sink(sink, msg_out, proto).await;
                 }
                 _ => {}
             }
@@ -643,6 +702,7 @@ impl RendezvousServer {
         id: String,
         socket_addr: SocketAddr,
         socket: &mut FramedSocket,
+        proto: crate::codec::Protocol,
     ) -> ResultType<()> {
         let (request_pk, ip_change) = if let Some(old) = self.pm.get_in_memory(&id).await {
             let mut old = old.write().await;
@@ -656,6 +716,7 @@ impl RendezvousServer {
             if !request_pk {
                 old.socket_addr = socket_addr;
                 old.last_reg_time = Instant::now();
+                old.protocol = proto;
             }
             let ip_change = if ip_change && old.reg_pk.0 <= 2 {
                 Some(if old.socket_addr.port() == 0 {
@@ -678,7 +739,11 @@ impl RendezvousServer {
             request_pk,
             ..Default::default()
         });
-        socket.send(&msg_out, socket_addr).await
+        if let Some(bytes) = crate::codec::serialize(&msg_out, proto) {
+            socket.send_bytes(bytes, socket_addr).await
+        } else {
+            socket.send(&msg_out, socket_addr).await
+        }
     }
 
     #[inline]
@@ -708,9 +773,14 @@ impl RendezvousServer {
         }
         msg_out.set_punch_hole_response(p);
         if let Some(socket) = socket {
-            socket.send(&msg_out, addr_a).await?;
+            if let Some(bytes) = crate::codec::serialize(&msg_out, crate::codec::Protocol::Proto3) {
+                socket.send_bytes(bytes, addr_a).await?;
+            } else {
+                socket.send(&msg_out, addr_a).await?;
+            }
         } else {
-            self.send_to_tcp(msg_out, addr_a).await;
+            self.send_to_tcp(msg_out, addr_a, crate::codec::Protocol::Proto3)
+                .await;
         }
         Ok(())
     }
@@ -740,9 +810,14 @@ impl RendezvousServer {
         p.set_is_local(true);
         msg_out.set_punch_hole_response(p);
         if let Some(socket) = socket {
-            socket.send(&msg_out, addr_a).await?;
+            if let Some(bytes) = crate::codec::serialize(&msg_out, crate::codec::Protocol::Proto3) {
+                socket.send_bytes(bytes, addr_a).await?;
+            } else {
+                socket.send(&msg_out, addr_a).await?;
+            }
         } else {
-            self.send_to_tcp(msg_out, addr_a).await;
+            self.send_to_tcp(msg_out, addr_a, crate::codec::Protocol::Proto3)
+                .await;
         }
         Ok(())
     }
@@ -754,16 +829,24 @@ impl RendezvousServer {
         ph: PunchHoleRequest,
         key: &str,
         ws: bool,
-    ) -> ResultType<(RendezvousMessage, Option<SocketAddr>)> {
+    ) -> ResultType<(
+        RendezvousMessage,
+        Option<SocketAddr>,
+        crate::codec::Protocol,
+    )> {
         let mut ph = ph;
         if !key.is_empty() && ph.licence_key != key {
-            log::warn!("Authentication failed from {} for peer {} - invalid key", addr, ph.id);
+            log::warn!(
+                "Authentication failed from {} for peer {} - invalid key",
+                addr,
+                ph.id
+            );
             let mut msg_out = RendezvousMessage::new();
             msg_out.set_punch_hole_response(PunchHoleResponse {
                 failure: punch_hole_response::Failure::LICENSE_MISMATCH.into(),
                 ..Default::default()
             });
-            return Ok((msg_out, None));
+            return Ok((msg_out, None, crate::codec::Protocol::Proto3));
         }
         let id = ph.id;
         // punch hole request from A, relay to B,
@@ -772,9 +855,13 @@ impl RendezvousServer {
         // because punch hole won't work if in the same intranet,
         // all routers will drop such self-connections.
         if let Some(peer) = self.pm.get(&id).await {
-            let (elapsed, peer_addr) = {
+            let (elapsed, peer_addr, target_proto) = {
                 let r = peer.read().await;
-                (r.last_reg_time.elapsed().as_millis() as i32, r.socket_addr)
+                (
+                    r.last_reg_time.elapsed().as_millis() as i32,
+                    r.socket_addr,
+                    r.protocol,
+                )
             };
             if elapsed >= REG_TIMEOUT {
                 let mut msg_out = RendezvousMessage::new();
@@ -782,9 +869,9 @@ impl RendezvousServer {
                     failure: punch_hole_response::Failure::OFFLINE.into(),
                     ..Default::default()
                 });
-                return Ok((msg_out, None));
+                return Ok((msg_out, None, crate::codec::Protocol::Proto3));
             }
-            
+
             // record punch hole request (from addr -> peer id/peer_addr)
             {
                 let from_ip = try_into_v4(addr).ip().to_string();
@@ -792,13 +879,23 @@ impl RendezvousServer {
                 let to_id_clone = id.clone();
                 let mut lock = PUNCH_REQS.lock().await;
                 let mut dup = false;
-                for e in lock.iter().rev().take(30) { // only check recent tail subset for speed
+                for e in lock.iter().rev().take(30) {
+                    // only check recent tail subset for speed
                     if e.from_ip == from_ip && e.to_id == to_id_clone {
-                        if e.tm.elapsed().as_secs() < PUNCH_REQ_DEDUPE_SEC { dup = true; }
+                        if e.tm.elapsed().as_secs() < PUNCH_REQ_DEDUPE_SEC {
+                            dup = true;
+                        }
                         break;
                     }
                 }
-                if !dup { lock.push(PunchReqEntry { tm: Instant::now(), from_ip, to_ip, to_id: to_id_clone }); }
+                if !dup {
+                    lock.push(PunchReqEntry {
+                        tm: Instant::now(),
+                        from_ip,
+                        to_ip,
+                        to_id: to_id_clone,
+                    });
+                }
             }
 
             let mut msg_out = RendezvousMessage::new();
@@ -847,14 +944,14 @@ impl RendezvousServer {
                     ..Default::default()
                 });
             }
-            Ok((msg_out, Some(peer_addr)))
+            Ok((msg_out, Some(peer_addr), target_proto))
         } else {
             let mut msg_out = RendezvousMessage::new();
             msg_out.set_punch_hole_response(PunchHoleResponse {
                 failure: punch_hole_response::Failure::ID_NOT_EXIST.into(),
                 ..Default::default()
             });
-            Ok((msg_out, None))
+            Ok((msg_out, None, crate::codec::Protocol::Proto3))
         }
     }
 
@@ -888,24 +985,38 @@ impl RendezvousServer {
     }
 
     #[inline]
-    async fn send_to_tcp(&mut self, msg: RendezvousMessage, addr: SocketAddr) {
+    async fn send_to_tcp(
+        &mut self,
+        msg: RendezvousMessage,
+        addr: SocketAddr,
+        proto: crate::codec::Protocol,
+    ) {
         let mut tcp = self.tcp_punch.lock().await.remove(&try_into_v4(addr));
         tokio::spawn(async move {
-            Self::send_to_sink(&mut tcp, msg).await;
+            Self::send_to_sink(&mut tcp, msg, proto).await;
         });
     }
 
     #[inline]
-    async fn send_to_sink(sink: &mut Option<Sink>, msg: RendezvousMessage) {
+    async fn send_to_sink(
+        sink: &mut Option<Sink>,
+        msg: RendezvousMessage,
+        proto: crate::codec::Protocol,
+    ) {
         if let Some(sink) = sink.as_mut() {
-            if let Ok(bytes) = msg.write_to_bytes() {
-                match sink {
-                    Sink::TcpStream(s) => {
-                        allow_err!(s.send(Bytes::from(bytes)).await);
-                    }
-                    Sink::Ws(ws) => {
-                        allow_err!(ws.send(tungstenite::Message::Binary(bytes)).await);
-                    }
+            let bytes = if let Some(b) = crate::codec::serialize(&msg, proto) {
+                b.to_vec()
+            } else if let Ok(b) = msg.write_to_bytes() {
+                b
+            } else {
+                return;
+            };
+            match sink {
+                Sink::TcpStream(s) => {
+                    allow_err!(s.send(Bytes::from(bytes)).await);
+                }
+                Sink::Ws(ws) => {
+                    allow_err!(ws.send(tungstenite::Message::Binary(bytes)).await);
                 }
             }
         }
@@ -916,9 +1027,10 @@ impl RendezvousServer {
         &mut self,
         msg: RendezvousMessage,
         addr: SocketAddr,
+        proto: crate::codec::Protocol,
     ) -> ResultType<()> {
         let mut sink = self.tcp_punch.lock().await.remove(&try_into_v4(addr));
-        Self::send_to_sink(&mut sink, msg).await;
+        Self::send_to_sink(&mut sink, msg, proto).await;
         Ok(())
     }
 
@@ -929,12 +1041,15 @@ impl RendezvousServer {
         ph: PunchHoleRequest,
         key: &str,
         ws: bool,
+        proto: crate::codec::Protocol,
     ) -> ResultType<()> {
-        let (msg, to_addr) = self.handle_punch_hole_request(addr, ph, key, ws).await?;
-        if let Some(addr) = to_addr {
-            self.tx.send(Data::Msg(msg.into(), addr))?;
+        let (msg, to_addr, target_proto) =
+            self.handle_punch_hole_request(addr, ph, key, ws).await?;
+        if let Some(target_addr) = to_addr {
+            self.tx
+                .send(Data::Msg(msg.into(), target_addr, target_proto))?;
         } else {
-            self.send_to_tcp_sync(msg, addr).await?;
+            self.send_to_tcp_sync(msg, addr, proto).await?;
         }
         Ok(())
     }
@@ -945,14 +1060,17 @@ impl RendezvousServer {
         addr: SocketAddr,
         ph: PunchHoleRequest,
         key: &str,
+        proto: crate::codec::Protocol,
     ) -> ResultType<()> {
-        let (msg, to_addr) = self.handle_punch_hole_request(addr, ph, key, false).await?;
+        let (msg, to_addr, target_proto) =
+            self.handle_punch_hole_request(addr, ph, key, false).await?;
         self.tx.send(Data::Msg(
             msg.into(),
             match to_addr {
-                Some(addr) => addr,
+                Some(a) => a,
                 None => addr,
             },
+            target_proto,
         ))?;
         Ok(())
     }
@@ -1120,17 +1238,27 @@ impl RendezvousServer {
                 use std::fmt::Write as _;
                 let mut lock = PUNCH_REQS.lock().await;
                 let arg = fds.next();
-                if let Some("-") = arg { lock.clear(); }
-                else {
+                if let Some("-") = arg {
+                    lock.clear();
+                } else {
                     let start = arg.and_then(|x| x.parse::<usize>().ok()).unwrap_or(0);
-                    let mut page_size = fds.next().and_then(|x| x.parse::<usize>().ok()).unwrap_or(10);
-                    if page_size == 0 { page_size = 10; }
+                    let mut page_size = fds
+                        .next()
+                        .and_then(|x| x.parse::<usize>().ok())
+                        .unwrap_or(10);
+                    if page_size == 0 {
+                        page_size = 10;
+                    }
                     for (_, e) in lock.iter().enumerate().skip(start).take(page_size) {
                         let age = e.tm.elapsed();
                         let event_system = std::time::SystemTime::now() - age;
                         let event_iso = chrono::DateTime::<chrono::Utc>::from(event_system)
                             .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-                        let _ = writeln!(res, "{} {} -> {}@{}", event_iso, e.from_ip, e.to_id, e.to_ip);
+                        let _ = writeln!(
+                            res,
+                            "{} {} -> {}@{}",
+                            event_iso, e.from_ip, e.to_id, e.to_ip
+                        );
                     }
                 }
             }
@@ -1188,7 +1316,7 @@ impl RendezvousServer {
         tokio::spawn(async move {
             let mut stream = stream;
             if let Some(Ok(bytes)) = stream.next_timeout(30_000).await {
-                if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(&bytes) {
+                if let Some(msg_in) = crate::codec::parse(&bytes) {
                     match msg_in.union {
                         Some(rendezvous_message::Union::TestNatRequest(_)) => {
                             let mut msg_out = RendezvousMessage::new();
@@ -1397,7 +1525,7 @@ async fn test_hbbs(addr: SocketAddr) -> ResultType<()> {
               socket.send(&msg_out, addr).await?;
           }
           Some(Ok((bytes, _))) = socket.next() => {
-              if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(&bytes) {
+              if let Some(msg_in) = crate::codec::parse(&bytes) {
                  log::trace!("Recv {:?} of test_hbbs", msg_in);
                  last_time_recv = Instant::now();
               }
@@ -1411,13 +1539,18 @@ async fn send_rk_res(
     socket: &mut FramedSocket,
     addr: SocketAddr,
     res: register_pk_response::Result,
+    proto: crate::codec::Protocol,
 ) -> ResultType<()> {
     let mut msg_out = RendezvousMessage::new();
     msg_out.set_register_pk_response(RegisterPkResponse {
         result: res.into(),
         ..Default::default()
     });
-    socket.send(&msg_out, addr).await
+    if let Some(bytes) = crate::codec::serialize(&msg_out, proto) {
+        socket.send_bytes(bytes, addr).await
+    } else {
+        socket.send(&msg_out, addr).await
+    }
 }
 
 async fn create_udp_listener(port: i32, rmem: usize) -> ResultType<FramedSocket> {

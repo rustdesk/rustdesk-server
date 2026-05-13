@@ -128,6 +128,16 @@ impl FramedSocket {
         Ok(())
     }
 
+    /// 发送动态字节（用于 Cap'n Proto 等动态生成协议的响应）
+    #[inline]
+    pub async fn send_bytes(&mut self, bytes: Bytes, addr: SocketAddr) -> ResultType<()> {
+        match self {
+            Self::Direct(f) => f.send((bytes, addr)).await?,
+            Self::ProxySocks(f) => f.send((bytes, TargetAddr::Ip(addr))).await?,
+        }
+        Ok(())
+    }
+
     #[inline]
     pub async fn next(&mut self) -> Option<ResultType<(BytesMut, TargetAddr<'static>)>> {
         match self {
