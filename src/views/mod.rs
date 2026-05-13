@@ -7,6 +7,7 @@ pub struct UserInfo {
     pub id: i64,
     pub username: String,
     pub email: String,
+    pub role: String,
 }
 
 #[derive(Template)]
@@ -55,6 +56,13 @@ pub struct DashboardTemplate {
 #[derive(Template)]
 #[template(path = "devices.html")]
 pub struct DevicesTemplate {
+    pub title: String,
+    pub current_user: Option<UserInfo>,
+}
+
+#[derive(Template)]
+#[template(path = "users.html")]
+pub struct UsersTemplate {
     pub title: String,
     pub current_user: Option<UserInfo>,
 }

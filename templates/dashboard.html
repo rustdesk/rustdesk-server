@@ -5,7 +5,7 @@
 {% block nav_links %}
 <a href="/dashboard" class="active">控制台</a>
 <a href="/devices">设备管理</a>
-<a href="/users">用户管理</a>
+<a href="/users" class="nav-admin-only" style="display:none">用户管理</a>
 <a href="/monitor">连接监控</a>
 {% endblock %}
 
@@ -74,9 +74,9 @@
         <button class="btn" onclick="window.location.href='/devices'">进入设备管理</button>
     </div>
     
-    <div class="card">
+    <div class="card nav-admin-only" style="display:none">
         <h3>用户管理</h3>
-        <p>管理系统用户，查看用户信息和权限设置。</p>
+        <p>管理系统用户、角色与权限（仅管理员）。</p>
         <button class="btn" onclick="window.location.href='/users'">进入用户管理</button>
     </div>
     
@@ -100,10 +100,26 @@
     document.addEventListener('DOMContentLoaded', function() {
         const user = checkAuth();
         if (!user) return;
-        
-        // 加载统计数据
+
+        const uh = document.querySelector('.user-info');
+        if (uh) {
+            uh.innerHTML = '<span>' + escapeHtml(user.username) + '</span>'
+                + '<button type="button" class="logout-btn" onclick="logout()">退出</button>';
+        }
+        if (user.role === 'admin') {
+            document.querySelectorAll('.nav-admin-only').forEach(function(el) { el.style.display = ''; });
+        }
+
         loadStats();
     });
+
+    function escapeHtml(s) {
+        return String(s)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
     
     // 加载统计数据
     async function loadStats() {

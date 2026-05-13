@@ -1,4 +1,4 @@
-use crate::database::{Database, CreateUserRequest, CreateDeviceRequest, User, UserDevice};
+use crate::database::{Database, CreateUserRequest, CreateDeviceRequest, User, UserDevice, USER_ROLE_USER};
 use core_common::ResultType;
 use sqlx::Row;
 
@@ -8,10 +8,13 @@ impl Database {
             .map_err(|e| core_common::anyhow::anyhow!("Failed to hash password: {}", e))?;
         
         let mut conn = self.pool.get().await?;
-        let result = sqlx::query("insert into users (username, email, password_hash) values (?, ?, ?)")
+        let result = sqlx::query(
+            "insert into users (username, email, password_hash, role) values (?, ?, ?, ?)",
+        )
             .bind(&request.username)
             .bind(&request.email)
             .bind(&password_hash)
+            .bind(USER_ROLE_USER)
             .execute(&mut *conn)
             .await?;
         
@@ -20,7 +23,7 @@ impl Database {
 
     pub async fn get_user_by_id_simple(&self, user_id: i64) -> ResultType<Option<User>> {
         let mut conn = self.pool.get().await?;
-        let row = sqlx::query("select id, username, email, password_hash, created_at, updated_at, is_active from users where id = ?")
+        let row = sqlx::query("select id, username, email, password_hash, created_at, updated_at, is_active, role from users where id = ?")
             .bind(user_id)
             .fetch_optional(&mut *conn)
             .await?;
@@ -34,6 +37,7 @@ impl Database {
                 created_at: row.get("created_at"),
                 updated_at: row.get("updated_at"),
                 is_active: row.get("is_active"),
+                role: row.get::<String, _>("role"),
             }))
         } else {
             Ok(None)
@@ -42,7 +46,7 @@ impl Database {
 
     pub async fn get_user_by_username_simple(&self, username: &str) -> ResultType<Option<User>> {
         let mut conn = self.pool.get().await?;
-        let row = sqlx::query("select id, username, email, password_hash, created_at, updated_at, is_active from users where username = ?")
+        let row = sqlx::query("select id, username, email, password_hash, created_at, updated_at, is_active, role from users where username = ?")
             .bind(username)
             .fetch_optional(&mut *conn)
             .await?;
@@ -56,6 +60,7 @@ impl Database {
                 created_at: row.get("created_at"),
                 updated_at: row.get("updated_at"),
                 is_active: row.get("is_active"),
+                role: row.get::<String, _>("role"),
             }))
         } else {
             Ok(None)
@@ -64,7 +69,7 @@ impl Database {
 
     pub async fn get_user_by_email_simple(&self, email: &str) -> ResultType<Option<User>> {
         let mut conn = self.pool.get().await?;
-        let row = sqlx::query("select id, username, email, password_hash, created_at, updated_at, is_active from users where email = ?")
+        let row = sqlx::query("select id, username, email, password_hash, created_at, updated_at, is_active, role from users where email = ?")
             .bind(email)
             .fetch_optional(&mut *conn)
             .await?;
@@ -78,6 +83,7 @@ impl Database {
                 created_at: row.get("created_at"),
                 updated_at: row.get("updated_at"),
                 is_active: row.get("is_active"),
+                role: row.get::<String, _>("role"),
             }))
         } else {
             Ok(None)
@@ -89,7 +95,7 @@ impl Database {
         let offset = offset.unwrap_or(0);
         
         let mut conn = self.pool.get().await?;
-        let rows = sqlx::query("select id, username, email, password_hash, created_at, updated_at, is_active from users order by created_at desc limit ? offset ?")
+        let rows = sqlx::query("select id, username, email, password_hash, created_at, updated_at, is_active, role from users order by created_at desc limit ? offset ?")
             .bind(limit)
             .bind(offset)
             .fetch_all(&mut *conn)
@@ -105,6 +111,7 @@ impl Database {
                 created_at: row.get("created_at"),
                 updated_at: row.get("updated_at"),
                 is_active: row.get("is_active"),
+                role: row.get::<String, _>("role"),
             });
         }
         
@@ -177,7 +184,7 @@ impl Database {
 
     pub async fn get_device_owner_simple(&self, device_id: &str) -> ResultType<Option<User>> {
         let mut conn = self.pool.get().await?;
-        let row = sqlx::query("select u.id, u.username, u.email, u.password_hash, u.created_at, u.updated_at, u.is_active from users u join user_devices ud on u.id = ud.user_id where ud.device_id = ? and ud.is_active = 1 and u.is_active = 1")
+        let row = sqlx::query("select u.id, u.username, u.email, u.password_hash, u.created_at, u.updated_at, u.is_active, u.role from users u join user_devices ud on u.id = ud.user_id where ud.device_id = ? and ud.is_active = 1 and u.is_active = 1")
             .bind(device_id)
             .fetch_optional(&mut *conn)
             .await?;
@@ -191,6 +198,7 @@ impl Database {
                 created_at: row.get("created_at"),
                 updated_at: row.get("updated_at"),
                 is_active: row.get("is_active"),
+                role: row.get::<String, _>("role"),
             }))
         } else {
             Ok(None)

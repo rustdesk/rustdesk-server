@@ -52,6 +52,10 @@ pub struct Peer {
     pub bound_device_row_id: Option<i64>,
 }
 
+/// `users.role`: `admin` or `user`.
+pub const USER_ROLE_USER: &str = "user";
+pub const USER_ROLE_ADMIN: &str = "admin";
+
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct User {
     pub id: i64,
@@ -61,6 +65,7 @@ pub struct User {
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
     pub is_active: bool,
+    pub role: String,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -213,6 +218,86 @@ impl Database {
         .execute(&mut *conn)
         .await?;
 
+        self.migrate_users_add_role_column().await?;
+        self.bootstrap_admin_if_none().await?;
+
+        Ok(())
+    }
+
+    async fn migrate_users_add_role_column(&self) -> ResultType<()> {
+        let mut conn = self.pool.get().await?;
+        let sql = "ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'";
+        if let Err(e) = sqlx::query(sql).execute(&mut *conn).await {
+            let msg = e.to_string();
+            if !msg.contains("duplicate column name") {
+                log::warn!("users.role migration `{}`: {}", sql, e);
+            }
+        }
+        Ok(())
+    }
+
+    /// When no row has `role = admin`, promote one account so the server remains manageable.
+    async fn bootstrap_admin_if_none(&self) -> ResultType<()> {
+        let mut conn = self.pool.get().await?;
+        let admin_n: i64 = sqlx::query_scalar("select count(*) from users where role = 'admin'")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap_or(0);
+        if admin_n > 0 {
+            return Ok(());
+        }
+        let total: i64 = sqlx::query_scalar("select count(*) from users")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap_or(0);
+        if total == 0 {
+            return Ok(());
+        }
+        let mut promoted: u64 = 0;
+        if let Ok(name) = std::env::var("BOOTSTRAP_ADMIN_USERNAME") {
+            let name = name.trim();
+            if !name.is_empty() {
+                let r = sqlx::query("update users set role = 'admin' where username = ?")
+                    .bind(name)
+                    .execute(&mut *conn)
+                    .await?;
+                promoted = r.rows_affected();
+            }
+        }
+        if promoted == 0 {
+            sqlx::query("update users set role = 'admin' where id = (select min(id) from users)")
+                .execute(&mut *conn)
+                .await?;
+            log::warn!(
+                "No administrator found; promoted the earliest user (minimum id) to admin. \
+                 Set BOOTSTRAP_ADMIN_USERNAME to pick a specific username on first bootstrap."
+            );
+        } else {
+            log::info!("Bootstrap: assigned admin role to BOOTSTRAP_ADMIN_USERNAME");
+        }
+        Ok(())
+    }
+
+    pub async fn count_admins(&self) -> ResultType<i64> {
+        let mut conn = self.pool.get().await?;
+        let n: i64 = sqlx::query_scalar("select count(*) from users where role = 'admin'")
+            .fetch_one(&mut *conn)
+            .await?;
+        Ok(n)
+    }
+
+    pub async fn set_user_role(&self, user_id: i64, role: &str) -> ResultType<()> {
+        let role = if role == USER_ROLE_ADMIN {
+            USER_ROLE_ADMIN
+        } else {
+            USER_ROLE_USER
+        };
+        let mut conn = self.pool.get().await?;
+        sqlx::query("update users set role = ?, updated_at = current_timestamp where id = ?")
+            .bind(role)
+            .bind(user_id)
+            .execute(&mut *conn)
+            .await?;
         Ok(())
     }
 
@@ -378,10 +463,13 @@ impl Database {
             .map_err(|e| core_common::anyhow::anyhow!("Failed to hash password: {}", e))?;
         
         let mut conn = self.pool.get().await?;
-        let result = sqlx::query("insert into users (username, email, password_hash) values (?, ?, ?)")
+        let result = sqlx::query(
+            "insert into users (username, email, password_hash, role) values (?, ?, ?, ?)",
+        )
             .bind(&request.username)
             .bind(&request.email)
             .bind(&password_hash)
+            .bind(USER_ROLE_USER)
             .execute(&mut *conn)
             .await?;
         
@@ -390,7 +478,7 @@ impl Database {
 
     pub async fn get_user_by_id(&self, user_id: i64) -> ResultType<Option<User>> {
         let mut conn = self.pool.get().await?;
-        let row = sqlx::query("select id, username, email, password_hash, created_at, updated_at, is_active from users where id = ?")
+        let row = sqlx::query("select id, username, email, password_hash, created_at, updated_at, is_active, role from users where id = ?")
             .bind(user_id)
             .fetch_optional(&mut *conn)
             .await?;
@@ -404,6 +492,7 @@ impl Database {
                 created_at: row.get("created_at"),
                 updated_at: row.get("updated_at"),
                 is_active: row.get("is_active"),
+                role: row.get::<String, _>("role"),
             }))
         } else {
             Ok(None)
@@ -412,7 +501,7 @@ impl Database {
 
     pub async fn get_user_by_username(&self, username: &str) -> ResultType<Option<User>> {
         let mut conn = self.pool.get().await?;
-        let row = sqlx::query("select id, username, email, password_hash, created_at, updated_at, is_active from users where username = ?")
+        let row = sqlx::query("select id, username, email, password_hash, created_at, updated_at, is_active, role from users where username = ?")
             .bind(username)
             .fetch_optional(&mut *conn)
             .await?;
@@ -426,6 +515,7 @@ impl Database {
                 created_at: row.get("created_at"),
                 updated_at: row.get("updated_at"),
                 is_active: row.get("is_active"),
+                role: row.get::<String, _>("role"),
             }))
         } else {
             Ok(None)
@@ -434,7 +524,7 @@ impl Database {
 
     pub async fn get_user_by_email(&self, email: &str) -> ResultType<Option<User>> {
         let mut conn = self.pool.get().await?;
-        let row = sqlx::query("select id, username, email, password_hash, created_at, updated_at, is_active from users where email = ?")
+        let row = sqlx::query("select id, username, email, password_hash, created_at, updated_at, is_active, role from users where email = ?")
             .bind(email)
             .fetch_optional(&mut *conn)
             .await?;
@@ -448,6 +538,7 @@ impl Database {
                 created_at: row.get("created_at"),
                 updated_at: row.get("updated_at"),
                 is_active: row.get("is_active"),
+                role: row.get::<String, _>("role"),
             }))
         } else {
             Ok(None)
@@ -493,7 +584,7 @@ impl Database {
         let offset = offset.unwrap_or(0);
         
         let mut conn = self.pool.get().await?;
-        let users = sqlx::query("select id, username, email, password_hash, created_at, updated_at, is_active from users order by created_at desc limit ? offset ?")
+        let users = sqlx::query("select id, username, email, password_hash, created_at, updated_at, is_active, role from users order by created_at desc limit ? offset ?")
             .bind(limit)
             .bind(offset)
             .fetch_all(&mut *conn)
@@ -509,6 +600,7 @@ impl Database {
                 created_at: row.get("created_at"),
                 updated_at: row.get("updated_at"),
                 is_active: row.get("is_active"),
+                role: row.get::<String, _>("role"),
             });
         }
         
@@ -607,7 +699,7 @@ impl Database {
 
     pub async fn get_device_owner(&self, device_id: &str) -> ResultType<Option<User>> {
         let mut conn = self.pool.get().await?;
-        let user = sqlx::query("select u.id, u.username, u.email, u.password_hash, u.created_at, u.updated_at, u.is_active from users u join user_devices ud on u.id = ud.user_id where ud.device_id = ? and ud.is_active = 1 and u.is_active = 1")
+        let user = sqlx::query("select u.id, u.username, u.email, u.password_hash, u.created_at, u.updated_at, u.is_active, u.role from users u join user_devices ud on u.id = ud.user_id where ud.device_id = ? and ud.is_active = 1 and u.is_active = 1")
             .bind(device_id)
             .fetch_optional(&mut *conn)
             .await?;
@@ -621,6 +713,7 @@ impl Database {
                 created_at: row.get("created_at"),
                 updated_at: row.get("updated_at"),
                 is_active: row.get("is_active"),
+                role: row.get::<String, _>("role"),
             }))
         } else {
             Ok(None)

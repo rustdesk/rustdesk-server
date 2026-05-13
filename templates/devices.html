@@ -5,7 +5,7 @@
 {% block nav_links %}
 <a href="/dashboard">控制台</a>
 <a href="/devices" class="active">设备管理</a>
-<a href="/users">用户管理</a>
+<a href="/users" class="nav-admin-only" style="display:none">用户管理</a>
 <a href="/monitor">连接监控</a>
 {% endblock %}
 
@@ -167,6 +167,9 @@
         if (uh) {
             uh.innerHTML = '<span>' + escapeHtml(currentUser.username) + '</span>'
                 + '<button type="button" class="logout-btn" onclick="logout()">退出</button>';
+        }
+        if (currentUser.role === 'admin') {
+            document.querySelectorAll('.nav-admin-only').forEach(function(el) { el.style.display = ''; });
         }
 
         loadDevices();

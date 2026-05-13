@@ -1,5 +1,4 @@
-use crate::database::{Database, CreateUserRequest, User, UserDevice};
-use crate::database_simple::*;
+use crate::database::{Database, CreateUserRequest, User, UserDevice, USER_ROLE_ADMIN, USER_ROLE_USER};
 use crate::device_pages;
 use crate::device_api;
 use crate::password_reset::change_password;
@@ -8,7 +7,7 @@ use axum::{
     extract::{Extension, Path, Query},
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Json},
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
     Router,
 };
 use serde::{Deserialize, Serialize};
@@ -25,6 +24,11 @@ pub struct ApiState {
 
 /// Resolve `users.id` from `Authorization: Bearer <jwt>` (same secret as login).
 pub(crate) fn jwt_user_id_from_headers(jwt_secret: &str, headers: &HeaderMap) -> Result<i64, StatusCode> {
+    let token = extract_bearer_token(headers)?;
+    jwt_sub_user_id(jwt_secret, token).map_err(|_| StatusCode::UNAUTHORIZED)
+}
+
+fn extract_bearer_token(headers: &HeaderMap) -> Result<&str, StatusCode> {
     let raw = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
@@ -37,23 +41,33 @@ pub(crate) fn jwt_user_id_from_headers(jwt_secret: &str, headers: &HeaderMap) ->
     if token.is_empty() {
         return Err(StatusCode::UNAUTHORIZED);
     }
-    jwt_sub_user_id(jwt_secret, token).map_err(|_| StatusCode::UNAUTHORIZED)
+    Ok(token)
 }
 
-fn jwt_sub_user_id(secret: &str, token: &str) -> Result<i64, ()> {
+fn decode_claims(secret: &str, token: &str) -> Result<Claims, ()> {
     use jsonwebtoken::{decode, DecodingKey, Validation};
-    use serde_json::Value;
-    let td = decode::<Value>(
+    let td = decode::<Claims>(
         token,
         &DecodingKey::from_secret(secret.as_ref()),
         &Validation::default(),
     )
     .map_err(|_| ())?;
-    let sub = td.claims.get("sub").ok_or(())?;
-    match sub {
-        Value::Number(n) => n.as_i64().ok_or(()),
-        Value::String(s) => s.trim().parse().map_err(|_| ()),
-        _ => Err(()),
+    Ok(td.claims)
+}
+
+fn jwt_sub_user_id(secret: &str, token: &str) -> Result<i64, ()> {
+    let claims = decode_claims(secret, token)?;
+    claims
+        .sub
+        .trim()
+        .parse::<i64>()
+        .map_err(|_| ())
+}
+
+pub(crate) async fn db_user_is_admin(db: &Database, user_id: i64) -> bool {
+    match db.get_user_by_id(user_id).await {
+        Ok(Some(u)) => u.role == USER_ROLE_ADMIN,
+        _ => false,
     }
 }
 
@@ -131,6 +145,8 @@ pub struct UserInfo {
     pub email: String,
     pub created_at: String,
     pub is_active: bool,
+    /// `admin` or `user`
+    pub role: String,
 }
 
 impl From<User> for UserInfo {
@@ -141,6 +157,7 @@ impl From<User> for UserInfo {
             email: user.email,
             created_at: user.created_at.to_rfc3339(),
             is_active: user.is_active,
+            role: user.role,
         }
     }
 }
@@ -154,6 +171,12 @@ pub struct Claims {
     /// `user_devices.id` when client selected a device at login (optional).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub udid: Option<i64>,
+    #[serde(default = "default_claim_role")]
+    pub role: String,
+}
+
+fn default_claim_role() -> String {
+    USER_ROLE_USER.to_string()
 }
 
 #[derive(Debug, Deserialize)]
@@ -199,8 +222,9 @@ pub fn create_api_router(db: Database, jwt_secret: String) -> Router {
         .route("/api/forgot-password", post(forgot_password))
         .route("/api/reset-password", post(reset_password))
         .route("/api/change-password", post(change_password))
-        .route("/api/users", get(list_users)) // .post(create_user)
+        .route("/api/users", get(list_users).post(admin_create_user))
         .route("/api/users/:id", get(get_user).put(update_user).delete(delete_user))
+        .route("/api/users/:id/role", put(update_user_role))
         .route("/api/users/:id/devices", get(get_user_devices)) // .post(add_device)
         .route("/api/users/:id/devices/:device_id", delete(remove_device))
         .route("/api/devices/:device_id/owner", get(get_device_owner))
@@ -334,6 +358,11 @@ async fn login(
                         exp: expiration.timestamp(),
                         iat: Utc::now().timestamp(),
                         udid,
+                        role: if user.role == USER_ROLE_ADMIN {
+                            USER_ROLE_ADMIN.to_string()
+                        } else {
+                            USER_ROLE_USER.to_string()
+                        },
                     };
                     
                     let token = encode(
@@ -431,8 +460,13 @@ async fn register(
 
 pub async fn list_users(
     Extension(state): Extension<ApiState>,
+    headers: HeaderMap,
     Query(query): Query<ListQuery>,
 ) -> Result<Json<ApiResponse<Vec<UserInfo>>>, StatusCode> {
+    let caller = jwt_user_id_from_headers(&state.jwt_secret, &headers)?;
+    if !db_user_is_admin(&state.db, caller).await {
+        return Err(StatusCode::FORBIDDEN);
+    }
     match state.db.list_users_simple(query.limit, query.offset).await {
         Ok(users) => {
             let user_infos: Vec<UserInfo> = users.into_iter().map(|u| u.into()).collect();
@@ -444,8 +478,13 @@ pub async fn list_users(
 
 pub async fn get_user(
     Extension(state): Extension<ApiState>,
+    headers: HeaderMap,
     Path(user_id): Path<i64>,
 ) -> Result<Json<ApiResponse<UserInfo>>, StatusCode> {
+    let caller = jwt_user_id_from_headers(&state.jwt_secret, &headers)?;
+    if caller != user_id && !db_user_is_admin(&state.db, caller).await {
+        return Err(StatusCode::FORBIDDEN);
+    }
     match state.db.get_user_by_id(user_id).await {
         Ok(Some(user)) => Ok(Json(ApiResponse::success(user.into()))),
         Ok(None) => Ok(Json(ApiResponse::error("用户不存在".to_string()))),
@@ -455,9 +494,14 @@ pub async fn get_user(
 
 pub async fn update_user(
     Extension(state): Extension<ApiState>,
+    headers: HeaderMap,
     Path(user_id): Path<i64>,
     Json(mut request): Json<HashMap<String, String>>,
 ) -> Result<Json<ApiResponse<UserInfo>>, StatusCode> {
+    let caller = jwt_user_id_from_headers(&state.jwt_secret, &headers)?;
+    if caller != user_id && !db_user_is_admin(&state.db, caller).await {
+        return Err(StatusCode::FORBIDDEN);
+    }
     let username = request.remove("username");
     let email = request.remove("email");
     
@@ -482,11 +526,129 @@ pub async fn update_user(
 
 pub async fn delete_user(
     Extension(state): Extension<ApiState>,
+    headers: HeaderMap,
     Path(user_id): Path<i64>,
 ) -> Result<Json<ApiResponse<()>>, StatusCode> {
+    let caller = jwt_user_id_from_headers(&state.jwt_secret, &headers)?;
+    if caller != user_id && !db_user_is_admin(&state.db, caller).await {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    if let Ok(Some(target)) = state.db.get_user_by_id(user_id).await {
+        if target.role == USER_ROLE_ADMIN {
+            let n = state
+                .db
+                .count_admins()
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            if n <= 1 {
+                return Ok(Json(ApiResponse::error("不可删除最后一个管理员".to_string())));
+            }
+        }
+    }
     match state.db.delete_user_simple(user_id).await {
         Ok(_) => Ok(Json(ApiResponse::success(()))),
         Err(e) => Ok(Json(ApiResponse::error(format!("删除用户失败: {}", e)))),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AdminCreateUserRequest {
+    pub username: String,
+    pub email: String,
+    pub password: String,
+    pub confirm_password: String,
+}
+
+/// Create a user account (admin only). Same validation as public registration.
+pub async fn admin_create_user(
+    Extension(state): Extension<ApiState>,
+    headers: HeaderMap,
+    Json(request): Json<AdminCreateUserRequest>,
+) -> Result<Json<ApiResponse<UserInfo>>, StatusCode> {
+    let caller = jwt_user_id_from_headers(&state.jwt_secret, &headers)?;
+    if !db_user_is_admin(&state.db, caller).await {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    if request.username.trim().is_empty() {
+        return Ok(Json(ApiResponse::error("用户名不能为空".to_string())));
+    }
+    if request.email.trim().is_empty() {
+        return Ok(Json(ApiResponse::error("邮箱不能为空".to_string())));
+    }
+    if request.password.len() < 6 {
+        return Ok(Json(ApiResponse::error("密码长度至少6位".to_string())));
+    }
+    if request.password != request.confirm_password {
+        return Ok(Json(ApiResponse::error("两次输入的密码不一致".to_string())));
+    }
+    match state.db.get_user_by_username(&request.username).await {
+        Ok(Some(_)) => return Ok(Json(ApiResponse::error("用户名已存在".to_string()))),
+        Ok(None) => {}
+        Err(_) => return Ok(Json(ApiResponse::error("数据库错误".to_string()))),
+    }
+    match state.db.get_user_by_email(&request.email).await {
+        Ok(Some(_)) => return Ok(Json(ApiResponse::error("邮箱已被注册".to_string()))),
+        Ok(None) => {}
+        Err(_) => return Ok(Json(ApiResponse::error("数据库错误".to_string()))),
+    }
+    let create_request = CreateUserRequest {
+        username: request.username.clone(),
+        email: request.email.clone(),
+        password: request.password.clone(),
+    };
+    match state.db.create_user(&create_request).await {
+        Ok(user_id) => match state.db.get_user_by_id(user_id).await {
+            Ok(Some(user)) => Ok(Json(ApiResponse::success(user.into()))),
+            Ok(None) => Ok(Json(ApiResponse::error("创建用户后查询失败".to_string()))),
+            Err(_) => Ok(Json(ApiResponse::error("查询用户信息失败".to_string()))),
+        },
+        Err(_) => Ok(Json(ApiResponse::error("创建用户失败".to_string()))),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateUserRoleBody {
+    pub role: String,
+}
+
+pub async fn update_user_role(
+    Extension(state): Extension<ApiState>,
+    headers: HeaderMap,
+    Path(user_id): Path<i64>,
+    Json(body): Json<UpdateUserRoleBody>,
+) -> Result<Json<ApiResponse<UserInfo>>, StatusCode> {
+    let caller = jwt_user_id_from_headers(&state.jwt_secret, &headers)?;
+    if !db_user_is_admin(&state.db, caller).await {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    let new_role = if body.role.trim() == USER_ROLE_ADMIN {
+        USER_ROLE_ADMIN
+    } else {
+        USER_ROLE_USER
+    };
+    if new_role == USER_ROLE_USER {
+        if let Ok(Some(t)) = state.db.get_user_by_id(user_id).await {
+            if t.role == USER_ROLE_ADMIN {
+                let n = state
+                    .db
+                    .count_admins()
+                    .await
+                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+                if n <= 1 {
+                    return Ok(Json(ApiResponse::error("不可撤销最后一个管理员".to_string())));
+                }
+            }
+        }
+    }
+    state
+        .db
+        .set_user_role(user_id, new_role)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    match state.db.get_user_by_id(user_id).await {
+        Ok(Some(user)) => Ok(Json(ApiResponse::success(user.into()))),
+        Ok(None) => Ok(Json(ApiResponse::error("用户不存在".to_string()))),
+        Err(_) => Ok(Json(ApiResponse::error("数据库错误".to_string()))),
     }
 }
 
@@ -496,7 +658,7 @@ pub async fn get_user_devices(
     Path(user_id): Path<i64>,
 ) -> Result<Json<ApiResponse<Vec<DeviceInfo>>>, StatusCode> {
     let caller = jwt_user_id_from_headers(&state.jwt_secret, &headers)?;
-    if caller != user_id {
+    if caller != user_id && !db_user_is_admin(&state.db, caller).await {
         return Err(StatusCode::FORBIDDEN);
     }
     match state.db.get_user_devices_simple(user_id).await {

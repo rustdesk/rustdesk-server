@@ -120,8 +120,8 @@ impl PeerMap {
     /// 返回PeerMap实例或错误
     pub(crate) async fn new() -> ResultType<Self> {
         // 从环境变量获取数据库URL，或使用默认值
-        let db = std::env::var("DB_URL").unwrap_or({
-            let db = "db_v2.sqlite3".to_owned();
+        let mut db = std::env::var("DB_URL").unwrap_or({
+            let mut db = "db_v2.sqlite3".to_owned();
             // Windows平台配置
             #[cfg(all(windows, not(debug_assertions)))]
             {
@@ -207,7 +207,7 @@ impl PeerMap {
                 }
             }
         }
-        
+
         // 更新Peer信息并获取序列化字符串和GUID
         let (info_str, guid) = {
             let mut w = peer.write().await;
@@ -227,11 +227,21 @@ impl PeerMap {
                 w.guid.clone(),
             )
         };
-        
+
         // 如果GUID为空，说明是新Peer，需要插入数据库
         if guid.is_empty() {
-            match self.db.insert_peer_with_user(&id, &uuid, &pk, &info_str, 
-                peer.read().await.user_id, peer.read().await.device_id).await {
+            match self
+                .db
+                .insert_peer_with_user(
+                    &id,
+                    &uuid,
+                    &pk,
+                    &info_str,
+                    peer.read().await.user_id,
+                    peer.read().await.device_id,
+                )
+                .await
+            {
                 Err(err) => {
                     log::error!("db.insert_peer_with_user failed: {}", err);
                     return register_pk_response::Result::SERVER_ERROR;
@@ -243,8 +253,18 @@ impl PeerMap {
             }
         } else {
             // 如果GUID不为空，更新现有Peer的公钥
-            if let Err(err) = self.db.update_pk_with_user(&guid, &id, &pk, &info_str,
-                peer.read().await.user_id, peer.read().await.device_id).await {
+            if let Err(err) = self
+                .db
+                .update_pk_with_user(
+                    &guid,
+                    &id,
+                    &pk,
+                    &info_str,
+                    peer.read().await.user_id,
+                    peer.read().await.device_id,
+                )
+                .await
+            {
                 log::error!("db.update_pk_with_user failed: {}", err);
                 return register_pk_response::Result::SERVER_ERROR;
             }
@@ -252,7 +272,7 @@ impl PeerMap {
         }
         register_pk_response::Result::OK
     }
-    
+
     /// Decode login JWT and bind `RegisterPk.id` to `users` + `user_devices` (row id in JWT claim `udid` or inferred by device_id string).
     async fn validate_peer_token(&self, token: &str, pk_peer_id: &str) -> ResultType<(i64, i64)> {
         use jsonwebtoken::{decode, DecodingKey, Validation};

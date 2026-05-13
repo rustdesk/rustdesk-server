@@ -27,6 +27,7 @@ use crate::{
     api::{ApiState, ApiResponse, UserInfo, LoginRequest, RegisterRequest, DeviceInfo},
     views::{
         LoginTemplate, RegisterTemplate, ForgotPasswordTemplate, ResetPasswordTemplate, DashboardTemplate, DevicesTemplate,
+        UsersTemplate,
         UserInfo as LayoutUserInfo,
     },
 };
@@ -72,16 +73,9 @@ pub async fn reset_password_page(
 pub async fn dashboard_page(
     Extension(_state): Extension<ApiState>,
 ) -> Result<impl IntoResponse, StatusCode> {
-    // 这里应该从JWT令牌中获取用户信息，暂时使用模拟数据
-    let current_user = Some(crate::views::UserInfo {
-        id: 1,
-        username: "test_user".to_string(),
-        email: "test@example.com".to_string(),
-    });
-    
     let template = DashboardTemplate {
         title: "控制台".to_string(),
-        current_user,
+        current_user: None,
     };
     Ok(Html(template.render().unwrap_or_else(|_| "Template error".to_string())))
 }
@@ -91,6 +85,16 @@ pub async fn devices_page(
 ) -> Result<impl IntoResponse, StatusCode> {
     let template = DevicesTemplate {
         title: "设备管理".to_string(),
+        current_user: None,
+    };
+    Ok(Html(template.render().unwrap_or_else(|_| "Template error".to_string())))
+}
+
+pub async fn users_page(
+    Extension(_state): Extension<ApiState>,
+) -> Result<impl IntoResponse, StatusCode> {
+    let template = UsersTemplate {
+        title: "用户管理".to_string(),
         current_user: None,
     };
     Ok(Html(template.render().unwrap_or_else(|_| "Template error".to_string())))
@@ -160,6 +164,9 @@ pub async fn login(
 ) -> Result<Json<ApiResponse<crate::api::LoginResponse>>, StatusCode> {
     match _state.db.get_user_by_username(&request.username).await {
         Ok(Some(user)) => {
+            if !user.is_active {
+                return Ok(Json(ApiResponse::<crate::api::LoginResponse>::error("用户账户已被禁用".to_string())));
+            }
             match _state.db.verify_password(&request.password, &user.password_hash).await {
                 Ok(true) => {
                     let udid = match request
@@ -188,6 +195,7 @@ pub async fn login(
                         exp: (now + chrono::Duration::hours(24)).timestamp(),
                         iat: now.timestamp(),
                         udid,
+                        role: user.role.clone(),
                     };
                     
                     let token = match jsonwebtoken::encode(
@@ -296,13 +304,15 @@ pub fn create_web_router(db: Database, jwt_secret: String) -> Router {
         .route("/reset-password", get(reset_password_page))
         .route("/dashboard", get(dashboard_page))
         .route("/devices", get(devices_page))
+        .route("/users", get(users_page))
         // API路由
         .route("/api/login", post(login))
         .route("/api/register", post(register))
         .route("/api/forgot-password", post(forgot_password))
         .route("/api/reset-password", post(reset_password))
-        .route("/api/users", get(crate::api::list_users))
+        .route("/api/users", get(crate::api::list_users).post(crate::api::admin_create_user))
         .route("/api/users/:id", get(crate::api::get_user).put(crate::api::update_user).delete(crate::api::delete_user))
+        .route("/api/users/:id/role", put(crate::api::update_user_role))
         .route("/api/users/:id/devices", get(crate::api::get_user_devices))
         .route("/api/users/:id/devices/:device_id", delete(crate::api::remove_device))
         .route("/api/devices/:device_id/owner", get(crate::api::get_device_owner))
