@@ -1,0 +1,49 @@
+[package]
+name = "nat-client"
+version = "0.1.0"
+edition = "2021"
+description = "完整的内网穿透客户端，与 nat-server (hbbs/hbbr) 配合使用（含桌面 GUI）"
+authors = ["nat-server contributors"]
+build = "build.rs"
+
+[[bin]]
+name = "nat-client"
+path = "src/main.rs"
+
+[dependencies]
+# 核心通信库
+core_common = { path = "../libs/core-common" }
+
+# 序列化
+serde        = { version = "1.0", features = ["derive"] }
+serde_derive = "1.0"
+serde_json   = "1.0"
+
+# 工具
+lazy_static  = "1.5"
+once_cell    = "1.8"
+uuid         = { version = "1.0", features = ["v4"] }
+clap         = { version = "4",   features = ["derive"] }
+tokio        = { version = "1.0", features = ["full"] }
+sodiumoxide  = "0.2"
+base64       = "0.22"
+whoami       = "1.5"
+toml         = "0.7"
+rand         = "0.8"
+env_logger   = "0.11"
+jsonwebtoken = "8"
+reqwest      = { version = "0.11", features = ["json", "blocking"] }
+
+# ── GUI 相关 ──────────────────────────────────────────────────────────────────
+# Slint GUI 框架
+slint = { version = "1.16", features = [] }
+
+# 系统托盘
+tray-icon = "0.24"
+
+# 托盘图标图像生成（纯 Rust，无系统库依赖）
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[build-dependencies]
+# Slint .slint 文件编译器
+slint-build = "1.16"

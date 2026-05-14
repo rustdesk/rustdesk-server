@@ -72,7 +72,7 @@ capnpc = "0.20"
 
 # "libs/hbb_common",
 [workspace]
-members = ["libs/core-common"]
+members = ["libs/core-common", "nat-client"]
 exclude = ["ui"]
 
 #https://github.com/johnthagen/min-sized-rust

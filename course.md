@@ -131,3 +131,7 @@ views::UserInfo 增加 role（供以后服务端渲染用）。
 - 用 release 模式编译 (`cargo build --release`)
 
 如果你确实想推进 capnp 迁移，我可以帮你从正确的方式一步步来——但需要作为一个独立的专项，而不是"开关一下就替换"。
+
+
+能否跟据https://github.com/rustdesk/rustdesk.git项目源码的ipc.rs、lan.rs和rendezvous_mediator.rs
+等源文件，实现一个与nat-server项目相结合的完整内网穿透工具完成？

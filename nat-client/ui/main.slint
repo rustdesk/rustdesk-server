@@ -1,0 +1,1509 @@
+// ============================================================
+//  NAT Client — 桌面 GUI (Slint 1.16)
+//  深色主题，左侧导航，6 个功能页面
+//  注意：Slint 字符串无 is-empty() / starts-with() / slice()
+//        用 s == "" 代替 is-empty()，颜色通过独立 bool 属性控制
+// ============================================================
+
+import { Button, LineEdit, ScrollView, Spinner } from "std-widgets.slint";
+
+// ─────────────────────────────────────────────────────────────
+// 数据结构
+// ─────────────────────────────────────────────────────────────
+
+export struct LanPeer {
+    id: string,
+    ip: string,
+    hostname: string,
+    username: string,
+    platform: string,
+    online: bool,
+}
+
+export struct ActiveConn {
+    uuid: string,
+    conn-type: string,
+    peer-addr: string,
+    local-port: int,
+    bytes-sent: string,
+    bytes-recv: string,
+    created-at: string,
+}
+
+export struct BoundDevice {
+    id: int,
+    device-id: string,
+    device-name: string,
+    is-active: bool,
+    created-at: string,
+}
+
+// ─────────────────────────────────────────────────────────────
+// 调色板
+// ─────────────────────────────────────────────────────────────
+
+global Palette {
+    out property <color> bg:          #1a1b1e;
+    out property <color> sidebar:     #141517;
+    out property <color> card:        #25262b;
+    out property <color> border:      #373a40;
+    out property <color> primary:     #4c6ef5;
+    out property <color> primary-h:   #364fc7;
+    out property <color> text:        #c1c2c5;
+    out property <color> text-dim:    #868e96;
+    out property <color> text-bright: #f1f3f5;
+    out property <color> success:     #40c057;
+    out property <color> error:       #fa5252;
+    out property <color> warning:     #fab005;
+    out property <color> surface:     #2c2e33;
+}
+
+// ─────────────────────────────────────────────────────────────
+// 基础组件
+// ─────────────────────────────────────────────────────────────
+
+component Card inherits Rectangle {
+    background: Palette.card;
+    border-radius: 10px;
+    drop-shadow-blur: 8px;
+    drop-shadow-offset-y: 2px;
+    drop-shadow-color: #00000055;
+    clip: true;
+}
+
+component PBtn inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled: true;
+    in property <bool> danger:  false;
+    in property <bool> small:   false;
+    callback clicked;
+
+    height: small ? 30px : 36px;
+    border-radius: 6px;
+    background: !enabled ? Palette.border : danger && ta.has-hover ? #c0392b : danger ? Palette.error : ta.has-hover ? Palette.primary-h : Palette.primary;
+
+    Text {
+        text: root.text;
+        color: root.enabled ? white : Palette.text-dim;
+        font-size: root.small ? 12px : 14px;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    ta := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+component GhostBtn inherits Rectangle {
+    in property <string> text;
+    in property <bool> danger: false;
+    callback clicked;
+
+    height: 32px;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: danger ? Palette.error : Palette.border;
+    background: ta.has-hover ? (danger ? #fa525220 : #4c6ef520) : transparent;
+
+    Text {
+        text: root.text;
+        color: root.danger ? Palette.error : Palette.text;
+        font-size: 13px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// 状态圆点（用 Rectangle，不设 vertical-alignment）
+component Dot inherits Rectangle {
+    in property <bool> online;
+    width: 9px;
+    height: 9px;
+    border-radius: 5px;
+    background: online ? Palette.success : Palette.error;
+    animate background { duration: 600ms; }
+}
+
+component Label inherits Text {
+    color: Palette.text-dim;
+    font-size: 12px;
+}
+
+component Input inherits Rectangle {
+    in-out property <string> value <=> le.text;
+    in property <string> placeholder;
+    in property <bool> password: false;
+    in property <bool> enabled:  true;
+    height: 36px;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: le.has-focus ? Palette.primary : Palette.border;
+    background: Palette.surface;
+
+    le := LineEdit {
+        x: 10px;
+        y: 0;
+        width: root.width - 20px;
+        height: root.height;
+        placeholder-text: root.placeholder;
+        input-type: root.password ? InputType.password : InputType.text;
+        enabled: root.enabled;
+        font-size: 14px;
+    }
+}
+
+component Divider inherits Rectangle {
+    height: 1px;
+    background: Palette.border;
+}
+
+// 导航项（用嵌套 Rectangle 模拟左侧高亮条）
+component NavItem inherits TouchArea {
+    in property <string> icon;
+    in property <string> label;
+    in property <bool> selected;
+    height: 46px;
+    mouse-cursor: pointer;
+
+    HorizontalLayout {
+        // 左侧 3px 高亮条
+        Rectangle {
+            width: 3px;
+            background: root.selected ? Palette.primary : transparent;
+        }
+
+        Rectangle {
+            horizontal-stretch: 1;
+            border-radius: 6px;
+            background: root.has-hover ? (root.selected ? #4c6ef530 : #ffffff10) : (root.selected ? #4c6ef520 : transparent);
+
+            HorizontalLayout {
+                padding-left: 13px;
+                padding-right: 8px;
+                spacing: 10px;
+                alignment: start;
+
+                Text {
+                    text: root.icon;
+                    color: root.selected ? Palette.primary : Palette.text-dim;
+                    font-size: 18px;
+                    vertical-alignment: center;
+                    width: 22px;
+                }
+
+                Text {
+                    text: root.label;
+                    color: root.selected ? Palette.text-bright : Palette.text-dim;
+                    font-size: 14px;
+                    font-weight: root.selected ? 700 : 400;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}
+
+// 状态消息行（success=true → 绿，false → 红）
+component StatusMsg inherits Text {
+    in property <string> msg;
+    in property <bool> ok;
+    visible: msg != "";
+    text: msg;
+    color: ok ? Palette.success : Palette.error;
+    font-size: 13px;
+    wrap: word-wrap;
+}
+
+// ─────────────────────────────────────────────────────────────
+// 页面 1：首页 Dashboard
+// ─────────────────────────────────────────────────────────────
+
+component DashboardPage inherits VerticalLayout {
+    in property <bool> online;
+    in property <string> peer-id;
+    in property <string> nat-type;
+    in property <string> server-addr;
+    in property <bool> logged-in;
+    in property <string> username;
+    in property <string> role;
+    in property <string> token-remaining;
+    in-out property <string> quick-peer-id;
+    in-out property <string> quick-local-port: "0";
+    in property <bool> connecting;
+    in property <string> connect-result;
+    in property <bool> connect-ok;
+
+    callback do-connect(string, string);
+    callback do-refresh();
+
+    spacing: 0px;
+    padding: 24px;
+
+    HorizontalLayout {
+        height: 36px;
+        Text {
+            text: "控制台";
+            color: Palette.text-bright;
+            font-size: 20px;
+            font-weight: 700;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+
+        GhostBtn {
+            text: "刷新";
+            width: 72px;
+            clicked => {
+                root.do-refresh();
+            }
+        }
+    }
+
+    Rectangle {
+        height: 16px;
+    }
+
+    // 状态卡片行
+    HorizontalLayout {
+        spacing: 12px;
+        height: 106px;
+
+        Card {
+            horizontal-stretch: 1;
+            VerticalLayout {
+                padding: 16px;
+                spacing: 8px;
+                alignment: start;
+                Label {
+                    text: "连接状态";
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    Dot {
+                        online: root.online;
+                        y: 6px;
+                    }
+
+                    Text {
+                        text: root.online ? "已上线" : "离线";
+                        color: root.online ? Palette.success : Palette.error;
+                        font-size: 18px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+                }
+
+                Label {
+                    text: root.server-addr == "" ? "未配置服务器" : root.server-addr;
+                }
+            }
+        }
+
+        Card {
+            horizontal-stretch: 2;
+            VerticalLayout {
+                padding: 16px;
+                spacing: 8px;
+                alignment: start;
+                Label {
+                    text: "我的 Peer ID";
+                }
+
+                Text {
+                    text: root.peer-id == "" ? "—" : root.peer-id;
+                    color: Palette.text-bright;
+                    font-size: 26px;
+                    font-weight: 700;
+                    letter-spacing: 3px;
+                }
+            }
+        }
+
+        Card {
+            horizontal-stretch: 1;
+            VerticalLayout {
+                padding: 16px;
+                spacing: 8px;
+                alignment: start;
+                Label {
+                    text: "NAT 类型";
+                }
+
+                Text {
+                    text: root.nat-type;
+                    color: Palette.text;
+                    font-size: 15px;
+                    font-weight: 600;
+                }
+            }
+        }
+    }
+
+    Rectangle {
+        height: 12px;
+    }
+
+    // 账户卡片
+    Card {
+        height: 76px;
+        VerticalLayout {
+            padding: 16px;
+            spacing: 4px;
+            alignment: start;
+            Label {
+                text: "账户";
+            }
+
+            Text {
+                text: root.logged-in ? ("✓  " + root.username + "   [" + root.role + "]") : "未登录（匿名模式）";
+                color: root.logged-in ? Palette.success : Palette.text-dim;
+                font-size: 14px;
+                font-weight: 600;
+            }
+
+            if root.logged-in: Label {
+                text: "Token 剩余：" + root.token-remaining;
+            }
+        }
+    }
+
+    Rectangle {
+        height: 12px;
+    }
+
+    // 快速连接
+    Card {
+        VerticalLayout {
+            padding: 20px;
+            spacing: 14px;
+            Text {
+                text: "快速连接";
+                color: Palette.text-bright;
+                font-size: 16px;
+                font-weight: 600;
+            }
+
+            HorizontalLayout {
+                spacing: 10px;
+                height: 36px;
+                Input {
+                    horizontal-stretch: 3;
+                    value <=> root.quick-peer-id;
+                    placeholder: "对端 Peer ID（9 位数字）";
+                }
+
+                Input {
+                    horizontal-stretch: 1;
+                    value <=> root.quick-local-port;
+                    placeholder: "本地端口（0=自动）";
+                }
+
+                PBtn {
+                    text: root.connecting ? "连接中…" : "连接";
+                    enabled: !root.connecting && root.quick-peer-id != "";
+                    width: 90px;
+                    clicked => {
+                        root.do-connect(root.quick-peer-id, root.quick-local-port);
+                    }
+                }
+            }
+
+            if root.connect-result != "": StatusMsg {
+                msg: root.connect-result;
+                ok: root.connect-ok;
+            }
+        }
+    }
+
+    Rectangle {
+        vertical-stretch: 1;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+// 页面 2：活跃连接
+// ─────────────────────────────────────────────────────────────
+
+component ConnectionsPage inherits VerticalLayout {
+    in property <[ActiveConn]> items;
+    callback close-conn(string);
+
+    spacing: 0px;
+    padding: 24px;
+
+    Text {
+        text: "活跃连接";
+        color: Palette.text-bright;
+        font-size: 20px;
+        font-weight: 700;
+        height: 36px;
+        vertical-alignment: center;
+    }
+
+    Rectangle {
+        height: 16px;
+    }
+
+    if items.length == 0: Rectangle {
+        vertical-stretch: 1;
+        Text {
+            text: "暂无活跃连接";
+            color: Palette.text-dim;
+            font-size: 15px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    if items.length > 0: ScrollView {
+        vertical-stretch: 1;
+        VerticalLayout {
+            spacing: 10px;
+            for item in root.items: Card {
+                height: 110px;
+                VerticalLayout {
+                    padding: 14px;
+                    spacing: 8px;
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Rectangle {
+                            width: 52px;
+                            height: 22px;
+                            border-radius: 4px;
+                            background: item.conn-type == "Direct" ? #1864ab40 : #5c37ab40;
+                            Text {
+                                text: item.conn-type == "Direct" ? "直连" : "中继";
+                                color: item.conn-type == "Direct" ? #74c0fc : #da77f2;
+                                font-size: 11px;
+                                font-weight: 700;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        Text {
+                            text: item.peer-addr;
+                            color: Palette.text-bright;
+                            font-size: 14px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
+
+                        GhostBtn {
+                            text: "断开";
+                            width: 56px;
+                            danger: true;
+                            clicked => {
+                                root.close-conn(item.uuid);
+                            }
+                        }
+                    }
+
+                    Divider { }
+
+                    HorizontalLayout {
+                        spacing: 20px;
+                        VerticalLayout {
+                            Label {
+                                text: "本地端口";
+                            }
+
+                            Label {
+                                text: item.local-port == 0 ? "—" : item.local-port;
+                            }
+                        }
+
+                        VerticalLayout {
+                            Label {
+                                text: "发送";
+                            }
+
+                            Label {
+                                text: item.bytes-sent;
+                            }
+                        }
+
+                        VerticalLayout {
+                            Label {
+                                text: "接收";
+                            }
+
+                            Label {
+                                text: item.bytes-recv;
+                            }
+                        }
+
+                        VerticalLayout {
+                            Label {
+                                text: "时间";
+                            }
+
+                            Label {
+                                text: item.created-at;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+// 页面 3：局域网发现
+// ─────────────────────────────────────────────────────────────
+
+component PeersPage inherits VerticalLayout {
+    in property <[LanPeer]> items;
+    in property <bool> discovering;
+    callback discover();
+    callback connect-peer(string);
+
+    spacing: 0px;
+    padding: 24px;
+
+    HorizontalLayout {
+        height: 36px;
+        Text {
+            text: "局域网节点";
+            color: Palette.text-bright;
+            font-size: 20px;
+            font-weight: 700;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+
+        PBtn {
+            text: root.discovering ? "扫描中…" : "立即扫描";
+            enabled: !root.discovering;
+            width: 100px;
+            clicked => {
+                root.discover();
+            }
+        }
+    }
+
+    Rectangle {
+        height: 16px;
+    }
+
+    if items.length == 0: Rectangle {
+        vertical-stretch: 1;
+        VerticalLayout {
+            alignment: center;
+            spacing: 12px;
+            Text {
+                text: "未发现局域网节点";
+                color: Palette.text-dim;
+                font-size: 15px;
+                horizontal-alignment: center;
+            }
+
+            Text {
+                text: "点击「立即扫描」发送 UDP 广播（约 3 秒）";
+                color: Palette.text-dim;
+                font-size: 13px;
+                horizontal-alignment: center;
+            }
+        }
+    }
+
+    if items.length > 0: ScrollView {
+        vertical-stretch: 1;
+        VerticalLayout {
+            spacing: 10px;
+            for item in root.items: Card {
+                height: 80px;
+                HorizontalLayout {
+                    padding: 16px;
+                    spacing: 14px;
+                    alignment: start;
+                    VerticalLayout {
+                        alignment: center;
+                        Dot {
+                            online: item.online;
+                        }
+                    }
+
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        spacing: 4px;
+                        alignment: center;
+                        HorizontalLayout {
+                            spacing: 10px;
+                            Text {
+                                text: item.id;
+                                color: Palette.text-bright;
+                                font-size: 16px;
+                                font-weight: 700;
+                            }
+
+                            Text {
+                                text: item.hostname;
+                                color: Palette.text-dim;
+                                font-size: 13px;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 12px;
+                            Label {
+                                text: item.ip;
+                            }
+
+                            Label {
+                                text: item.username;
+                            }
+
+                            Label {
+                                text: item.platform;
+                            }
+                        }
+                    }
+
+                    PBtn {
+                        text: "连接";
+                        width: 70px;
+                        clicked => {
+                            root.connect-peer(item.id);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+// 页面 4：账户管理
+// ─────────────────────────────────────────────────────────────
+
+component AccountPage inherits VerticalLayout {
+    in property <bool> logged-in;
+    in property <string> username;
+    in property <string> role;
+    in property <string> token-remaining;
+    in property <bool> busy;
+    in property <string> status-msg;
+    in property <bool> status-ok;
+    in-out property <string> input-user;
+    in-out property <string> input-pass;
+    in-out property <string> input-email;
+    in-out property <string> input-device-name;
+    in-out property <string> input-old-pass;
+    in-out property <string> input-new-pass;
+    in-out property <bool> show-register;
+
+    callback do-login();
+    callback do-logout();
+    callback do-register();
+    callback do-change-password();
+    callback toggle-register();
+
+    spacing: 0px;
+    padding: 24px;
+
+    Text {
+        text: "账户";
+        color: Palette.text-bright;
+        font-size: 20px;
+        font-weight: 700;
+        height: 36px;
+        vertical-alignment: center;
+    }
+
+    Rectangle {
+        height: 16px;
+    }
+
+    // ── 已登录 ──────────────────────────────────────────────
+    if logged-in: VerticalLayout {
+        spacing: 14px;
+        Card {
+            height: 120px;
+            HorizontalLayout {
+                padding: 20px;
+                spacing: 14px;
+                alignment: start;
+                // 头像圆
+                Rectangle {
+                    width: 54px;
+                    height: 54px;
+                    border-radius: 27px;
+                    background: Palette.primary;
+                    Text {
+                        text: "U";
+                        color: white;
+                        font-size: 24px;
+                        font-weight: 700;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 6px;
+                    Text {
+                        text: root.username;
+                        color: Palette.text-bright;
+                        font-size: 18px;
+                        font-weight: 700;
+                    }
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Rectangle {
+                            width: 44px;
+                            height: 20px;
+                            border-radius: 4px;
+                            background: root.role == "admin" ? #e67700 : #1864ab;
+                            Text {
+                                text: root.role;
+                                color: white;
+                                font-size: 11px;
+                                font-weight: 700;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        Label {
+                            text: "Token 剩余：" + root.token-remaining;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                Rectangle {
+                    horizontal-stretch: 1;
+                }
+
+                GhostBtn {
+                    text: "退出登录";
+                    width: 82px;
+                    danger: true;
+                    clicked => {
+                        root.do-logout();
+                    }
+                }
+            }
+        }
+
+        // 修改密码
+        Card {
+            VerticalLayout {
+                padding: 20px;
+                spacing: 12px;
+                Text {
+                    text: "修改密码";
+                    color: Palette.text-bright;
+                    font-size: 15px;
+                    font-weight: 600;
+                }
+
+                Input {
+                    placeholder: "旧密码";
+                    password: true;
+                    value <=> root.input-old-pass;
+                }
+
+                Input {
+                    placeholder: "新密码";
+                    password: true;
+                    value <=> root.input-new-pass;
+                }
+
+                HorizontalLayout {
+                    spacing: 10px;
+                    height: 36px;
+                    Rectangle {
+                        horizontal-stretch: 1;
+                    }
+
+                    PBtn {
+                        text: root.busy ? "处理中…" : "确认修改";
+                        enabled: !root.busy;
+                        width: 100px;
+                        clicked => {
+                            root.do-change-password();
+                        }
+                    }
+                }
+
+                if root.status-msg != "": StatusMsg {
+                    msg: root.status-msg;
+                    ok: root.status-ok;
+                }
+            }
+        }
+    }
+
+    // ── 未登录：登录/注册表单 ───────────────────────────────
+    if !logged-in: Card {
+        VerticalLayout {
+            padding: 24px;
+            spacing: 14px;
+            HorizontalLayout {
+                Text {
+                    text: root.show-register ? "注册新账户" : "登录";
+                    color: Palette.text-bright;
+                    font-size: 18px;
+                    font-weight: 700;
+                    horizontal-stretch: 1;
+                }
+
+                TouchArea {
+                    width: 100px;
+                    mouse-cursor: pointer;
+                    clicked => {
+                        root.toggle-register();
+                    }
+                    Text {
+                        text: root.show-register ? "← 返回登录" : "注册账户 →";
+                        color: Palette.primary;
+                        font-size: 13px;
+                        horizontal-alignment: right;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            Input {
+                placeholder: "用户名";
+                value <=> root.input-user;
+            }
+
+            if root.show-register: Input {
+                placeholder: "邮箱";
+                value <=> root.input-email;
+            }
+            Input {
+                placeholder: "密码";
+                password: true;
+                value <=> root.input-pass;
+            }
+
+            if root.show-register: Input {
+                placeholder: "设备名称（可选）";
+                value <=> root.input-device-name;
+            }
+            if root.status-msg != "": StatusMsg {
+                msg: root.status-msg;
+                ok: root.status-ok;
+            }
+            PBtn {
+                text: root.busy ? "处理中…" : (root.show-register ? "注册" : "登录");
+                enabled: !root.busy && root.input-user != "" && root.input-pass != "";
+                height: 40px;
+                clicked => {
+                    if root.show-register {
+                        root.do-register();
+                    } else {
+                        root.do-login();
+                    }
+                }
+            }
+        }
+    }
+    Rectangle {
+        vertical-stretch: 1;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+// 页面 5：设备管理
+// ─────────────────────────────────────────────────────────────
+
+component DevicesPage inherits VerticalLayout {
+    in property <[BoundDevice]> items;
+    in property <bool> logged-in;
+    in property <bool> loading;
+    callback refresh();
+    callback remove-device(string);
+
+    spacing: 0px;
+    padding: 24px;
+
+    HorizontalLayout {
+        height: 36px;
+        Text {
+            text: "我的设备";
+            color: Palette.text-bright;
+            font-size: 20px;
+            font-weight: 700;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+
+        GhostBtn {
+            text: root.loading ? "加载中…" : "刷新";
+            width: 72px;
+            clicked => {
+                root.refresh();
+            }
+        }
+    }
+
+    Rectangle {
+        height: 16px;
+    }
+
+    if !logged-in: Rectangle {
+        vertical-stretch: 1;
+        Text {
+            text: "请先登录账户再查看设备列表";
+            color: Palette.text-dim;
+            font-size: 15px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    if logged-in && items.length == 0: Rectangle {
+        vertical-stretch: 1;
+        Text {
+            text: "暂无绑定设备";
+            color: Palette.text-dim;
+            font-size: 15px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    if logged-in && items.length > 0: ScrollView {
+        vertical-stretch: 1;
+        VerticalLayout {
+            spacing: 10px;
+            for item in root.items: Card {
+                height: 78px;
+                HorizontalLayout {
+                    padding: 16px;
+                    spacing: 12px;
+                    alignment: start;
+                    VerticalLayout {
+                        alignment: center;
+                        Rectangle {
+                            width: 10px;
+                            height: 10px;
+                            border-radius: 5px;
+                            background: item.is-active ? Palette.success : Palette.text-dim;
+                        }
+                    }
+
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        spacing: 4px;
+                        alignment: center;
+                        Text {
+                            text: item.device-name;
+                            color: Palette.text-bright;
+                            font-size: 15px;
+                            font-weight: 600;
+                        }
+
+                        HorizontalLayout {
+                            spacing: 16px;
+                            Label {
+                                text: "Peer ID: " + item.device-id;
+                            }
+
+                            Label {
+                                text: "注册时间: " + item.created-at;
+                            }
+                        }
+                    }
+
+                    GhostBtn {
+                        text: "移除";
+                        width: 56px;
+                        danger: true;
+                        clicked => {
+                            root.remove-device(item.device-id);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+// 页面 6：设置
+// ─────────────────────────────────────────────────────────────
+
+component SettingsPage inherits VerticalLayout {
+    in-out property <string> server-addr;
+    in-out property <string> api-url;
+    in-out property <string> relay-server;
+    in-out property <string> ipc-port-str;
+    in property <string> status-msg;
+    in property <bool> status-ok;
+    in property <bool> busy;
+    callback save();
+    callback restart-mediator();
+    callback open-config-file();
+
+    spacing: 0px;
+    padding: 24px;
+
+    Text {
+        text: "设置";
+        color: Palette.text-bright;
+        font-size: 20px;
+        font-weight: 700;
+        height: 36px;
+        vertical-alignment: center;
+    }
+
+    Rectangle {
+        height: 16px;
+    }
+
+    Card {
+        VerticalLayout {
+            padding: 20px;
+            spacing: 14px;
+            Text {
+                text: "服务器配置";
+                color: Palette.text-bright;
+                font-size: 15px;
+                font-weight: 600;
+            }
+
+            VerticalLayout {
+                spacing: 6px;
+                Label {
+                    text: "Rendezvous 服务器（hbbs）";
+                }
+
+                Input {
+                    placeholder: "host:21116";
+                    value <=> root.server-addr;
+                }
+            }
+
+            VerticalLayout {
+                spacing: 6px;
+                Label {
+                    text: "中继服务器（hbbr，留空=自动）";
+                }
+
+                Input {
+                    placeholder: "host:21117";
+                    value <=> root.relay-server;
+                }
+            }
+
+            VerticalLayout {
+                spacing: 6px;
+                Label {
+                    text: "API 地址（留空=自动推导）";
+                }
+
+                Input {
+                    placeholder: "http://host:8080";
+                    value <=> root.api-url;
+                }
+            }
+
+            VerticalLayout {
+                spacing: 6px;
+                Label {
+                    text: "IPC 端口";
+                }
+
+                Input {
+                    placeholder: "21114";
+                    value <=> root.ipc-port-str;
+                }
+            }
+
+            if root.status-msg != "": StatusMsg {
+                msg: root.status-msg;
+                ok: root.status-ok;
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                height: 36px;
+                PBtn {
+                    text: root.busy ? "保存中…" : "保存配置";
+                    enabled: !root.busy;
+                    width: 100px;
+                    clicked => {
+                        root.save();
+                    }
+                }
+
+                GhostBtn {
+                    text: "重启中介";
+                    width: 90px;
+                    clicked => {
+                        root.restart-mediator();
+                    }
+                }
+
+                GhostBtn {
+                    text: "打开配置文件";
+                    width: 110px;
+                    clicked => {
+                        root.open-config-file();
+                    }
+                }
+            }
+        }
+    }
+
+    Rectangle {
+        vertical-stretch: 1;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+// 主窗口
+// ─────────────────────────────────────────────────────────────
+
+export component AppWindow inherits Window {
+    title: "NAT Client";
+    preferred-width: 960px;
+    preferred-height: 640px;
+    background: Palette.bg;
+
+    // ── 状态属性 ──────────────────────────────────────────────
+    in property <bool> online;
+    in property <string> peer-id;
+    in property <string> nat-type:   "未知";
+    in property <string> server-addr;
+    in property <bool> logged-in;
+    in property <string> username;
+    in property <string> role;
+    in property <string> token-remaining;
+    in property <[ActiveConn]> connections;
+    in property <[LanPeer]> lan-peers;
+    in property <[BoundDevice]> devices;
+    in property <bool> connecting;
+    in property <bool> discovering;
+    in property <bool> devices-loading;
+    in property <bool> account-busy;
+    in property <string> connect-result;
+    in property <bool> connect-ok;
+    in property <string> account-status;
+    in property <bool> account-status-ok;
+    in property <string> settings-status;
+    in property <bool> settings-status-ok;
+
+    // ── 设置字段（双向） ──────────────────────────────────────
+    in-out property <string> cfg-server;
+    in-out property <string> cfg-relay;
+    in-out property <string> cfg-api-url;
+    in-out property <string> cfg-ipc-port;
+
+    // ── 输入字段（双向） ──────────────────────────────────────
+    in-out property <string> quick-peer-id;
+    in-out property <string> quick-local-port: "0";
+    in-out property <string> login-user;
+    in-out property <string> login-pass;
+    in-out property <string> reg-email;
+    in-out property <string> reg-device-name;
+    in-out property <string> old-pass;
+    in-out property <string> new-pass;
+    in-out property <bool> show-register;
+
+    // ── 导航 ──────────────────────────────────────────────────
+    in-out property <int> page: 0;
+
+    // ── 回调 ──────────────────────────────────────────────────
+    callback do-connect(string, string);
+    callback do-discover();
+    callback do-refresh();
+    callback close-conn(string);
+    callback connect-peer(string);
+    callback do-login();
+    callback do-logout();
+    callback do-register();
+    callback do-change-password();
+    callback do-remove-device(string);
+    callback do-save-settings();
+    callback do-restart-mediator();
+    callback do-open-config();
+    callback toggle-register();
+
+    // ── 布局 ──────────────────────────────────────────────────
+    HorizontalLayout {
+
+        // ── 侧边栏 ────────────────────────────────────────────
+        Rectangle {
+            width: 200px;
+            background: Palette.sidebar;
+
+            VerticalLayout {
+                padding: 12px;
+                spacing: 4px;
+
+                // Logo
+                HorizontalLayout {
+                    height: 56px;
+                    padding-left: 12px;
+                    spacing: 10px;
+                    alignment: start;
+                    Rectangle {
+                        width: 32px;
+                        height: 32px;
+                        border-radius: 8px;
+                        background: Palette.primary;
+                        Text {
+                            text: "N";
+                            color: white;
+                            font-size: 18px;
+                            font-weight: 900;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 2px;
+                        Text {
+                            text: "NAT Client";
+                            color: Palette.text-bright;
+                            font-size: 14px;
+                            font-weight: 700;
+                        }
+
+                        Text {
+                            text: "v0.1.0";
+                            color: Palette.text-dim;
+                            font-size: 11px;
+                        }
+                    }
+                }
+
+                Divider { }
+
+                Rectangle {
+                    height: 4px;
+                }
+
+                NavItem {
+                    icon: "⊞";
+                    label: "首页";
+                    selected: page == 0;
+                    clicked => {
+                        root.page = 0;
+                    }
+                }
+
+                NavItem {
+                    icon: "⇄";
+                    label: "连接";
+                    selected: page == 1;
+                    clicked => {
+                        root.page = 1;
+                    }
+                }
+
+                NavItem {
+                    icon: "◉";
+                    label: "局域网";
+                    selected: page == 2;
+                    clicked => {
+                        root.page = 2;
+                    }
+                }
+
+                NavItem {
+                    icon: "☺";
+                    label: "账户";
+                    selected: page == 3;
+                    clicked => {
+                        root.page = 3;
+                    }
+                }
+
+                NavItem {
+                    icon: "▣";
+                    label: "设备";
+                    selected: page == 4;
+                    clicked => {
+                        root.page = 4;
+                    }
+                }
+
+                NavItem {
+                    icon: "⚙";
+                    label: "设置";
+                    selected: page == 5;
+                    clicked => {
+                        root.page = 5;
+                    }
+                }
+
+                Rectangle {
+                    vertical-stretch: 1;
+                }
+
+                Divider { }
+
+                // 底部状态
+                HorizontalLayout {
+                    height: 40px;
+                    padding-left: 16px;
+                    spacing: 8px;
+                    alignment: start;
+                    VerticalLayout {
+                        alignment: center;
+                        Dot {
+                            online: root.online;
+                        }
+                    }
+
+                    Text {
+                        text: root.online ? "已上线" : "离线";
+                        color: root.online ? Palette.success : Palette.text-dim;
+                        font-size: 12px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+
+        // ── 内容区 ────────────────────────────────────────────
+        Rectangle {
+            horizontal-stretch: 1;
+            background: Palette.bg;
+
+            if page == 0: DashboardPage {
+                width: parent.width;
+                height: parent.height;
+                online <=> root.online;
+                peer-id <=> root.peer-id;
+                nat-type <=> root.nat-type;
+                server-addr <=> root.server-addr;
+                logged-in <=> root.logged-in;
+                username <=> root.username;
+                role <=> root.role;
+                token-remaining <=> root.token-remaining;
+                quick-peer-id <=> root.quick-peer-id;
+                quick-local-port <=> root.quick-local-port;
+                connecting <=> root.connecting;
+                connect-result <=> root.connect-result;
+                connect-ok <=> root.connect-ok;
+                do-connect(id, port) => {
+                    root.do-connect(id, port);
+                }
+                do-refresh => {
+                    root.do-refresh();
+                }
+            }
+
+            if page == 1: ConnectionsPage {
+                width: parent.width;
+                height: parent.height;
+                items <=> root.connections;
+                close-conn(u) => {
+                    root.close-conn(u);
+                }
+            }
+
+            if page == 2: PeersPage {
+                width: parent.width;
+                height: parent.height;
+                items <=> root.lan-peers;
+                discovering <=> root.discovering;
+                discover => {
+                    root.do-discover();
+                }
+                connect-peer(id) => {
+                    root.connect-peer(id);
+                }
+            }
+
+            if page == 3: AccountPage {
+                width: parent.width;
+                height: parent.height;
+                logged-in <=> root.logged-in;
+                username <=> root.username;
+                role <=> root.role;
+                token-remaining <=> root.token-remaining;
+                busy <=> root.account-busy;
+                status-msg <=> root.account-status;
+                status-ok <=> root.account-status-ok;
+                input-user <=> root.login-user;
+                input-pass <=> root.login-pass;
+                input-email <=> root.reg-email;
+                input-device-name <=> root.reg-device-name;
+                input-old-pass <=> root.old-pass;
+                input-new-pass <=> root.new-pass;
+                show-register <=> root.show-register;
+                do-login => {
+                    root.do-login();
+                }
+                do-logout => {
+                    root.do-logout();
+                }
+                do-register => {
+                    root.do-register();
+                }
+                do-change-password => {
+                    root.do-change-password();
+                }
+                toggle-register => {
+                    root.toggle-register();
+                }
+            }
+
+            if page == 4: DevicesPage {
+                width: parent.width;
+                height: parent.height;
+                items <=> root.devices;
+                logged-in <=> root.logged-in;
+                loading <=> root.devices-loading;
+                refresh => {
+                    root.do-refresh();
+                }
+                remove-device(id) => {
+                    root.do-remove-device(id);
+                }
+            }
+
+            if page == 5: SettingsPage {
+                width: parent.width;
+                height: parent.height;
+                server-addr <=> root.cfg-server;
+                relay-server <=> root.cfg-relay;
+                api-url <=> root.cfg-api-url;
+                ipc-port-str <=> root.cfg-ipc-port;
+                status-msg <=> root.settings-status;
+                status-ok <=> root.settings-status-ok;
+                busy <=> root.account-busy;
+                save => {
+                    root.do-save-settings();
+                }
+                restart-mediator => {
+                    root.do-restart-mediator();
+                }
+                open-config-file => {
+                    root.do-open-config();
+                }
+            }
+        }
+    }
+}
