@@ -14,6 +14,7 @@ webrtc = ["dep:webrtc"]
 # new flexi_logger failed on rustc 1.75
 flexi_logger = { version = "0.27", features = ["async"] }
 protobuf = { version = "3.7", features = ["with-bytes"] }
+capnp = "0.20"
 tokio = { version = "1.44", features = ["full"] }
 tokio-util = { version = "0.7", features = ["full"] }
 futures = "0.3"
@@ -75,6 +76,7 @@ machine-uid = { git = "https://github.com/rustdesk-org/machine-uid" }
 
 [build-dependencies]
 protobuf-codegen = { version = "3.7" }
+capnpc = "0.20"
 
 [dev-dependencies]
 clap = "4.5.51"

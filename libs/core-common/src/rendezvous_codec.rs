@@ -1,8 +1,10 @@
-// src/codec.rs
-// 双协议编解码层：Proto3 ↔ Cap'n Proto
+//! 双协议编解码层：Proto3 ↔ Cap'n Proto（hbbs / nat-client 共用）
+//!
+//! Cap'n 结构由 `build.rs` 从 `protos/rendezvous.capnp` 生成到 `OUT_DIR`，
+//! 根模块 `crate::rendezvous_capnp` 在 `lib.rs` 中 `include!`。
 
-use core_common::bytes::Bytes;
-use core_common::{
+use crate::bytes::Bytes;
+use crate::{
     protobuf::Message as _,
     rendezvous_proto::{self, rendezvous_message, *},
 };
@@ -324,8 +326,21 @@ fn capnp_to_proto3(msg: rendezvous_capnp::rendezvous_message::Reader) -> Option<
                 ..Default::default()
             });
         }
+        W::PeerDiscovery(pd) => {
+            let pd = pd.ok()?;
+            out.set_peer_discovery(PeerDiscovery {
+                cmd: pd.get_cmd().ok()?.to_str().ok()?.to_string(),
+                mac: pd.get_mac().ok()?.to_str().ok()?.to_string(),
+                id: pd.get_id().ok()?.to_str().ok()?.to_string(),
+                username: pd.get_username().ok()?.to_str().ok()?.to_string(),
+                hostname: pd.get_hostname().ok()?.to_str().ok()?.to_string(),
+                platform: pd.get_platform().ok()?.to_str().ok()?.to_string(),
+                misc: pd.get_misc().ok()?.to_str().ok()?.to_string(),
+                ..Default::default()
+            });
+        }
         _ => {
-            core_common::log::debug!("codec: unknown capnp variant, dropping");
+            crate::log::debug!("codec: unknown capnp variant, dropping");
             return None;
         }
     }
@@ -424,8 +439,18 @@ fn to_capnp(msg: &RendezvousMessage) -> Option<Vec<u8>> {
             let mut r = root.init_software_update();
             r.set_url(&su.url);
         }
+        rendezvous_message::Union::PeerDiscovery(pd) => {
+            let mut r = root.init_peer_discovery();
+            r.set_cmd(&pd.cmd);
+            r.set_mac(&pd.mac);
+            r.set_id(&pd.id);
+            r.set_username(&pd.username);
+            r.set_hostname(&pd.hostname);
+            r.set_platform(&pd.platform);
+            r.set_misc(&pd.misc);
+        }
         _ => {
-            core_common::log::debug!("codec: unsupported proto3→capnp variant");
+            crate::log::debug!("codec: unsupported proto3→capnp variant");
             return None;
         }
     }
@@ -482,7 +507,6 @@ fn proto3_register_result(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core_common::rendezvous_proto::*;
 
     /// proto3 字节第一字节永远不为 0x00
     #[test]
@@ -493,7 +517,7 @@ mod tests {
             serial: 1,
             ..Default::default()
         });
-        let bytes = core_common::protobuf::Message::write_to_bytes(&msg).unwrap();
+        let bytes = crate::protobuf::Message::write_to_bytes(&msg).unwrap();
         assert_ne!(bytes[0], 0x00);
         assert_eq!(detect(&bytes), Protocol::Proto3);
     }
@@ -504,8 +528,8 @@ mod tests {
         use capnp::message;
         let mut builder = message::Builder::new_default();
         {
-            let mut root =
-                builder.init_root::<crate::rendezvous_capnp::rendezvous_message::Builder>();
+            let root =
+                builder.init_root::<rendezvous_capnp::rendezvous_message::Builder>();
             let mut rpr = root.init_register_peer_response();
             rpr.set_request_pk(true);
         }
@@ -522,8 +546,8 @@ mod tests {
         // 构造 capnp RegisterPk
         let mut builder = message::Builder::new_default();
         {
-            let mut root =
-                builder.init_root::<crate::rendezvous_capnp::rendezvous_message::Builder>();
+            let root =
+                builder.init_root::<rendezvous_capnp::rendezvous_message::Builder>();
             let mut rk = root.init_register_pk();
             rk.set_id("peer-001");
             rk.set_uuid(b"uuid-bytes");
@@ -547,7 +571,7 @@ mod tests {
     /// proto3 RegisterPkResponse 能正确序列化为 capnp
     #[test]
     fn serialize_register_pk_response_capnp() {
-        use core_common::rendezvous_proto::register_pk_response;
+        use crate::rendezvous_proto::register_pk_response;
         let mut msg = RendezvousMessage::new();
         msg.set_register_pk_response(RegisterPkResponse {
             result: register_pk_response::Result::OK.into(),
@@ -557,10 +581,32 @@ mod tests {
         let bytes = serialize(&msg, Protocol::Capnp).expect("serialize failed");
         assert_eq!(bytes[0], 0x00, "capnp output must start with 0x00");
         // 反解析验证
-        let back = from_capnp(&bytes).expect("round-trip failed");
+        let back = parse(&bytes).expect("round-trip failed");
         match back.union {
             Some(rendezvous_message::Union::RegisterPkResponse(rpr)) => {
                 assert_eq!(rpr.keep_alive, 30);
+            }
+            other => panic!("unexpected: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn peer_discovery_capnp_roundtrip() {
+        let mut msg = RendezvousMessage::new();
+        msg.set_peer_discovery(PeerDiscovery {
+            cmd: "ping".into(),
+            id: "999888777".into(),
+            hostname: "h".into(),
+            ..Default::default()
+        });
+        let bytes = serialize(&msg, Protocol::Capnp).expect("capnp");
+        assert_eq!(bytes[0], 0x00);
+        let back = parse(&bytes).expect("parse");
+        match back.union {
+            Some(rendezvous_message::Union::PeerDiscovery(p)) => {
+                assert_eq!(p.cmd, "ping");
+                assert_eq!(p.id, "999888777");
+                assert_eq!(p.hostname, "h");
             }
             other => panic!("unexpected: {:?}", other),
         }

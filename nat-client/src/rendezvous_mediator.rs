@@ -16,6 +16,7 @@ use core_common::{
     futures::future::join_all,
     log,
     protobuf::Message as _,
+    rendezvous_codec::{self, Protocol},
     rendezvous_proto::{
         register_pk_response, rendezvous_message, FetchLocalAddr, LocalAddr, PunchHole,
         PunchHoleSent, RegisterPk, RelayResponse, RendezvousMessage, RequestRelay,
@@ -29,6 +30,19 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
     time::Instant,
 };
+
+/// 按配置的线路协议发送 `RendezvousMessage`（proto3 或 capnp）
+async fn send_rendezvous(
+    conn: &mut core_common::Stream,
+    msg: &RendezvousMessage,
+    wire: Protocol,
+) -> ResultType<()> {
+    if let Some(b) = rendezvous_codec::serialize(msg, wire) {
+        conn.send_bytes(b).await
+    } else {
+        conn.send(msg).await
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────────
 // 全局状态
@@ -50,6 +64,8 @@ pub struct RendezvousMediator {
     host: String,
     /// host 前缀（用于 key 确认状态存储）
     host_prefix: String,
+    /// 与 hbbs 之间的帧编码（proto3 / capnp）
+    wire: Protocol,
 }
 
 impl RendezvousMediator {
@@ -102,7 +118,6 @@ impl RendezvousMediator {
     /// 对单个服务器启动连接
     pub async fn start(host: String) -> ResultType<()> {
         let host_with_port = socket_client::check_port(&host, RENDEZVOUS_PORT);
-        log::info!("[mediator] 连接 TCP {}", host_with_port);
         Self::start_tcp(host_with_port).await
     }
 
@@ -113,10 +128,17 @@ impl RendezvousMediator {
         let mut conn = connect_tcp(host.clone(), CONNECT_TIMEOUT).await?;
 
         let host_prefix = Self::get_host_prefix(&host);
+        let wire = ClientConfig::get_rendezvous_wire_protocol();
         let rz = RendezvousMediator {
             host: host.clone(),
             host_prefix: host_prefix.clone(),
+            wire,
         };
+        log::info!(
+            "[mediator] TCP 连接成功: {}（线路协议: {:?}）",
+            host,
+            wire
+        );
 
         // 重置本 host 的 key 确认状态，确保本轮重新验证
         ClientConfig::set_host_key_confirmed(&host_prefix, false);
@@ -124,8 +146,6 @@ impl RendezvousMediator {
         let mut timer = tokio::time::interval(std::time::Duration::from_millis(500));
         let mut last_register_sent: Option<Instant> = None;
         let mut last_recv_msg = Instant::now();
-
-        log::info!("[mediator] TCP 连接成功: {}", host);
 
         loop {
             tokio::select! {
@@ -143,8 +163,10 @@ impl RendezvousMediator {
                         #[allow(clippy::needless_continue)]
                         continue;
                     }
-                    let msg = RendezvousMessage::parse_from_bytes(&bytes)?;
-                    rz.handle_msg(msg.union, &mut conn, &mut last_register_sent).await?;
+                    let msg = rendezvous_codec::parse(&bytes)
+                        .ok_or_else(|| anyhow::anyhow!("无法解析 rendezvous 消息（proto3/capnp）"))?;
+                    rz.handle_msg(msg.union, &mut conn, &mut last_register_sent)
+                        .await?;
                 }
 
                 // ── 定时器：保活 & 注册 ────────────────────────────────────
@@ -295,7 +317,7 @@ impl RendezvousMediator {
             user_token,
             ..Default::default()
         });
-        conn.send(&msg).await?;
+        send_rendezvous(conn, &msg, self.wire).await?;
         log::debug!("[mediator] RegisterPk 已发送至 {}", self.host);
         Ok(())
     }
@@ -390,8 +412,12 @@ impl RendezvousMediator {
             version: env!("CARGO_PKG_VERSION").to_owned(),
             ..Default::default()
         });
-        let bytes = msg_out.write_to_bytes()?;
-        socket.send_raw(bytes).await?;
+        let out_bytes = if let Some(b) = rendezvous_codec::serialize(&msg_out, self.wire) {
+            b.to_vec()
+        } else {
+            msg_out.write_to_bytes()?
+        };
+        socket.send_raw(out_bytes).await?;
 
         // 注册到 PortForwardManager，等待对端连入
         PortForwardManager::register_inbound(local_addr, peer_addr, uuid).await;
@@ -456,7 +482,7 @@ impl RendezvousMediator {
         }
         let mut msg_out = RendezvousMessage::new();
         msg_out.set_relay_response(rr);
-        hbbs_conn.send(&msg_out).await?;
+        send_rendezvous(&mut hbbs_conn, &msg_out, self.wire).await?;
 
         // 连接到 hbbr
         let relay_addr = socket_client::check_port(&relay_server, RENDEZVOUS_PORT + 1);
@@ -490,8 +516,12 @@ impl RendezvousMediator {
             version: env!("CARGO_PKG_VERSION").to_owned(),
             ..Default::default()
         });
-        let bytes = msg_out.write_to_bytes()?;
-        socket.send_raw(bytes).await?;
+        let out_bytes = if let Some(b) = rendezvous_codec::serialize(&msg_out, self.wire) {
+            b.to_vec()
+        } else {
+            msg_out.write_to_bytes()?
+        };
+        socket.send_raw(out_bytes).await?;
 
         log::info!("[mediator] LocalAddr 已发送: local={}", local_addr);
         Ok(())
@@ -548,6 +578,8 @@ pub async fn connect_to_peer(peer_id: String, local_port: u16) -> ResultType<u16
     }
     let host = socket_client::check_port(&servers[0], RENDEZVOUS_PORT);
 
+    let wire = ClientConfig::get_rendezvous_wire_protocol();
+
     log::info!("[mediator] 发起连接到 peer={}", peer_id);
 
     let mut conn = connect_tcp(host.clone(), CONNECT_TIMEOUT).await?;
@@ -561,7 +593,7 @@ pub async fn connect_to_peer(peer_id: String, local_port: u16) -> ResultType<u16
         licence_key: String::new(),
         ..Default::default()
     });
-    conn.send(&msg).await?;
+    send_rendezvous(&mut conn, &msg, wire).await?;
 
     // 等待响应（PunchHole 或 RelayResponse）
     let bytes = tokio::time::timeout(
@@ -572,7 +604,8 @@ pub async fn connect_to_peer(peer_id: String, local_port: u16) -> ResultType<u16
     .map_err(|_| anyhow::anyhow!("等待服务器响应超时"))?
     .ok_or_else(|| anyhow::anyhow!("连接被重置"))??;
 
-    let msg = RendezvousMessage::parse_from_bytes(&bytes)?;
+    let msg = rendezvous_codec::parse(&bytes)
+        .ok_or_else(|| anyhow::anyhow!("无法解析 rendezvous 响应（proto3/capnp）"))?;
 
     // 根据服务器响应决定连接方式
     let actual_port = match msg.union {

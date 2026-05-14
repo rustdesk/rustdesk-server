@@ -68,7 +68,6 @@ reqwest = { git = "https://github.com/rustdesk-org/reqwest", features = ["blocki
 
 [build-dependencies]
 core_common = { path = "libs/core-common" }
-capnpc = "0.20"
 
 # "libs/hbb_common",
 [workspace]

@@ -1,3 +1,9 @@
+#[allow(clippy::all, dead_code)]
+/// Cap'n Proto 生成的 rendezvous 类型（`crate::rendezvous_capnp` 供生成代码解析）
+pub mod rendezvous_capnp {
+    include!(concat!(env!("OUT_DIR"), "/rendezvous_capnp.rs"));
+}
+pub mod rendezvous_codec;
 pub mod compress;
 pub mod platform;
 pub mod protos;

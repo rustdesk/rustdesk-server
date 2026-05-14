@@ -3,6 +3,7 @@
 //! 封装 core_common::config::Config，并提供客户端专属配置读写。
 //! 配置文件路径：`~/.nat-client/config.toml`（Unix）或 `%APPDATA%\nat-client\config.toml`（Windows）
 
+use clap::ValueEnum;
 use core_common::{log, ResultType};
 use once_cell::sync::Lazy;
 use serde_derive::{Deserialize, Serialize};
@@ -15,6 +16,28 @@ use std::{
 // ──────────────────────────────────────────────────────────────────────────────
 // 配置数据结构
 // ──────────────────────────────────────────────────────────────────────────────
+
+/// 与 hbbs 之间的 rendezvous 帧编码（默认 proto3，与官方 RustDesk 兼容）
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, ValueEnum,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum RendezvousWireProtocol {
+    #[default]
+    #[value(name = "proto3")]
+    Proto3,
+    #[value(name = "capnp")]
+    Capnp,
+}
+
+impl RendezvousWireProtocol {
+    pub fn to_codec(self) -> core_common::rendezvous_codec::Protocol {
+        match self {
+            Self::Proto3 => core_common::rendezvous_codec::Protocol::Proto3,
+            Self::Capnp => core_common::rendezvous_codec::Protocol::Capnp,
+        }
+    }
+}
 
 /// 客户端专属配置（持久化到 TOML 文件）
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -46,6 +69,10 @@ pub struct ClientConfig {
     /// 目标 rendezvous 服务器地址（host:port 或 host），逗号分隔
     #[serde(default)]
     pub rendezvous_servers: String,
+
+    /// 与 hbbs 的线路协议：`proto3` 或 `capnp`（须与服务端对端一致；默认 proto3）
+    #[serde(default)]
+    pub rendezvous_wire_protocol: RendezvousWireProtocol,
 
     /// 中继服务器地址（可为空，由服务器提供）
     #[serde(default)]
@@ -223,6 +250,14 @@ impl ClientConfig {
             .collect()
     }
 
+    pub fn get_rendezvous_wire_protocol() -> core_common::rendezvous_codec::Protocol {
+        CONFIG
+            .read()
+            .unwrap()
+            .rendezvous_wire_protocol
+            .to_codec()
+    }
+
     pub fn get_relay_server() -> String {
         CONFIG.read().unwrap().relay_server.clone()
     }
@@ -328,6 +363,7 @@ pub fn init(
     relay_server: Option<String>,
     id_override: Option<String>,
     ipc_port: Option<u16>,
+    rendezvous_wire: Option<RendezvousWireProtocol>,
 ) -> ResultType<()> {
     use sodiumoxide::crypto::sign;
 
@@ -344,6 +380,9 @@ pub fn init(
         }
         if let Some(p) = ipc_port {
             cfg.ipc_port = p;
+        }
+        if let Some(w) = rendezvous_wire {
+            cfg.rendezvous_wire_protocol = w;
         }
 
         // ID

@@ -4,6 +4,9 @@
 //! 1. 监听 UDP 广播，响应来自其他 nat-client 的 ping 探测
 //! 2. 主动发送 broadcast ping，收集局域网内其他节点的 pong 响应
 //! 3. 将发现的节点缓存到全局 `DISCOVERED_PEERS`
+//!
+//! 线路协议与 hbbs 一致：`rendezvous_codec` 自动识别入站 proto3/capnp；
+//! 主动广播 ping 使用配置 `rendezvous_wire_protocol`，pong 与入站 ping 同格式。
 
 use crate::config::ClientConfig;
 use core_common::{
@@ -11,6 +14,7 @@ use core_common::{
     config::RENDEZVOUS_PORT,
     log,
     protobuf::Message as _,
+    rendezvous_codec::{self, Protocol},
     rendezvous_proto::{rendezvous_message, PeerDiscovery, RendezvousMessage},
     ResultType,
 };
@@ -22,6 +26,14 @@ use std::{
     sync::{Arc, Mutex},
     time::Instant,
 };
+
+/// 序列化 LAN rendezvous 帧（proto3 / capnp）
+#[inline]
+fn serialize_lan_message(msg: &RendezvousMessage, wire: Protocol) -> Vec<u8> {
+    rendezvous_codec::serialize(msg, wire)
+        .map(|b| b.to_vec())
+        .unwrap_or_else(|| msg.write_to_bytes().unwrap_or_default())
+}
 
 // ──────────────────────────────────────────────────────────────────────────────
 // 数据结构
@@ -116,9 +128,10 @@ pub fn start_listening() -> ResultType<()> {
             Err(_) => continue, // 超时或暂时错误，继续
         };
 
-        let msg = match RendezvousMessage::parse_from_bytes(&buf[..len]) {
-            Ok(m) => m,
-            Err(_) => continue,
+        let reply_proto = rendezvous_codec::detect(&buf[..len]);
+        let msg = match rendezvous_codec::parse(&buf[..len]) {
+            Some(m) => m,
+            None => continue,
         };
 
         if let Some(rendezvous_message::Union::PeerDiscovery(p)) = msg.union {
@@ -152,7 +165,8 @@ pub fn start_listening() -> ResultType<()> {
             };
             let mut msg_out = RendezvousMessage::new();
             msg_out.set_peer_discovery(pong);
-            if let Ok(bytes) = msg_out.write_to_bytes() {
+            let bytes = serialize_lan_message(&msg_out, reply_proto);
+            if !bytes.is_empty() {
                 allow_err!(socket.send_to(&bytes, from_addr));
                 log::debug!("[lan] pong 已发送至 {}", from_addr);
             }
@@ -172,6 +186,8 @@ pub fn discover() -> ResultType<Vec<DiscoveredPeer>> {
         return Ok(get_peers());
     }
 
+    let wire = ClientConfig::get_rendezvous_wire_protocol();
+
     // 构造 ping 消息
     let my_id = ClientConfig::get_id();
     let ping = PeerDiscovery {
@@ -181,7 +197,7 @@ pub fn discover() -> ResultType<Vec<DiscoveredPeer>> {
     };
     let mut msg_out = RendezvousMessage::new();
     msg_out.set_peer_discovery(ping);
-    let out = msg_out.write_to_bytes()?;
+    let out = serialize_lan_message(&msg_out, wire);
 
     // 向 255.255.255.255:broadcast_port 广播
     let bcast_addr = SocketAddr::from(([255, 255, 255, 255], broadcast_port()));
@@ -239,9 +255,9 @@ fn collect_responses(
             Err(_) => continue,
         };
 
-        let msg = match RendezvousMessage::parse_from_bytes(&buf[..len]) {
-            Ok(m) => m,
-            Err(_) => continue,
+        let msg = match rendezvous_codec::parse(&buf[..len]) {
+            Some(m) => m,
+            None => continue,
         };
 
         if let Some(rendezvous_message::Union::PeerDiscovery(p)) = msg.union {

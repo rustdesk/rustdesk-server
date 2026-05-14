@@ -135,3 +135,36 @@ views::UserInfo 增加 role（供以后服务端渲染用）。
 
 能否跟据https://github.com/rustdesk/rustdesk.git项目源码的ipc.rs、lan.rs和rendezvous_mediator.rs
 等源文件，实现一个与nat-server项目相结合的完整内网穿透工具完成？
+
+实现概要
+1. 共享编解码（libs/core-common）
+增加 protos/rendezvous.capnp，在 build.rs 里与 protobuf 一起用 capnpc 生成 Rust。
+根模块 rendezvous_capnp 放在 lib.rs（满足生成代码里的 crate::rendezvous_capnp）。
+新增 rendezvous_codec：Protocol、detect、parse、serialize，与原先 hbbs 中逻辑一致，并带有单元测试。
+2. nat-server（hbbs）
+src/lib.rs 中 codec 改为 pub use core_common::rendezvous_codec::*。
+删除重复的 src/codec.rs、src/proto/，根目录 build.rs 不再编译 capnp。
+tcp_punch：HashMap<SocketAddr, (Sink, Protocol)>，在 PunchHoleRequest / RequestRelay 入库时写入该 TCP 上的协议；send_to_tcp / send_to_tcp_sync 按映射回包（不再写死 Proto3）。
+UDP 打洞错误：handle_udp_punch_hole_request 在只回给请求方时用请求方的 proto，不再误用 target_proto。
+PunchHoleSent / LocalAddr 经 UDP 回给对端：用 PeerMap::protocol_for_addr(addr_a) 选编码。
+PeerMap::protocol_for_addr：按 try_into_v4(socket_addr) 匹配已注册 peer 的 protocol 字段。
+3. nat-client
+配置项 rendezvous_wire_protocol（proto3 / capnp，默认 proto3），ClientConfig::get_rendezvous_wire_protocol()。
+gui / daemon 增加 --rendezvous-protocol proto3|capnp，传入 config::init(..., Option<RendezvousWireProtocol>) 写入配置。
+rendezvous_mediator：收包统一 rendezvous_codec::parse；发包用 serialize + send_bytes / send_raw；connect_to_peer 同样按配置编解码。
+使用说明
+默认仍为 proto3，与现有客户端兼容。
+若要用 capnp：客户端 config.toml 中设 rendezvous_wire_protocol = "capnp"，或启动时加 --rendezvous-protocol capnp；须与对端/服务器实际帧格式一致（服务器仍按首字节 0x00 自动识别入站协议，并按 peer 记录与 tcp_punch 映射回包）。
+局域网 lan.rs 的 PeerDiscovery 仍为 protobuf，与本次 rendezvous/hbbs 双协议无关。
+
+1. libs/core-common/src/rendezvous_codec.rs
+capnp → proto3：增加 W::PeerDiscovery，把 capnp 的 PeerDiscovery 填进 RendezvousMessage::peer_discovery。
+proto3 → capnp：增加 Union::PeerDiscovery，init_peer_discovery() 并写入各字段。
+测试：新增 peer_discovery_capnp_roundtrip。
+2. nat-client/src/lan.rs
+serialize_lan_message：用 rendezvous_codec::serialize（失败时退回 write_to_bytes）。
+start_listening：入站用 rendezvous_codec::parse；pong 用 rendezvous_codec::detect 得到的协议编码，与对端 ping 格式一致（proto3 / capnp 可混用）。
+discover：广播 ping 使用 ClientConfig::get_rendezvous_wire_protocol()（与 hbbs / rendezvous_mediator 同一配置）。
+collect_responses：入站用 rendezvous_codec::parse，可收两种格式。
+模块注释已说明上述行为。
+构建与 peer_discovery_capnp_roundtrip 测试已通过。

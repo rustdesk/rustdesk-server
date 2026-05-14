@@ -8,6 +8,7 @@ use core_common::{
     log,
     rendezvous_proto::*,
     tokio::sync::{Mutex, RwLock},
+    try_into_v4,
     ResultType,
 };
 // 导入序列化/反序列化支持
@@ -426,5 +427,19 @@ impl PeerMap {
     #[inline]
     pub(crate) async fn is_in_memory(&self, id: &str) -> bool {
         self.map.read().await.contains_key(id)
+    }
+
+    /// 按 rendezvous 可见地址查找 peer 的线路协议（用于向对端回包时匹配 proto3/capnp）
+    #[inline]
+    pub(crate) async fn protocol_for_addr(&self, addr: SocketAddr) -> crate::codec::Protocol {
+        let needle = try_into_v4(addr);
+        let guard = self.map.read().await;
+        for p in guard.values() {
+            let r = p.read().await;
+            if try_into_v4(r.socket_addr) == needle {
+                return r.protocol;
+            }
+        }
+        crate::codec::Protocol::Proto3
     }
 }

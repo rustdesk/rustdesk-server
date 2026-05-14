@@ -1,6 +1,6 @@
-pub mod codec;
-pub mod proto;
-pub use proto::rendezvous_capnp;
+pub mod codec {
+    pub use core_common::rendezvous_codec::*;
+}
 mod rendezvous_server;
 pub use rendezvous_server::*;
 pub mod api;

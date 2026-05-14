@@ -28,7 +28,7 @@ mod rendezvous_mediator;
 mod ui;
 
 use clap::{Parser, Subcommand};
-use config::ClientConfig;
+use config::{ClientConfig, RendezvousWireProtocol};
 use core_common::{log, ResultType};
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -66,6 +66,9 @@ enum Commands {
         ipc_port: u16,
         #[arg(long, default_value = "info")]
         log_level: String,
+        /// 与 hbbs 的线路协议（默认 proto3；capnp 须与服务器/对端一致）
+        #[arg(long = "rendezvous-protocol")]
+        rendezvous_protocol: Option<RendezvousWireProtocol>,
     },
 
     // ── 守护进程模式 ──────────────────────────────────────────────────────────
@@ -81,6 +84,8 @@ enum Commands {
         ipc_port: u16,
         #[arg(long, default_value = "info")]
         log_level: String,
+        #[arg(long = "rendezvous-protocol")]
+        rendezvous_protocol: Option<RendezvousWireProtocol>,
     },
 
     // ── 基础查询 ──────────────────────────────────────────────────────────────
@@ -174,6 +179,7 @@ fn main() {
             id,
             ipc_port,
             log_level,
+            rendezvous_protocol,
         } => {
             init_logger(&log_level);
             log::info!(
@@ -182,8 +188,14 @@ fn main() {
             );
 
             // 初始化配置
-            config::init(Some(server.clone()), relay.clone(), id, Some(ipc_port))
-                .expect("配置初始化失败");
+            config::init(
+                Some(server.clone()),
+                relay.clone(),
+                id,
+                Some(ipc_port),
+                rendezvous_protocol,
+            )
+            .expect("配置初始化失败");
 
             // 启动 tokio 后台运行时（多线程，专用于异步服务）
             let rt = tokio::runtime::Builder::new_multi_thread()
@@ -213,6 +225,7 @@ fn main() {
             id,
             ipc_port,
             log_level,
+            rendezvous_protocol,
         } => {
             init_logger(&log_level);
             log::info!(
@@ -227,7 +240,14 @@ fn main() {
                 .expect("tokio runtime 创建失败");
 
             rt.block_on(async move {
-                config::init(Some(server), relay, id, Some(ipc_port)).expect("配置初始化失败");
+                config::init(
+                    Some(server),
+                    relay,
+                    id,
+                    Some(ipc_port),
+                    rendezvous_protocol,
+                )
+                .expect("配置初始化失败");
 
                 log::info!("本机 Peer ID: {}", ClientConfig::get_id());
 
