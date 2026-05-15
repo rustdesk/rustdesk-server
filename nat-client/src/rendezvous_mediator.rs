@@ -134,11 +134,7 @@ impl RendezvousMediator {
             host_prefix: host_prefix.clone(),
             wire,
         };
-        log::info!(
-            "[mediator] TCP 连接成功: {}（线路协议: {:?}）",
-            host,
-            wire
-        );
+        log::info!("[mediator] TCP 连接成功: {}（线路协议: {:?}）", host, wire);
 
         // 重置本 host 的 key 确认状态，确保本轮重新验证
         ClientConfig::set_host_key_confirmed(&host_prefix, false);
@@ -188,6 +184,7 @@ impl RendezvousMediator {
                         .map(|t| t.elapsed().as_millis() as i64)
                         .unwrap_or(REG_INTERVAL);
                     if need_reg && elapsed >= REG_INTERVAL {
+                        log::info!("=============elapsed:{:?}  REG_INTERVAL: {:?} need_reg:{:?}====", elapsed,REG_INTERVAL,need_reg);
                         rz.register_pk(&mut conn).await?;
                         last_register_sent = Some(Instant::now());
                     }

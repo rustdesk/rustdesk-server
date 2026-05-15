@@ -99,7 +99,7 @@ impl Database {
             std::fs::File::create(url).ok();
         }
         let n: usize = std::env::var("MAX_DATABASE_CONNECTIONS")
-            .unwrap_or_else(|_| "1".to_owned())
+            .unwrap_or_else(|_| "5".to_owned())
             .parse()
             .unwrap_or(1);
         log::debug!("MAX_DATABASE_CONNECTIONS={}", n);

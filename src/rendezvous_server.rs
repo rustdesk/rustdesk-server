@@ -152,17 +152,25 @@ impl RendezvousServer {
         log::info!("serial={}", serial);
         // 获取Rendezvous服务器列表
         let rendezvous_servers = get_servers(&get_arg("rendezvous-servers"), "rendezvous-servers");
+        // 记录Rendezvous服务器列表
+        log::info!("rendezvous-servers={:?}", rendezvous_servers);
         log::info!("Listening on tcp/udp :{}", port);
         log::info!("Listening on tcp :{}, extra port for NAT test", nat_port);
         log::info!("Listening on websocket :{}", ws_port);
+        // 创建UDP监听器
         let mut socket = create_udp_listener(port, rmem).await?;
+        // 创建消息通道
         let (tx, mut rx) = mpsc::unbounded_channel::<Data>();
+        // 获取软件更新URL
         let software_url = get_arg("software-url");
+        // 获取版本信息
         let version = core_common::get_version_from_url(&software_url);
         if !version.is_empty() {
             log::info!("software_url: {}, version: {}", software_url, version);
         }
+        // 获取网络掩码
         let mask = get_arg("mask").parse().ok();
+        // 获取本地IP地址
         let local_ip = if mask.is_none() {
             "".to_owned()
         } else {
@@ -173,6 +181,7 @@ impl RendezvousServer {
                     .unwrap_or_default(),
             )
         };
+        // 初始化服务器结构体
         let mut rs = Self {
             tcp_punch: Arc::new(Mutex::new(HashMap::new())),
             pm,
@@ -189,14 +198,20 @@ impl RendezvousServer {
                 local_ip,
             }),
         };
+        // 输出配置信息
         log::info!("mask: {:?}", rs.inner.mask);
         log::info!("local-ip: {:?}", rs.inner.local_ip);
+        // 设置API端口环境变量
         std::env::set_var("PORT_FOR_API", port.to_string());
+        // 解析中继服务器
         rs.parse_relay_servers(&get_arg("relay-servers"));
+        // 创建TCP监听器
         let mut listener = create_tcp_listener(port).await?;
         let mut listener2 = create_tcp_listener(nat_port).await?;
         let mut listener3 = create_tcp_listener(ws_port).await?;
+        // 获取测试地址
         let test_addr = std::env::var("TEST_HBBS").unwrap_or_default();
+        // 检查是否总是使用中继
         if std::env::var("ALWAYS_USE_RELAY")
             .unwrap_or_default()
             .to_uppercase()
@@ -204,6 +219,7 @@ impl RendezvousServer {
         {
             ALWAYS_USE_RELAY.store(true, Ordering::SeqCst);
         }
+        // 输出中继使用状态
         log::info!(
             "ALWAYS_USE_RELAY={}",
             if ALWAYS_USE_RELAY.load(Ordering::SeqCst) {
@@ -212,6 +228,7 @@ impl RendezvousServer {
                 "N"
             }
         );
+        // 启动测试任务（如果需要）
         if test_addr.to_lowercase() != "no" {
             let test_addr = if test_addr.is_empty() {
                 listener.local_addr()?
@@ -220,6 +237,7 @@ impl RendezvousServer {
             };
             tokio::spawn(async move {
                 if let Err(err) = test_hbbs(test_addr).await {
+                    // IPv6测试失败时，尝试IPv4
                     if test_addr.is_ipv6() && test_addr.ip().is_unspecified() {
                         let mut test_addr = test_addr;
                         test_addr.set_ip(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
@@ -234,6 +252,7 @@ impl RendezvousServer {
                 }
             });
         };
+        // 主事件循环任务
         let main_task = async move {
             loop {
                 log::info!("Start");
@@ -267,13 +286,17 @@ impl RendezvousServer {
                 }
             }
         };
+        // 监听系统信号
         let listen_signal = listen_signal();
+        // 等待主任务或信号完成
         tokio::select!(
             res = main_task => res,
             res = listen_signal => res,
         )
     }
 
+    ///
+    ///  主I/O循环：处理所有网络事件
     async fn io_loop(
         &mut self,
         rx: &mut Receiver,
@@ -283,9 +306,11 @@ impl RendezvousServer {
         socket: &mut FramedSocket,
         key: &str,
     ) -> LoopFailure {
+        // 创建中继服务器检查定时器
         let mut timer_check_relay = interval(Duration::from_millis(CHECK_RELAY_TIMEOUT));
         loop {
             tokio::select! {
+                // 定时检查中继服务器状态
                 _ = timer_check_relay.tick() => {
                     if self.relay_servers0.len() > 1 {
                         let rs = self.relay_servers0.clone();
@@ -295,20 +320,26 @@ impl RendezvousServer {
                         });
                     }
                 }
+                // 处理内部消息
                 Some(data) = rx.recv() => {
                     match data {
                         Data::Msg(msg, addr, proto) => {
                             if let Some(bytes) = crate::codec::serialize(msg.as_ref(), proto) {
+                                // 发送UDP消息 ??
                                 allow_err!(socket.send_bytes(bytes, addr).await);
                             }
                         }
+                        // 解析中继服务器列表（字符串格式）
                         Data::RelayServers0(rs) => { self.parse_relay_servers(&rs); }
+                        // 设置中继服务器列表（结构化格式）
                         Data::RelayServers(rs) => { self.relay_servers = Arc::new(rs); }
                     }
                 }
+                // 处理UDP消息
                 res = socket.next() => {
                     match res {
                         Some(Ok((bytes, addr))) => {
+                            // 处理接收到的UDP消息
                             if let Err(err) = self.handle_udp(&bytes, addr.into(), socket, key).await {
                                 log::error!("udp failure: {}", err);
                                 return LoopFailure::UdpSocket;
@@ -320,13 +351,17 @@ impl RendezvousServer {
                         }
                         None => {
                             // unreachable!() ?
+                            // 理论上不应该到达这里
                         }
                     }
                 }
+                // 处理NAT测试连接（TCP）
                 res = listener2.accept() => {
                     match res {
                         Ok((stream, addr))  => {
+                            // 设置无延迟模式
                             stream.set_nodelay(true).ok();
+                            // 处理NAT测试连接
                             self.handle_listener2(stream, addr).await;
                         }
                         Err(err) => {
@@ -335,10 +370,13 @@ impl RendezvousServer {
                         }
                     }
                 }
+                // 处理WebSocket连接（TCP）
                 res = listener3.accept() => {
                     match res {
                         Ok((stream, addr))  => {
+                            // 设置无延迟模式
                             stream.set_nodelay(true).ok();
+                             // 处理WebSocket连接
                             self.handle_listener(stream, addr, key, true).await;
                         }
                         Err(err) => {
@@ -362,7 +400,7 @@ impl RendezvousServer {
             }
         }
     }
-
+    // 处理接收到的UDP消息
     #[inline]
     async fn handle_udp(
         &mut self,
@@ -371,9 +409,11 @@ impl RendezvousServer {
         socket: &mut FramedSocket,
         key: &str,
     ) -> ResultType<()> {
+        // 解析协议消息
         let proto = crate::codec::detect(bytes);
         if let Some(msg_in) = crate::codec::parse(bytes) {
             match msg_in.union {
+                // 处理peer注册请求
                 Some(rendezvous_message::Union::RegisterPeer(rp)) => {
                     // B registered
                     if !rp.id.is_empty() {
@@ -394,6 +434,7 @@ impl RendezvousServer {
                         }
                     }
                 }
+                // 处理公钥注册请求
                 Some(rendezvous_message::Union::RegisterPk(rk)) => {
                     if rk.uuid.is_empty() || rk.pk.is_empty() {
                         return Ok(());
@@ -505,11 +546,15 @@ impl RendezvousServer {
                         socket.send(&msg_out, addr).await?
                     }
                 }
+                // 处理打洞请求
                 Some(rendezvous_message::Union::PunchHoleRequest(ph)) => {
+                    // 检查peer是否在内存中
                     if self.pm.is_in_memory(&ph.id).await {
+                        // 直接处理（在内存中）
                         self.handle_udp_punch_hole_request(addr, ph, key, proto)
                             .await?;
                     } else {
+                        // 从数据库加载（避免阻塞主线程）
                         // not in memory, fetch from db with spawn in case blocking me
                         let mut me = self.clone();
                         let key = key.to_owned();
@@ -521,17 +566,22 @@ impl RendezvousServer {
                         });
                     }
                 }
+                // 处理打洞完成通知
                 Some(rendezvous_message::Union::PunchHoleSent(phs)) => {
                     self.handle_hole_sent(phs, addr, Some(socket)).await?;
                 }
+                // 处理本地地址通知
                 Some(rendezvous_message::Union::LocalAddr(la)) => {
                     self.handle_local_addr(la, addr, Some(socket)).await?;
                 }
+                // 处理配置更新
                 Some(rendezvous_message::Union::ConfigureUpdate(mut cu)) => {
+                    // 只允许来自环回地址的配置更新
                     if try_into_v4(addr).ip().is_loopback() && cu.serial > self.inner.serial {
                         let mut inner: Inner = (*self.inner).clone();
                         inner.serial = cu.serial;
                         self.inner = Arc::new(inner);
+                        // 更新Rendezvous服务器列表
                         self.rendezvous_servers = Arc::new(
                             cu.rendezvous_servers
                                 .drain(..)
@@ -548,6 +598,7 @@ impl RendezvousServer {
                         );
                     }
                 }
+                // 处理软件更新通知
                 Some(rendezvous_message::Union::SoftwareUpdate(su)) => {
                     if !self.inner.version.is_empty() && su.url != self.inner.version {
                         let mut msg_out = RendezvousMessage::new();
@@ -567,7 +618,8 @@ impl RendezvousServer {
         }
         Ok(())
     }
-
+    /// 处理TCP连接（包括WebSocket和NAT测试）
+    ///
     #[inline]
     async fn handle_tcp(
         &mut self,
@@ -575,7 +627,7 @@ impl RendezvousServer {
         sink: &mut Option<Sink>,
         addr: SocketAddr,
         key: &str,
-        ws: bool,
+        ws: bool, // 是否为WebSocket连接
     ) -> bool {
         let proto = crate::codec::detect(bytes);
         if let Some(msg_in) = crate::codec::parse(bytes) {

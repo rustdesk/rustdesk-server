@@ -168,3 +168,20 @@ discover：广播 ping 使用 ClientConfig::get_rendezvous_wire_protocol()（与
 collect_responses：入站用 rendezvous_codec::parse，可收两种格式。
 模块注释已说明上述行为。
 构建与 peer_discovery_capnp_roundtrip 测试已通过。
+
+检查客户端登录状态:
+如果这个 209149759 是你自己的设备，请尝试在客户端退出登录并重新登录。重新登录会刷新 JWT 令牌和设备关联。
+
+设置生产环境环境变量:
+为了安全和稳定，建议在启动 hbbs 前设置以下环境变量：
+
+Bash
+export JWT_SECRET=你的一串随机字符串
+export BOOTSTRAP_ADMIN_USERNAME=你的管理员用户名
+检查地址簿/设备限制:
+如果你在 RustDesk 控制面板（Web UI）中开启了“只允许已知设备连接”或类似的策略，请确认该设备是否已获得授权。
+
+防火墙确认:
+日志显示服务器在监听 21115-21118 和 8080，请确保你的防火墙（如 AWS 安全组、宝塔面板、ufw 等）已经放行了这些端口的 TCP 和 UDP 流量。
+
+总结：服务器本身运行良好，报错是由于客户端设备身份校验未通过引起的，通常通过重新登录客户端或在管理后台检查设备授权即可解决。

@@ -36,7 +36,7 @@ reqwest      = { version = "0.11", features = ["json", "blocking"] }
 
 # ── GUI 相关 ──────────────────────────────────────────────────────────────────
 # Slint GUI 框架
-slint = { version = "1.16", features = [] }
+slint = { version = "1.16",default-features = false, features = ["compat-1-2","backend-winit","renderer-femtovg","std"] }
 
 # 系统托盘
 tray-icon = "0.24"

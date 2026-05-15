@@ -487,6 +487,7 @@ fn init_logger(level: &str) {
     use env_logger::Env;
     env_logger::Builder::from_env(Env::default().default_filter_or(level))
         .format_timestamp_millis()
+        .filter_module("ICU4X", log::LevelFilter::Off)// 强制关闭 icu4x 的日志输出
         .init();
 }
 
