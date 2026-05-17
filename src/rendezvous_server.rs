@@ -744,6 +744,7 @@ impl RendezvousServer {
                         ..Default::default()
                     });
                     Self::send_to_sink(sink, msg_out, proto).await;
+                    return true;
                 }
                 _ => {}
             }
