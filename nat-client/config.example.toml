@@ -1,0 +1,159 @@
+# ============================================================
+# nat-client 配置文件示例
+#
+# 实际路径：
+#   Linux/macOS : ~/.config/nat-client/config.toml
+#   Windows     : %APPDATA%\nat-client\config.toml
+#
+# 首次启动时程序会自动生成 id / uuid / sk / pk，
+# 无需手动填写密钥字段。
+# ============================================================
+
+
+# ------------------------------------------------------------
+# 基础标识（首次启动后自动生成，无需手动填写）
+# ------------------------------------------------------------
+
+# 本机对端 ID（9 位数字，用于被其他客户端连接）
+# 留空 = 程序启动时自动生成
+id = ""
+
+# 设备 UUID（用于向服务器注册公钥，base64 编码）
+uuid = ""
+
+# Ed25519 私钥（base64），与 pk 配对
+sk = ""
+
+# Ed25519 公钥（base64）
+pk = ""
+
+# 公钥是否已由服务器确认（程序自动维护，无需手动修改）
+key_confirmed = false
+
+
+# ------------------------------------------------------------
+# 服务器连接
+# ------------------------------------------------------------
+
+# rendezvous 信令服务器地址，支持多个（逗号分隔）
+# 格式：host 或 host:port（默认端口 21116）
+# 示例：
+#   rendezvous_servers = "nat.example.com"
+#   rendezvous_servers = "nat.example.com:21116,nat2.example.com"
+rendezvous_servers = "nat.example.com"
+
+# 与 hbbs 的通信协议
+#   proto3  — 默认，与标准 RustDesk/hbbs 兼容
+#   capnp   — 实验性，须与服务端保持一致
+rendezvous_wire_protocol = "proto3"
+
+# 中继服务器地址（留空则由服务器自动分配）
+# 格式：host 或 host:port（默认端口 21117）
+relay_server = ""
+
+# HTTP API 地址（用于登录、注册、订阅查询等）
+# 留空时自动从 rendezvous_servers 推导：取第一个 host + 端口 8080
+# 示例：api_url = "http://nat.example.com:8080"
+api_url = ""
+
+
+# ------------------------------------------------------------
+# 本地网络
+# ------------------------------------------------------------
+
+# IPC 控制接口监听端口（CLI 命令通过此端口与守护进程通信）
+# 同一台机器运行多个实例时需指定不同端口
+ipc_port = 21114
+
+# 直接访问监听端口（0 = 禁用）
+# 非 0 时，本机在该端口等待对端直连（用于特殊网络环境）
+direct_listen_port = 0
+
+# NAT 类型缓存（程序自动检测并写入，无需手动设置）
+#   0 = 未知
+#   1 = 对称型（Symmetric）
+#   2 = 对称型 UDP 防火墙
+#   3 = 完全锥形（Full Cone）
+#   4 = 受限锥形（Restricted Cone）
+#   5 = 端口受限锥形（Port Restricted Cone）
+nat_type = 0
+
+
+# ------------------------------------------------------------
+# 用户认证（通过 nat-client login 命令自动写入，无需手动填写）
+# ------------------------------------------------------------
+
+# JWT token（登录后自动保存）
+auth_token = ""
+
+# token 过期时间（Unix 时间戳秒，0 = 未登录）
+auth_token_expires = 0
+
+# 当前登录用户 ID
+auth_user_id = 0
+
+# 当前登录用户名
+auth_username = ""
+
+# 当前角色（"user" 或 "admin"）
+auth_role = ""
+
+# 本设备在服务器中的行 ID（0 = 未绑定）
+auth_device_row_id = 0
+
+
+# ------------------------------------------------------------
+# 端口转发规则（forward_rules）
+#
+# 当其他对端通过 nat-server 连入本机时，
+# 根据规则决定将流量转发到哪个本地服务。
+#
+# 匹配优先级：
+#   1. peer_id 与发起方完全匹配的规则
+#   2. peer_id 为空的通配规则（任意对端）
+#
+# 可通过命令行管理：
+#   nat-client scan-services        # 扫描本机在监听的服务
+#   nat-client add-rule -n SSH -t 22
+#   nat-client list-rules
+#   nat-client remove-rule -r <rule_id>
+# ------------------------------------------------------------
+
+# 示例 1：任意对端均可访问本机 SSH（端口 22）
+# [[forward_rules]]
+# id          = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"   # 唯一 ID（UUID），程序自动生成
+# name        = "SSH"
+# peer_id     = ""                                         # 空 = 任意对端
+# target_host = "127.0.0.1"
+# target_port = 22
+# enabled     = true
+
+# 示例 2：仅允许 ID 为 123456789 的对端访问本机 HTTP 服务
+# [[forward_rules]]
+# id          = "b2c3d4e5-f6a7-8901-bcde-f12345678901"
+# name        = "HTTP"
+# peer_id     = "123456789"
+# target_host = "127.0.0.1"
+# target_port = 80
+# enabled     = true
+
+# 示例 3：将对端流量转发到内网另一台机器的 MySQL（跨机转发）
+# [[forward_rules]]
+# id          = "c3d4e5f6-a7b8-9012-cdef-123456789012"
+# name        = "MySQL-内网"
+# peer_id     = ""
+# target_host = "192.168.1.100"
+# target_port = 3306
+# enabled     = true
+
+# 示例 4：RDP 远程桌面
+# [[forward_rules]]
+# id          = "d4e5f6a7-b8c9-0123-defa-234567890123"
+# name        = "RDP"
+# peer_id     = ""
+# target_host = "127.0.0.1"
+# target_port = 3389
+# enabled     = true
+
+# 取消注释即可启用，或使用命令行添加：
+# nat-client add-rule -n SSH -t 22

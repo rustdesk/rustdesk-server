@@ -1,13 +1,24 @@
 // Web handlers using loco-rs + Askama
-use askama_axum::Template;
+use askama::Template;
 use axum::{
-    extract::{Extension, Path, Query},
+    extract::{Extension, Query},
     http::StatusCode,
     response::{Html, IntoResponse, Json},
     routing::{delete, get, post, put},
     Router,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use std::collections::HashMap;
+
+use crate::{
+    api::{ApiResponse, ApiState, LoginRequest, RegisterRequest, UserInfo},
+    database::{CreateUserRequest, Database},
+    views::{
+        AdminSubscriptionsTemplate, DashboardTemplate, DevicesTemplate, ForgotPasswordTemplate,
+        LoginTemplate, MonitorTemplate, RegisterTemplate, ResetPasswordTemplate,
+        SubscriptionTemplate, UsersTemplate,
+    },
+};
 
 #[derive(Deserialize)]
 pub struct ForgotPasswordRequest {
@@ -19,17 +30,6 @@ pub struct ResetPasswordRequest {
     pub token: String,
     pub password: String,
 }
-
-use std::collections::HashMap;
-
-use crate::{
-    api::{ApiResponse, ApiState, DeviceInfo, LoginRequest, RegisterRequest, UserInfo},
-    database::{CreateDeviceRequest, CreateUserRequest, Database, User, UserDevice},
-    views::{
-        DashboardTemplate, DevicesTemplate, ForgotPasswordTemplate, LoginTemplate, MonitorTemplate,
-        RegisterTemplate, ResetPasswordTemplate, UserInfo as LayoutUserInfo, UsersTemplate,
-    },
-};
 
 // Web handlers
 pub async fn login_page() -> impl IntoResponse {
@@ -130,6 +130,30 @@ pub async fn users_page(
 pub async fn monitor_page() -> impl IntoResponse {
     let template = MonitorTemplate {
         title: "连接监控".to_string(),
+        current_user: None,
+    };
+    Html(
+        template
+            .render()
+            .unwrap_or_else(|_| "Template error".to_string()),
+    )
+}
+
+pub async fn subscription_page() -> impl IntoResponse {
+    let template = SubscriptionTemplate {
+        title: "我的订阅".to_string(),
+        current_user: None,
+    };
+    Html(
+        template
+            .render()
+            .unwrap_or_else(|_| "Template error".to_string()),
+    )
+}
+
+pub async fn admin_subscriptions_page() -> impl IntoResponse {
+    let template = AdminSubscriptionsTemplate {
+        title: "订阅管理".to_string(),
         current_user: None,
     };
     Html(
@@ -256,9 +280,13 @@ pub async fn login(
                         }
                     };
 
+                    let user_id_for_sub = user.id;
+                    let sub_info =
+                        crate::api::build_subscription_info(&_state.db, user_id_for_sub).await;
                     let response = crate::api::LoginResponse {
                         token,
                         user: user.into(),
+                        subscription: sub_info,
                     };
 
                     Ok(Json(ApiResponse::success(response)))
@@ -355,6 +383,8 @@ pub fn create_web_router(db: Database, jwt_secret: String) -> Router {
         .route("/devices", get(devices_page))
         .route("/users", get(users_page))
         .route("/monitor", get(monitor_page))
+        .route("/subscription", get(subscription_page))
+        .route("/admin/subscriptions", get(admin_subscriptions_page))
         // API路由
         .route("/api/login", post(login))
         .route("/api/register", post(register))
@@ -390,6 +420,18 @@ pub fn create_web_router(db: Database, jwt_secret: String) -> Router {
             get(crate::api::monitor_connections),
         )
         .route("/api/monitor/stats", get(crate::api::monitor_stats))
+        .route("/api/change-password", post(crate::password_reset::change_password))
+        .route("/api/subscription/plans", get(crate::api::list_subscription_plans))
+        .route("/api/subscription/my", get(crate::api::get_my_subscription))
+        .route(
+            "/api/admin/subscriptions",
+            get(crate::api::admin_list_subscriptions).post(crate::api::admin_create_subscription),
+        )
+        .route(
+            "/api/admin/subscriptions/:id",
+            put(crate::api::admin_update_subscription)
+                .delete(crate::api::admin_deactivate_subscription),
+        )
         .layer(axum::middleware::from_fn(cors_middleware))
         .layer(axum::Extension(state))
 }

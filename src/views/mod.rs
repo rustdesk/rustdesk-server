@@ -73,3 +73,17 @@ pub struct MonitorTemplate {
     pub title: String,
     pub current_user: Option<UserInfo>,
 }
+
+#[derive(Template)]
+#[template(path = "subscription.html")]
+pub struct SubscriptionTemplate {
+    pub title: String,
+    pub current_user: Option<UserInfo>,
+}
+
+#[derive(Template)]
+#[template(path = "admin_subscriptions.html")]
+pub struct AdminSubscriptionsTemplate {
+    pub title: String,
+    pub current_user: Option<UserInfo>,
+}

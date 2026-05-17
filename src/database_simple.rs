@@ -135,10 +135,18 @@ impl Database {
             .fetch_one(&mut *conn)
             .await
             .unwrap_or(0);
-        
-        if device_count >= 10 {
-            return Err(core_common::anyhow::anyhow!("用户设备数量已达到上限（10个）"));
+
+        drop(conn);
+
+        let device_limit = self.get_user_device_limit(request.user_id).await?;
+        if device_limit > 0 && device_count >= device_limit {
+            return Err(core_common::anyhow::anyhow!(
+                "设备数量已达到当前套餐上限（{}台），请升级套餐",
+                device_limit
+            ));
         }
+
+        let mut conn = self.pool.get().await?;
         
         let result = sqlx::query("insert or replace into user_devices (user_id, device_id, device_name) values (?, ?, ?)")
             .bind(request.user_id)

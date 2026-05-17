@@ -17,9 +17,9 @@
 //! | `{"cmd":"ping"}` | `{"pong":true}` | 健康检查 |
 
 use crate::auth::{self, AuthStatus};
-use crate::config::ClientConfig;
+use crate::config::{ClientConfig, ForwardRule};
 use crate::lan;
-use crate::port_forward::get_active_connections;
+use crate::port_forward::{get_active_connections, scan_local_services};
 use crate::rendezvous_mediator::{self, ONLINE};
 use core_common::{log, ResultType};
 use serde_derive::{Deserialize, Serialize};
@@ -47,6 +47,22 @@ pub struct IpcRequest {
     /// 连接 UUID（用于 close_conn 命令）
     #[serde(default)]
     pub uuid: String,
+    // ── 端口转发规则参数 ────────────────────────────────────────────────
+    /// 规则名称（用于 add_rule 命令）
+    #[serde(default)]
+    pub rule_name: String,
+    /// 规则 ID（用于 remove_rule 命令）
+    #[serde(default)]
+    pub rule_id: String,
+    /// 转发目标主机（默认 127.0.0.1）
+    #[serde(default)]
+    pub target_host: String,
+    /// 转发目标端口
+    #[serde(default)]
+    pub target_port: u16,
+    /// 仅允许该 peer_id 触发规则（空 = 任意对端）
+    #[serde(default)]
+    pub peer_id_filter: String,
     // ── 认证相关参数 ───────────────────────────────────────────────────
     #[serde(default)]
     pub username: String,
@@ -92,6 +108,11 @@ struct IpcResponse {
     pub devices: Option<Vec<serde_json::Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user: Option<serde_json::Value>,
+    // ── 转发规则 / 服务扫描 ────────────────────────────────────────────
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rules: Option<Vec<serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub services: Option<Vec<serde_json::Value>>,
 }
 
 impl Default for IpcResponse {
@@ -109,6 +130,8 @@ impl Default for IpcResponse {
             auth: None,
             devices: None,
             user: None,
+            rules: None,
+            services: None,
         }
     }
 }
@@ -513,6 +536,82 @@ async fn dispatch(req: IpcRequest) -> IpcResponse {
                     error: Some(format!("{}", e)),
                     ..Default::default()
                 },
+            }
+        }
+
+        // ── 列出所有转发规则 ──────────────────────────────────────────────────
+        // 请求: {"cmd":"list_rules"}
+        // 响应: {"rules":[{"id":"...","name":"SSH","target_host":"127.0.0.1","target_port":22,...}]}
+        "list_rules" => {
+            let rules = ClientConfig::get_rules();
+            let json_rules = rules
+                .iter()
+                .map(|r| serde_json::to_value(r).unwrap_or_default())
+                .collect();
+            IpcResponse {
+                rules: Some(json_rules),
+                ..Default::default()
+            }
+        }
+
+        // ── 添加转发规则 ──────────────────────────────────────────────────────
+        // 请求: {"cmd":"add_rule","rule_name":"SSH","target_port":22,"target_host":"127.0.0.1","peer_id_filter":""}
+        // 响应: {"ok":true,"rules":[...]}
+        "add_rule" => {
+            if req.rule_name.is_empty() || req.target_port == 0 {
+                return IpcResponse {
+                    error: Some("rule_name 和 target_port 不能为空".to_owned()),
+                    ..Default::default()
+                };
+            }
+            let mut rule = ForwardRule::new(&req.rule_name, req.target_port);
+            if !req.target_host.is_empty() {
+                rule.target_host = req.target_host.clone();
+            }
+            if !req.peer_id_filter.is_empty() {
+                rule.peer_id = req.peer_id_filter.clone();
+            }
+            ClientConfig::add_rule(rule);
+            let rules = ClientConfig::get_rules()
+                .iter()
+                .map(|r| serde_json::to_value(r).unwrap_or_default())
+                .collect();
+            IpcResponse {
+                ok: Some(true),
+                rules: Some(rules),
+                ..Default::default()
+            }
+        }
+
+        // ── 删除转发规则 ──────────────────────────────────────────────────────
+        // 请求: {"cmd":"remove_rule","rule_id":"uuid-..."}
+        // 响应: {"ok":true}
+        "remove_rule" => {
+            if req.rule_id.is_empty() {
+                return IpcResponse {
+                    error: Some("rule_id 不能为空".to_owned()),
+                    ..Default::default()
+                };
+            }
+            ClientConfig::remove_rule(&req.rule_id);
+            IpcResponse {
+                ok: Some(true),
+                ..Default::default()
+            }
+        }
+
+        // ── 扫描本机正在监听的服务 ────────────────────────────────────────────
+        // 请求: {"cmd":"scan_services"}
+        // 响应: {"services":[{"port":22,"name":"SSH","target":"127.0.0.1:22"},...]}
+        "scan_services" => {
+            let svcs = scan_local_services().await;
+            let json_svcs = svcs
+                .iter()
+                .map(|s| serde_json::to_value(s).unwrap_or_default())
+                .collect();
+            IpcResponse {
+                services: Some(json_svcs),
+                ..Default::default()
             }
         }
 

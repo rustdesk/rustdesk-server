@@ -345,7 +345,7 @@ impl RendezvousMediator {
         if force_relay {
             log::info!("[mediator] 对端强制中继，uuid={}", uuid);
             return self
-                .create_relay_connection(ph.socket_addr.to_vec(), relay_server, uuid, true, true)
+                .create_relay_connection(ph.socket_addr.to_vec(), relay_server, uuid, true, true, String::new())
                 .await;
         }
 
@@ -370,6 +370,7 @@ impl RendezvousMediator {
                     uuid,
                     true,
                     true,
+                    String::new(),
                 )
                 .await?;
             }
@@ -416,8 +417,27 @@ impl RendezvousMediator {
         };
         socket.send_raw(out_bytes).await?;
 
-        // 注册到 PortForwardManager，等待对端连入
-        PortForwardManager::register_inbound(local_addr, peer_addr, uuid).await;
+        // 查找转发规则（以对端地址字符串作为 peer_id 降级查找，通配规则兜底）
+        let (target_host, target_port) =
+            ClientConfig::find_target_for_peer(&peer_addr.ip().to_string())
+                .unwrap_or_else(|| ("127.0.0.1".to_owned(), 0));
+
+        if target_port == 0 {
+            log::warn!(
+                "[mediator] 收到打洞连接请求，但未配置任何转发规则，连接被拒绝（peer={}）",
+                peer_addr
+            );
+            return Ok(());
+        }
+
+        PortForwardManager::register_inbound(
+            local_addr,
+            peer_addr,
+            uuid,
+            target_host,
+            target_port,
+        )
+        .await;
         Ok(())
     }
 
@@ -427,10 +447,8 @@ impl RendezvousMediator {
     async fn handle_request_relay(&self, rr: RequestRelay) -> ResultType<()> {
         let peer_addr = AddrMangle::decode(&rr.socket_addr);
         log::info!(
-            "[mediator] RequestRelay peer={:?} uuid={} relay={}",
-            peer_addr,
-            rr.uuid,
-            rr.relay_server
+            "[mediator] RequestRelay peer={:?} peer_id={} uuid={} relay={}",
+            peer_addr, rr.id, rr.uuid, rr.relay_server
         );
         let relay_server = self.get_relay_server(rr.relay_server.clone());
         self.create_relay_connection(
@@ -439,16 +457,12 @@ impl RendezvousMediator {
             rr.uuid,
             rr.secure,
             false,
+            rr.id,
         )
         .await
     }
 
     /// 连接中继服务器（hbbr）并建立双向数据隧道
-    ///
-    /// 流程：
-    /// 1. 连接 hbbr
-    /// 2. 发送 RelayResponse（携带 uuid 和本机 ID）
-    /// 3. 将中继连接注册到 PortForwardManager
     async fn create_relay_connection(
         &self,
         socket_addr: Vec<u8>,
@@ -456,6 +470,7 @@ impl RendezvousMediator {
         uuid: String,
         secure: bool,
         initiate: bool,
+        peer_id: String,
     ) -> ResultType<()> {
         let peer_addr = AddrMangle::decode(&socket_addr);
         log::info!(
@@ -486,8 +501,30 @@ impl RendezvousMediator {
         log::info!("[mediator] 连接 hbbr: {}", relay_addr);
         let relay_conn = connect_tcp(relay_addr, CONNECT_TIMEOUT).await?;
 
-        // 注册到 PortForwardManager
-        PortForwardManager::register_relay(uuid, peer_addr, relay_conn, secure).await;
+        // 主动侧（initiate=true）：本机发起连接，由对端决定转发目标，无需本地规则
+        if initiate {
+            PortForwardManager::register_relay(
+                uuid, peer_addr, relay_conn, secure,
+                String::new(), 0,
+            )
+            .await;
+            return Ok(());
+        }
+
+        // 被动侧：查找转发规则，决定流量落地到哪个本地服务
+        let (target_host, target_port) =
+            ClientConfig::find_target_for_peer(&peer_id)
+                .unwrap_or_else(|| ("127.0.0.1".to_owned(), 0));
+
+        if target_port == 0 {
+            log::warn!(
+                "[mediator] 中继请求到达，但未配置任何转发规则，连接被拒绝（peer={:?}）",
+                peer_addr
+            );
+            return Ok(());
+        }
+
+        PortForwardManager::register_relay(uuid, peer_addr, relay_conn, secure, target_host, target_port).await;
         Ok(())
     }
 

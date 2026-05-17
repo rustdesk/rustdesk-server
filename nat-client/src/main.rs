@@ -105,6 +105,7 @@ enum Commands {
     Connect {
         #[arg(short, long)]
         peer_id: String,
+        /// 本地监听端口（0 = 自动分配）
         #[arg(short, long, default_value = "0")]
         local_port: u16,
     },
@@ -157,6 +158,32 @@ enum Commands {
     },
     /// 查看用户资料
     Profile,
+
+    // ── 端口转发规则管理 ──────────────────────────────────────────────────────
+    /// 列出所有已保存的转发规则
+    ListRules,
+    /// 添加一条端口转发规则（对端连入时将流量转发到指定本地服务）
+    AddRule {
+        /// 规则名称（如 SSH、HTTP、MySQL）
+        #[arg(short, long)]
+        name: String,
+        /// 转发目标端口（本机服务端口，如 22、80、3306）
+        #[arg(short, long)]
+        target_port: u16,
+        /// 转发目标主机（默认 127.0.0.1）
+        #[arg(long, default_value = "127.0.0.1")]
+        target_host: String,
+        /// 仅允许该 peer_id 的对端触发此规则（留空表示任意对端）
+        #[arg(long, default_value = "")]
+        peer_id_filter: String,
+    },
+    /// 删除一条转发规则（通过 list-rules 查看规则 ID）
+    RemoveRule {
+        #[arg(short, long)]
+        rule_id: String,
+    },
+    /// 扫描本机当前正在监听的常见服务（SSH、HTTP、MySQL 等）
+    ScanServices,
 
     // ── 调试 ──────────────────────────────────────────────────────────────────
     /// 发送原始 JSON 命令（调试用）
@@ -468,6 +495,66 @@ async fn run_cli_command(cmd: Commands, ipc_port: u16) {
             let r = ipc::send_command(ipc_port, r#"{"cmd":"auth_profile"}"#)
                 .await
                 .unwrap_or_default();
+            ipc::pretty_print(&r);
+        }
+        Commands::ListRules => {
+            let r = ipc::send_command(ipc_port, r#"{"cmd":"list_rules"}"#)
+                .await
+                .unwrap_or_default();
+            ipc::pretty_print(&r);
+        }
+        Commands::AddRule {
+            name,
+            target_port,
+            target_host,
+            peer_id_filter,
+        } => {
+            let cmd = serde_json::json!({
+                "cmd": "add_rule",
+                "rule_name": name,
+                "target_port": target_port,
+                "target_host": target_host,
+                "peer_id_filter": peer_id_filter,
+            })
+            .to_string();
+            let r = ipc::send_command(ipc_port, &cmd).await.unwrap_or_default();
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&r) {
+                if v["ok"].as_bool().unwrap_or(false) {
+                    println!("✅ 规则已添加：{} → {}:{}", name, target_host, target_port);
+                }
+            }
+            ipc::pretty_print(&r);
+        }
+        Commands::RemoveRule { rule_id } => {
+            let cmd = serde_json::json!({ "cmd": "remove_rule", "rule_id": rule_id }).to_string();
+            let r = ipc::send_command(ipc_port, &cmd).await.unwrap_or_default();
+            ipc::pretty_print(&r);
+        }
+        Commands::ScanServices => {
+            println!("正在扫描本机服务（约 200ms）...");
+            let r = ipc::send_command(ipc_port, r#"{"cmd":"scan_services"}"#)
+                .await
+                .unwrap_or_default();
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&r) {
+                if let Some(svcs) = v["services"].as_array() {
+                    if svcs.is_empty() {
+                        println!("未检测到常用服务正在监听");
+                    } else {
+                        println!("\n检测到以下服务：");
+                        println!("{:<8} {:<16} {}", "端口", "服务名", "可添加规则命令");
+                        println!("{}", "-".repeat(60));
+                        for s in svcs {
+                            let port = s["port"].as_u64().unwrap_or(0);
+                            let name = s["name"].as_str().unwrap_or("?");
+                            println!(
+                                "{:<8} {:<16} nat-client add-rule -n {} -t {}",
+                                port, name, name, port
+                            );
+                        }
+                    }
+                    return;
+                }
+            }
             ipc::pretty_print(&r);
         }
         Commands::Send { json } => {

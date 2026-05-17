@@ -229,6 +229,7 @@ impl Database {
         drop(conn);
 
         self.migrate_users_add_role_column().await?;
+        self.migrate_subscriptions().await?;
         self.bootstrap_admin_if_none().await?;
 
         Ok(())
@@ -660,9 +661,11 @@ impl Database {
         .await
         .unwrap_or(0);
 
-        if device_count >= 10 {
+        let device_limit = self.get_user_device_limit(request.user_id).await?;
+        if device_limit > 0 && device_count >= device_limit {
             return Err(core_common::anyhow::anyhow!(
-                "用户设备数量已达到上限（10个）"
+                "设备数量已达到当前套餐上限（{}台），请升级套餐",
+                device_limit
             ));
         }
 

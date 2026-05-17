@@ -39,6 +39,50 @@ impl RendezvousWireProtocol {
     }
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// 端口转发规则
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// 一条端口转发规则：对端连入时，将流量转发到本机的哪个服务
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForwardRule {
+    /// 规则唯一 ID（UUID）
+    pub id: String,
+    /// 规则名称（如 "SSH"、"HTTP"、"MySQL"）
+    pub name: String,
+    /// 仅允许该 peer_id 的对端触发此规则（空 = 任意对端）
+    #[serde(default)]
+    pub peer_id: String,
+    /// 转发目标主机（默认 127.0.0.1）
+    #[serde(default = "default_target_host")]
+    pub target_host: String,
+    /// 转发目标端口（如 22、80、3389）
+    pub target_port: u16,
+    /// 是否启用
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+fn default_target_host() -> String {
+    "127.0.0.1".to_owned()
+}
+fn default_true() -> bool {
+    true
+}
+
+impl ForwardRule {
+    pub fn new(name: &str, target_port: u16) -> Self {
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: name.to_owned(),
+            peer_id: String::new(),
+            target_host: "127.0.0.1".to_owned(),
+            target_port,
+            enabled: true,
+        }
+    }
+}
+
 /// 客户端专属配置（持久化到 TOML 文件）
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct ClientConfig {
@@ -118,6 +162,10 @@ pub struct ClientConfig {
     /// 本设备在服务器 user_devices 表中的行 ID（udid）；0 = 未绑定
     #[serde(default)]
     pub auth_device_row_id: i64,
+
+    /// 端口转发规则列表（对端连入时决定转发到哪个本地服务）
+    #[serde(default)]
+    pub forward_rules: Vec<ForwardRule>,
 }
 
 fn default_ipc_port() -> u16 {
@@ -350,6 +398,45 @@ impl ClientConfig {
 
     pub fn set_api_url(url: &str) {
         Self::update(|c| c.api_url = url.to_owned());
+    }
+
+    // ── 转发规则管理 ─────────────────────────────────────────────────────────
+
+    /// 获取所有转发规则
+    pub fn get_rules() -> Vec<ForwardRule> {
+        CONFIG.read().unwrap().forward_rules.clone()
+    }
+
+    /// 添加转发规则（自动去重：name + target_port 相同则跳过）
+    pub fn add_rule(rule: ForwardRule) {
+        Self::update(|c| {
+            let dup = c.forward_rules.iter().any(|r| {
+                r.name == rule.name && r.target_port == rule.target_port
+            });
+            if !dup {
+                c.forward_rules.push(rule);
+            }
+        });
+    }
+
+    /// 按 ID 删除规则
+    pub fn remove_rule(rule_id: &str) {
+        Self::update(|c| c.forward_rules.retain(|r| r.id != rule_id));
+    }
+
+    /// 查找适用于指定对端的第一条规则（优先精确匹配 peer_id，次之通配）
+    pub fn find_target_for_peer(peer_id: &str) -> Option<(String, u16)> {
+        let cfg = CONFIG.read().unwrap();
+        let enabled: Vec<&ForwardRule> = cfg.forward_rules.iter().filter(|r| r.enabled).collect();
+        // 精确匹配
+        if let Some(r) = enabled.iter().find(|r| !r.peer_id.is_empty() && r.peer_id == peer_id) {
+            return Some((r.target_host.clone(), r.target_port));
+        }
+        // 通配（peer_id 为空）
+        enabled
+            .iter()
+            .find(|r| r.peer_id.is_empty())
+            .map(|r| (r.target_host.clone(), r.target_port))
     }
 }
 

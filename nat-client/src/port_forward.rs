@@ -110,12 +110,19 @@ impl PortForwardManager {
 
     /// 注册一个入站直连等待：在 `local_addr` 上监听，等待 `peer_addr` 连入后建立转发隧道
     ///
-    /// 这是 PunchHole 流程中本机被动侧的处理：
-    /// 服务器已通知对端连接本机的 local_addr，此处等待对端 TCP SYN 到达。
-    pub async fn register_inbound(local_addr: SocketAddr, peer_addr: SocketAddr, uuid: String) {
+    /// - `target_host` / `target_port`：对端连入后转发到的本地服务地址
+    pub async fn register_inbound(
+        local_addr: SocketAddr,
+        peer_addr: SocketAddr,
+        uuid: String,
+        target_host: String,
+        target_port: u16,
+    ) {
         let uuid_clone = uuid.clone();
         tokio::spawn(async move {
-            match Self::accept_inbound(local_addr, peer_addr, uuid_clone).await {
+            match Self::accept_inbound(local_addr, peer_addr, uuid_clone, target_host, target_port)
+                .await
+            {
                 Ok(_) => log::info!("[pf] 入站连接处理完毕"),
                 Err(e) => log::error!("[pf] 入站连接错误: {}", e),
             }
@@ -126,20 +133,17 @@ impl PortForwardManager {
         local_addr: SocketAddr,
         peer_addr: SocketAddr,
         uuid: String,
+        target_host: String,
+        target_port: u16,
     ) -> ResultType<()> {
-        // 监听对端打洞连入
         let listener = TcpListener::bind(local_addr).await?;
         log::info!(
-            "[pf] 等待对端 {} 直连（本机 {}，uuid={}）",
-            peer_addr,
-            local_addr,
-            uuid
+            "[pf] 等待对端 {} 直连（本机 {}，转发→{}:{}，uuid={}）",
+            peer_addr, local_addr, target_host, target_port, uuid
         );
 
-        // 等待 30 秒
         let accept =
             tokio::time::timeout(std::time::Duration::from_secs(30), listener.accept()).await;
-
         let (stream, from) = accept
             .map_err(|_| core_common::anyhow::anyhow!("等待对端连入超时"))?
             .map_err(|e| core_common::anyhow::anyhow!("accept 错误: {}", e))?;
@@ -148,7 +152,6 @@ impl PortForwardManager {
 
         let (close_tx, close_rx) = oneshot::channel::<()>();
         let close_arc = Arc::new(Mutex::new(Some(close_tx)));
-
         let conn = ActiveConn {
             uuid: uuid.clone(),
             conn_type: ConnType::Direct,
@@ -161,20 +164,14 @@ impl PortForwardManager {
         };
         register_conn(conn);
 
-        // 此处演示：直接将对端连接回环到本机同端口的服务（如本机 22/SSH）
-        // 实际使用时应由调用方指定目标端口
-        let target_port = local_addr.port();
-        let target = format!("127.0.0.1:{}", target_port);
-
+        let target = format!("{}:{}", target_host, target_port);
         match TcpStream::connect(&target).await {
             Ok(local_svc) => {
                 log::info!("[pf] 连接本地服务 {}", target);
                 Self::proxy_with_close(stream, local_svc, uuid.clone(), close_rx).await;
             }
             Err(e) => {
-                log::warn!("[pf] 无法连接本地服务 {}: {}（连接仍保持）", target, e);
-                // 保持对端连接，但不做转发
-                tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+                log::warn!("[pf] 无法连接本地服务 {}: {}", target, e);
             }
         }
 
@@ -249,17 +246,24 @@ impl PortForwardManager {
     // ── 中继连接（入站被动侧）──────────────────────────────────────────────
 
     /// 注册一个中继连接（被动侧：服务器通知我们通过中继接受对端连接）
+    ///
+    /// - `target_host` / `target_port`：数据落地的本地服务地址
     pub async fn register_relay(
         uuid: String,
         peer_addr: SocketAddr,
         mut relay_conn: core_common::Stream,
         _secure: bool,
+        target_host: String,
+        target_port: u16,
     ) {
+        use tokio::io::AsyncWriteExt;
         tokio::spawn(async move {
-            log::info!("[pf] 中继连接已建立 uuid={} peer={}", uuid, peer_addr);
+            log::info!(
+                "[pf] 中继连接已建立 uuid={} peer={} 转发→{}:{}",
+                uuid, peer_addr, target_host, target_port
+            );
 
-            // 向中继服务器发送握手（携带 uuid，让中继匹配双方）
-            // 协议：先发 uuid 字符串长度 + uuid 字节
+            // 握手：发送 uuid 长度前缀 + uuid 字节
             let uuid_bytes = uuid.as_bytes();
             let mut handshake = Vec::new();
             handshake.push(uuid_bytes.len() as u8);
@@ -269,12 +273,40 @@ impl PortForwardManager {
                 return;
             }
 
-            // 转为原始 TCP 流进行双向代理
-            // 由于 core_common::Stream 不直接暴露底层 TcpStream，
-            // 此处通过 send_raw / next 模拟双向代理
+            // 主动侧（target_port == 0）：本机是发起方，对端负责转发，此处只记录连接
+            if target_port == 0 {
+                log::info!("[pf] 中继主动侧 uuid={}，等待对端数据", uuid);
+                let (_close_tx, _close_rx) = oneshot::channel::<()>();
+                let close_arc = Arc::new(Mutex::new(Some(_close_tx)));
+                register_conn(ActiveConn {
+                    uuid: uuid.clone(), conn_type: ConnType::Relay,
+                    peer_addr: peer_addr.to_string(), local_port: None,
+                    bytes_sent: 0, bytes_recv: 0, created_at: unix_now(),
+                    close_tx: Some(Arc::clone(&close_arc)),
+                });
+                loop {
+                    match relay_conn.next().await {
+                        Some(Ok(_)) => {}
+                        _ => break,
+                    }
+                }
+                remove_conn(&uuid);
+                return;
+            }
+
+            // 连接到本地服务
+            let target = format!("{}:{}", target_host, target_port);
+            let local_svc = match TcpStream::connect(&target).await {
+                Ok(s) => s,
+                Err(e) => {
+                    log::warn!("[pf] 中继模式无法连接本地服务 {}: {}", target, e);
+                    return;
+                }
+            };
+            log::info!("[pf] 中继已接入本地服务 {}", target);
+
             let (close_tx, close_rx) = oneshot::channel::<()>();
             let close_arc = Arc::new(Mutex::new(Some(close_tx)));
-
             let conn = ActiveConn {
                 uuid: uuid.clone(),
                 conn_type: ConnType::Relay,
@@ -287,18 +319,52 @@ impl PortForwardManager {
             };
             register_conn(conn);
 
-            // 简化：保持连接存活直到对端关闭
-            loop {
-                match relay_conn.next().await {
-                    Some(Ok(data)) => {
-                        log::trace!("[pf] 中继收到 {} 字节", data.len());
-                        // TODO: 将 data 转发到本地服务
-                    }
-                    _ => {
-                        log::info!("[pf] 中继连接关闭 uuid={}", uuid);
+            // 双向代理：relay_conn ↔ local_svc
+            let relay_conn = Arc::new(tokio::sync::Mutex::new(relay_conn));
+            let (mut svc_rx, mut svc_tx) = local_svc.into_split();
+
+            // 本地服务 → 中继
+            let relay_send = Arc::clone(&relay_conn);
+            let u1 = uuid.clone();
+            let to_relay = tokio::spawn(async move {
+                let mut buf = vec![0u8; 32 * 1024];
+                loop {
+                    let n = match svc_rx.read(&mut buf).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => n,
+                    };
+                    let mut r = relay_send.lock().await;
+                    if r.send_raw(buf[..n].to_vec()).await.is_err() {
                         break;
                     }
                 }
+                log::debug!("[pf] 中继：本地→中继通道关闭 uuid={}", u1);
+            });
+
+            // 中继 → 本地服务
+            let u2 = uuid.clone();
+            let from_relay = tokio::spawn(async move {
+                loop {
+                    let data = {
+                        let mut r = relay_conn.lock().await;
+                        r.next().await
+                    };
+                    match data {
+                        Some(Ok(b)) => {
+                            if svc_tx.write_all(&b).await.is_err() {
+                                break;
+                            }
+                        }
+                        _ => break,
+                    }
+                }
+                log::debug!("[pf] 中继：中继→本地通道关闭 uuid={}", u2);
+            });
+
+            tokio::select! {
+                _ = to_relay => {}
+                _ = from_relay => {}
+                _ = close_rx => { log::info!("[pf] 中继连接被手动关闭 uuid={}", uuid); }
             }
             remove_conn(&uuid);
         });
@@ -457,4 +523,83 @@ impl PortForwardManager {
             }
         }
     }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// 本地服务扫描
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// 本机检测到的一个监听服务
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceInfo {
+    /// 服务监听端口
+    pub port: u16,
+    /// 服务名称（根据知名端口推测）
+    pub name: String,
+    /// 建议的转发目标地址
+    pub target: String,
+}
+
+/// 扫描本机常用端口，返回当前正在监听的服务列表
+///
+/// 探测超时 200ms/端口，并发探测，总时长约 200ms。
+pub async fn scan_local_services() -> Vec<ServiceInfo> {
+    let well_known: &[(u16, &str)] = &[
+        (21,    "FTP"),
+        (22,    "SSH"),
+        (23,    "Telnet"),
+        (80,    "HTTP"),
+        (443,   "HTTPS"),
+        (1433,  "MSSQL"),
+        (3306,  "MySQL"),
+        (3389,  "RDP"),
+        (5432,  "PostgreSQL"),
+        (5900,  "VNC"),
+        (6379,  "Redis"),
+        (8080,  "HTTP-Alt"),
+        (8443,  "HTTPS-Alt"),
+        (8888,  "Jupyter"),
+        (9200,  "Elasticsearch"),
+        (27017, "MongoDB"),
+        (5000,  "HTTP-Dev"),
+        (8000,  "HTTP-Dev"),
+        (4000,  "HTTP-Dev"),
+        (9000,  "HTTP-Dev"),
+    ];
+
+    let tasks: Vec<_> = well_known
+        .iter()
+        .map(|&(port, name)| {
+            let name = name.to_owned();
+            tokio::spawn(async move {
+                let addr = format!("127.0.0.1:{}", port);
+                let ok = tokio::time::timeout(
+                    std::time::Duration::from_millis(200),
+                    TcpStream::connect(&addr),
+                )
+                .await
+                .map(|r| r.is_ok())
+                .unwrap_or(false);
+
+                if ok {
+                    Some(ServiceInfo {
+                        port,
+                        name,
+                        target: addr,
+                    })
+                } else {
+                    None
+                }
+            })
+        })
+        .collect();
+
+    let mut found = Vec::new();
+    for task in tasks {
+        if let Ok(Some(svc)) = task.await {
+            found.push(svc);
+        }
+    }
+    found.sort_by_key(|s| s.port);
+    found
 }

@@ -1,0 +1,342 @@
+{% extends "layout.html" %}
+{% block title %}订阅管理 - {% endblock %}
+
+{% block nav_links %}
+<a href="/dashboard">控制台</a>
+<a href="/devices">设备管理</a>
+<a href="/subscription">我的订阅</a>
+<a href="/users">用户管理</a>
+<a href="/admin/subscriptions" class="active">订阅管理</a>
+<a href="/monitor">连接监控</a>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    .filter-bar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        margin-bottom: 20px;
+    }
+    .filter-bar input,
+    .filter-bar select {
+        padding: 8px 12px;
+        border: 1.5px solid var(--border);
+        border-radius: var(--radius-s);
+        font-family: var(--font);
+        font-size: 14px;
+        background: var(--surface2);
+        color: var(--text);
+        outline: none;
+        transition: border-color 0.2s;
+    }
+    .filter-bar input:focus,
+    .filter-bar select:focus {
+        border-color: var(--blue);
+    }
+    .filter-bar input[type="number"] { width: 110px; }
+    .spacer { flex: 1; }
+
+    .pagination {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 16px;
+    }
+    .pagination span {
+        font-size: 13px;
+        color: var(--text2);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- 筛选栏 -->
+<div class="filter-bar">
+    <input type="number" id="filter-user" placeholder="用户 ID" min="1" />
+    <select id="filter-plan">
+        <option value="">全部套餐</option>
+    </select>
+    <select id="filter-status">
+        <option value="">全部状态</option>
+        <option value="active">有效</option>
+        <option value="inactive">已停用</option>
+        <option value="expired">已过期</option>
+    </select>
+    <button class="btn btn-secondary" onclick="loadSubs()">筛选</button>
+    <div class="spacer"></div>
+    <button class="btn btn-primary" onclick="showCreateModal()">+ 激活订阅</button>
+</div>
+
+<!-- 订阅表格 -->
+<div class="table-wrap">
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>用户 ID</th>
+                <th>套餐</th>
+                <th>状态</th>
+                <th>开始时间</th>
+                <th>到期时间</th>
+                <th>备注</th>
+                <th>操作</th>
+            </tr>
+        </thead>
+        <tbody id="subs-body">
+            <tr>
+                <td colspan="8">
+                    <div class="empty-state">
+                        <div class="empty-icon">📋</div>
+                        <p>正在加载…</p>
+                    </div>
+                </td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+
+<div class="pagination">
+    <button class="btn btn-secondary btn-sm" id="btn-prev" onclick="prevPage()" disabled>上一页</button>
+    <span id="page-info">第 1 页</span>
+    <button class="btn btn-secondary btn-sm" id="btn-next" onclick="nextPage()" disabled>下一页</button>
+</div>
+
+<!-- 激活订阅模态框 -->
+<div class="modal-overlay" id="create-modal">
+    <div class="modal-box">
+        <div class="modal-title">激活订阅</div>
+        <div class="form-group">
+            <label>用户 ID</label>
+            <input type="number" id="c-user-id" placeholder="输入用户 ID" min="1" />
+        </div>
+        <div class="form-group">
+            <label>套餐</label>
+            <select id="c-plan"></select>
+        </div>
+        <div class="form-group">
+            <label>到期时间（留空为永久）</label>
+            <input type="datetime-local" id="c-expires" />
+        </div>
+        <div class="form-group">
+            <label>备注</label>
+            <textarea id="c-notes" placeholder="可选备注" style="resize:vertical;height:72px"></textarea>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="hideCreateModal()">取消</button>
+            <button class="btn btn-primary" onclick="submitCreate()">确认激活</button>
+        </div>
+    </div>
+</div>
+
+<!-- 编辑订阅模态框 -->
+<div class="modal-overlay" id="edit-modal">
+    <div class="modal-box">
+        <div class="modal-title">编辑订阅</div>
+        <input type="hidden" id="e-sub-id" />
+        <div class="form-group">
+            <label>套餐</label>
+            <select id="e-plan"></select>
+        </div>
+        <div class="form-group">
+            <label>到期时间（留空为永久）</label>
+            <input type="datetime-local" id="e-expires" />
+        </div>
+        <div class="form-group">
+            <label>备注</label>
+            <textarea id="e-notes" style="resize:vertical;height:72px"></textarea>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="hideEditModal()">取消</button>
+            <button class="btn btn-primary" onclick="submitEdit()">保存</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    let plans = [];
+    let currentPage = 0;
+    const PAGE_SIZE = 20;
+
+    document.addEventListener("DOMContentLoaded", async function () {
+        const user = checkAuth();
+        if (!user) return;
+        if (user.role !== "admin") {
+            showError("无权访问，正在跳转…");
+            setTimeout(function () { window.location.href = "/dashboard"; }, 1500);
+            return;
+        }
+        await loadPlans();
+        await loadSubs();
+    });
+
+    /* 关闭模态框点击遮罩 */
+    ["create-modal", "edit-modal"].forEach(function (id) {
+        document.getElementById(id).addEventListener("click", function (e) {
+            if (e.target === this) this.classList.remove("open");
+        });
+    });
+
+    function authHeaders() {
+        return {
+            "Content-Type": "application/json",
+            Authorization: "Bearer " + (localStorage.getItem("jwt_token") || ""),
+        };
+    }
+
+    async function loadPlans() {
+        try {
+            const res  = await fetch("/api/subscription/plans", { headers: authHeaders() });
+            const data = await res.json();
+            plans = data.plans || data.data || [];
+            const selects = ["filter-plan", "c-plan", "e-plan"];
+            selects.forEach(function (sid) {
+                const sel = document.getElementById(sid);
+                plans.forEach(function (p) {
+                    const opt = document.createElement("option");
+                    opt.value = p.name;
+                    opt.textContent = p.display_name;
+                    sel.appendChild(opt);
+                });
+            });
+        } catch (e) { /* silently fail */ }
+    }
+
+    async function loadSubs() {
+        const userId = document.getElementById("filter-user").value;
+        const plan   = document.getElementById("filter-plan").value;
+        const status = document.getElementById("filter-status").value;
+        const params = new URLSearchParams({ limit: PAGE_SIZE, offset: currentPage * PAGE_SIZE });
+        if (userId) params.set("user_id", userId);
+        if (plan)   params.set("plan",    plan);
+        if (status) params.set("status",  status);
+        try {
+            const res  = await fetch("/api/admin/subscriptions?" + params, { headers: authHeaders() });
+            const data = await res.json();
+            const subs = data.subscriptions || data.data || [];
+            renderTable(subs);
+            document.getElementById("btn-next").disabled = subs.length < PAGE_SIZE;
+            document.getElementById("btn-prev").disabled = currentPage === 0;
+            document.getElementById("page-info").textContent = "第 " + (currentPage + 1) + " 页";
+        } catch (e) {
+            document.getElementById("subs-body").innerHTML =
+                '<tr><td colspan="8"><div class="empty-state"><p>加载失败，请重试</p></div></td></tr>';
+        }
+    }
+
+    function prevPage() { if (currentPage > 0) { currentPage--; loadSubs(); } }
+    function nextPage() { currentPage++; loadSubs(); }
+
+    function statusBadge(sub) {
+        if (!sub.is_active) return '<span class="badge badge-gray">已停用</span>';
+        if (sub.expires_at && new Date(sub.expires_at) < new Date())
+            return '<span class="badge badge-orange">已过期</span>';
+        return '<span class="badge badge-green">有效</span>';
+    }
+
+    function fmtDate(d) { return d ? new Date(d).toLocaleDateString("zh-CN") : "永久"; }
+
+    function renderTable(subs) {
+        const tbody = document.getElementById("subs-body");
+        if (!subs.length) {
+            tbody.innerHTML =
+                '<tr><td colspan="8"><div class="empty-state">' +
+                '<div class="empty-icon">📋</div><p>暂无订阅数据</p></div></td></tr>';
+            return;
+        }
+        tbody.innerHTML = subs.map(function (s) {
+            const notesEsc = escapeHtml(s.notes || "");
+            const planEsc  = escapeHtml(s.plan_name || "");
+            return `<tr>
+                <td>${s.id}</td>
+                <td>${s.user_id}</td>
+                <td>${escapeHtml(s.plan_display_name || s.plan_name)}</td>
+                <td>${statusBadge(s)}</td>
+                <td style="color:var(--text2);font-size:13px">${fmtDate(s.started_at)}</td>
+                <td style="color:var(--text2);font-size:13px">${fmtDate(s.expires_at)}</td>
+                <td style="color:var(--text2);font-size:13px">${notesEsc}</td>
+                <td style="white-space:nowrap">
+                    <button class="btn btn-xs btn-secondary"
+                        onclick="showEditModal(${s.id},'${planEsc}','${s.expires_at || ""}','${notesEsc}')">编辑</button>
+                    <button class="btn btn-xs btn-danger" onclick="deactivateSub(${s.id})">停用</button>
+                </td>
+            </tr>`;
+        }).join("");
+    }
+
+    function showCreateModal() {
+        document.getElementById("c-user-id").value = "";
+        document.getElementById("c-plan").selectedIndex = 0;
+        document.getElementById("c-expires").value = "";
+        document.getElementById("c-notes").value = "";
+        document.getElementById("create-modal").classList.add("open");
+    }
+    function hideCreateModal() { document.getElementById("create-modal").classList.remove("open"); }
+
+    async function submitCreate() {
+        const userId   = parseInt(document.getElementById("c-user-id").value);
+        const planName = document.getElementById("c-plan").value;
+        const expires  = document.getElementById("c-expires").value;
+        const notes    = document.getElementById("c-notes").value;
+        if (!userId || !planName) { showError("用户 ID 和套餐为必填项"); return; }
+        const plan = plans.find(function (p) { return p.name === planName; });
+        if (!plan) { showError("套餐不存在"); return; }
+        try {
+            const res  = await fetch("/api/admin/subscriptions", {
+                method: "POST",
+                headers: authHeaders(),
+                body: JSON.stringify({ user_id: userId, plan_id: plan.id, expires_at: expires || null, notes: notes || null }),
+            });
+            const data = await res.json();
+            if (data.success !== false) { showSuccess("订阅已激活"); hideCreateModal(); loadSubs(); }
+            else showError(data.message || "操作失败");
+        } catch (e) { showError("请求失败，请重试"); }
+    }
+
+    function showEditModal(id, planName, expiresAt, notes) {
+        document.getElementById("e-sub-id").value = id;
+        document.getElementById("e-plan").value   = planName;
+        document.getElementById("e-expires").value = expiresAt
+            ? new Date(expiresAt).toISOString().slice(0, 16) : "";
+        document.getElementById("e-notes").value  = notes;
+        document.getElementById("edit-modal").classList.add("open");
+    }
+    function hideEditModal() { document.getElementById("edit-modal").classList.remove("open"); }
+
+    async function submitEdit() {
+        const id       = document.getElementById("e-sub-id").value;
+        const planName = document.getElementById("e-plan").value;
+        const expires  = document.getElementById("e-expires").value;
+        const notes    = document.getElementById("e-notes").value;
+        const plan     = plans.find(function (p) { return p.name === planName; });
+        const body     = { notes: notes || null, expires_at: expires || null };
+        if (plan) body.plan_id = plan.id;
+        try {
+            const res  = await fetch("/api/admin/subscriptions/" + id, {
+                method: "PUT",
+                headers: authHeaders(),
+                body: JSON.stringify(body),
+            });
+            const data = await res.json();
+            if (data.success !== false) { showSuccess("已保存"); hideEditModal(); loadSubs(); }
+            else showError(data.message || "保存失败");
+        } catch (e) { showError("请求失败，请重试"); }
+    }
+
+    async function deactivateSub(id) {
+        if (!confirm("确认停用该订阅？")) return;
+        try {
+            const res  = await fetch("/api/admin/subscriptions/" + id, {
+                method: "DELETE",
+                headers: authHeaders(),
+            });
+            const data = await res.json();
+            if (data.success !== false) { showSuccess("已停用"); loadSubs(); }
+            else showError(data.message || "操作失败");
+        } catch (e) { showError("请求失败，请重试"); }
+    }
+</script>
+{% endblock %}

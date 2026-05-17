@@ -2,7 +2,7 @@
 
 > 与 **nat-server**（hbbs/hbbr）配合使用的 Rust 内网穿透客户端工具。  
 > 参照 RustDesk 开源项目的 `ipc.rs`、`lan.rs`、`rendezvous_mediator.rs` 实现，  
-> 并与 nat-server 的**用户系统**和**设备管理**完整集成。
+> 并与 nat-server 的**用户系统**、**设备管理**和**端口转发规则**完整集成。
 
 ---
 
@@ -16,6 +16,7 @@
    - [TCP 打洞流程](#33-tcp-打洞流程)
    - [中继连接流程](#34-中继连接流程)
    - [局域网发现流程](#35-局域网发现流程)
+   - [端口转发规则流程](#36-端口转发规则流程)
 4. [网络端口说明](#4-网络端口说明)
 5. [模块说明](#5-模块说明)
 6. [系统要求与构建](#6-系统要求与构建)
@@ -25,11 +26,13 @@
    - [基础查询](#82-基础查询命令)
    - [用户与设备管理](#83-用户与设备管理命令)
    - [隧道连接](#84-隧道连接命令)
-   - [调试](#85-调试命令)
+   - [端口转发规则管理](#85-端口转发规则管理命令-新增)
+   - [调试](#86-调试命令)
 9. [IPC 控制接口参考](#9-ipc-控制接口参考)
    - [基础命令](#91-基础命令)
    - [认证命令](#92-认证命令)
    - [隧道命令](#93-隧道命令)
+   - [转发规则命令](#94-转发规则命令-新增)
 10. [配置文件说明](#10-配置文件说明)
 11. [典型使用场景](#11-典型使用场景)
 12. [与 nat-server 的关系](#12-与-nat-server-的关系)
@@ -53,6 +56,8 @@
 | **局域网发现** | UDP 广播自动发现同一局域网内的其他 nat-client 节点 |
 | **本地 IPC** | 提供 JSON-over-TCP 控制接口，供脚本或应用程序编程控制 |
 | **端口隧道** | 建连后在本地开放 TCP 端口，透明转发到对端任意服务 |
+| **转发规则** | 被连接侧通过规则控制将入站流量转发到哪个本地服务（SSH/HTTP/RDP/MySQL 等） |
+| **服务扫描** | 自动检测本机正在监听的常见服务，辅助配置转发规则 |
 | **Token 监控** | 后台自动检测 JWT 过期，提醒用户重新登录 |
 
 ---
@@ -217,6 +222,45 @@ nat-client (A)                       nat-client (B) [同一局域网]
 
 ---
 
+### 3.6 端口转发规则流程
+
+转发规则决定**被连接侧**（主机 A）收到入站连接后将流量转发到哪个本地（或内网）服务。
+
+```
+主机 B (发起方)           hbbs/hbbr          主机 A（被连接侧，已配置规则）
+       │                     │                        │
+       │── connect ──────────►│── PunchHole/Relay ────►│
+       │                     │                        │  查找转发规则
+       │                     │                        │  find_target_for_peer("B的ID")
+       │                     │                        │  ① 精确匹配 peer_id="749183026" → SSH:22
+       │                     │                        │  ② 通配规则 peer_id=""        → HTTP:80
+       │                     │                        │  ③ 无匹配规则 → 拒绝连接
+       │                     │                        │
+       │◄═══ 双向 TCP 数据流 ══════════════════════════│─► 127.0.0.1:22（本机 SSH）
+```
+
+**规则优先级**：精确 `peer_id` 匹配 > 通配（`peer_id` 为空）> 无匹配（连接被拒绝）。
+
+**快速配置**：
+
+```bash
+# 1. 扫描本机正在监听的服务
+nat-client scan-services
+# 端口     服务名           可添加规则命令
+# 22       SSH              nat-client add-rule -n SSH -t 22
+# 80       HTTP             nat-client add-rule -n HTTP -t 80
+# 3306     MySQL            nat-client add-rule -n MySQL -t 3306
+
+# 2. 添加规则（任意对端均可访问本机 SSH）
+nat-client add-rule -n SSH -t 22
+
+# 3. 对端直接连接即可（主机 B 上执行）
+nat-client connect --peer-id <A的ID>
+ssh -p <返回的本地端口> user@127.0.0.1
+```
+
+---
+
 ## 4. 网络端口说明
 
 | 端口 | 协议 | 方向 | 用途 |
@@ -277,7 +321,7 @@ nat-client (A)                       nat-client (B) [同一局域网]
 
 ### `config.rs` — 客户端配置管理
 
-负责 Peer ID、UUID、Ed25519 密钥对及认证信息的生成与持久化。
+负责 Peer ID、UUID、Ed25519 密钥对、认证信息及端口转发规则的生成与持久化。
 
 **认证相关快捷方法**：
 
@@ -289,9 +333,32 @@ nat-client (A)                       nat-client (B) [同一局域网]
 | `ClientConfig::clear_login()` | 清除所有认证信息 |
 | `ClientConfig::get_api_url()` | 自动推导 API 地址（从 rendezvous_servers） |
 
+**转发规则快捷方法** ⭐ 新增：
+
+| 方法 | 说明 |
+|---|---|
+| `ClientConfig::get_rules()` | 获取所有转发规则 |
+| `ClientConfig::add_rule(rule)` | 新增规则（按 name+port 去重） |
+| `ClientConfig::remove_rule(id)` | 按规则 UUID 删除 |
+| `ClientConfig::find_target_for_peer(peer_id)` | 查找对端匹配的目标地址，精确匹配优先于通配 |
+
+**`ForwardRule` 结构**：
+
+```rust
+pub struct ForwardRule {
+    pub id: String,          // UUID，自动生成
+    pub name: String,        // 规则名称（如 "SSH"）
+    pub peer_id: String,     // 对端 ID 过滤（空字符串 = 任意对端）
+    pub target_host: String, // 目标主机（默认 "127.0.0.1"）
+    pub target_port: u16,    // 目标端口（如 22）
+    pub enabled: bool,       // 是否启用
+}
+```
+
 **配置文件路径**：
 - Linux/macOS：`~/.config/nat-client/config.toml`
 - Windows：`%APPDATA%\nat-client\config.toml`
+- 示例模板：`nat-client/config.example.toml`
 
 ---
 
@@ -334,21 +401,36 @@ RegisterPk {
 
 新增认证相关命令：`auth_status`、`auth_login`、`auth_logout`、`auth_register`、`auth_change_password`、`auth_list_devices`、`auth_remove_device`、`auth_profile`。
 
+新增转发规则命令 ⭐：`scan_services`、`list_rules`、`add_rule`、`remove_rule`。
+
 完整命令表见 [第 9 节](#9-ipc-控制接口参考)。
 
 ---
 
-### `port_forward.rs` — TCP 端口转发管理器
+### `port_forward.rs` — TCP 端口转发管理器 ⭐ 更新
 
-管理所有隧道连接的生命周期（直连 + 中继）。
+管理所有隧道连接的生命周期（直连 + 中继），并提供本机服务扫描功能。
 
 | 方法 | 说明 |
 |---|---|
-| `register_inbound(local, peer, uuid)` | 注册入站直连等待（打洞被动侧） |
+| `register_inbound(local, peer, uuid, target_host, target_port)` | 注册入站直连等待（打洞被动侧），目标地址由转发规则决定 |
 | `create_outbound_direct(port, peer)` | 建立出站直连隧道，监听本地端口 |
-| `register_relay(uuid, peer, conn, ...)` | 注册中继连接（被动侧） |
+| `register_relay(uuid, peer, conn, target_host, target_port, ...)` | 注册中继连接（被动侧），完整双向代理到本地服务 |
 | `create_outbound_relay(port, conn, uuid, ...)` | 建立出站中继隧道，监听本地端口 |
 | `get_active_connections()` | 返回所有活跃连接快照 |
+| `scan_local_services()` | 扫描本机监听的常见服务（异步，约 200 ms 超时） |
+
+**`ServiceInfo` 结构**：
+
+```rust
+pub struct ServiceInfo {
+    pub port: u16,    // 监听端口
+    pub name: String, // 服务名称（如 "SSH"、"HTTP"）
+    pub target: String, // 建议的添加规则命令
+}
+```
+
+扫描范围（20 个常见端口）：21(FTP)、22(SSH)、23(Telnet)、80(HTTP)、443(HTTPS)、1433(MSSQL)、3306(MySQL)、3389(RDP)、5432(PostgreSQL)、5900(VNC)、6379(Redis)、8080/8443/8888/9200(HTTP扩展)、27017(MongoDB)、5000/8000/4000/9000(开发服务)。
 
 ---
 
@@ -697,13 +779,108 @@ nat-client restart
 
 ---
 
-### 8.5 调试命令
+### 8.5 端口转发规则管理命令 ⭐ 新增
+
+#### `scan-services` — 扫描本机监听的服务
+
+```bash
+nat-client scan-services
+```
+
+对 20 个常见端口并发 TCP 探测（200 ms 超时），输出格式：
+
+```
+端口     服务名           可添加规则命令
+22       SSH              nat-client add-rule -n SSH -t 22
+80       HTTP             nat-client add-rule -n HTTP -t 80
+3306     MySQL            nat-client add-rule -n MySQL -t 3306
+```
+
+---
+
+#### `add-rule` — 添加转发规则
+
+```bash
+nat-client add-rule -n <名称> -t <目标端口> [--target-host <IP>] [--peer-id-filter <PeerID>]
+```
+
+| 选项 | 必须 | 默认值 | 说明 |
+|---|---|---|---|
+| `-n, --name <名称>` | ✅ | — | 规则名称（如 `SSH`） |
+| `-t, --target-port <PORT>` | ✅ | — | 本地服务端口 |
+| `--target-host <IP>` | ❌ | `127.0.0.1` | 目标主机（支持内网其他机器） |
+| `--peer-id-filter <ID>` | ❌ | `""` | 限定特定对端（空 = 任意对端） |
+
+```bash
+# 允许任意对端访问本机 SSH
+nat-client add-rule -n SSH -t 22
+
+# 仅允许 ID 为 749183026 的对端访问 HTTP
+nat-client add-rule -n HTTP -t 80 --peer-id-filter 749183026
+
+# 将流量转发到内网另一台机器的 MySQL
+nat-client add-rule -n MySQL -t 3306 --target-host 192.168.1.100
+
+# 输出示例：
+# {"ok": true, "rule_id": "a1b2c3d4-e5f6-..."}
+```
+
+---
+
+#### `list-rules` — 查看所有规则
+
+```bash
+nat-client list-rules
+```
+
+**输出示例**：
+
+```json
+{
+  "rules": [
+    {
+      "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "name": "SSH",
+      "peer_id": "",
+      "target_host": "127.0.0.1",
+      "target_port": 22,
+      "enabled": true
+    },
+    {
+      "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+      "name": "HTTP",
+      "peer_id": "749183026",
+      "target_host": "127.0.0.1",
+      "target_port": 80,
+      "enabled": true
+    }
+  ]
+}
+```
+
+---
+
+#### `remove-rule` — 删除规则
+
+```bash
+nat-client remove-rule -r <rule_id>
+```
+
+```bash
+nat-client remove-rule -r a1b2c3d4-e5f6-7890-abcd-ef1234567890
+# 输出：{"ok": true}
+```
+
+---
+
+### 8.6 调试命令
 
 #### `send` — 发送原始 JSON 命令
 
 ```bash
 nat-client send '{"cmd":"ping"}'
 nat-client send '{"cmd":"auth_status"}'
+nat-client send '{"cmd":"list_rules"}'
 ```
 
 ---
@@ -906,6 +1083,75 @@ echo '{"cmd":"ping"}' | nc 127.0.0.1 21114
 
 ---
 
+### 9.4 转发规则命令 ⭐ 新增
+
+#### `scan_services` — 扫描本机服务
+
+```json
+请求：{"cmd": "scan_services"}
+
+响应：{
+  "services": [
+    {"port": 22, "name": "SSH",   "target": "nat-client add-rule -n SSH -t 22"},
+    {"port": 80, "name": "HTTP",  "target": "nat-client add-rule -n HTTP -t 80"},
+    {"port": 3306, "name": "MySQL", "target": "nat-client add-rule -n MySQL -t 3306"}
+  ]
+}
+```
+
+---
+
+#### `list_rules` — 获取所有规则
+
+```json
+请求：{"cmd": "list_rules"}
+
+响应：{
+  "rules": [
+    {
+      "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "name": "SSH",
+      "peer_id": "",
+      "target_host": "127.0.0.1",
+      "target_port": 22,
+      "enabled": true
+    }
+  ]
+}
+```
+
+---
+
+#### `add_rule` — 新增规则
+
+```json
+请求：{
+  "cmd": "add_rule",
+  "rule_name": "SSH",
+  "target_port": 22,
+  "target_host": "127.0.0.1",
+  "peer_id_filter": ""
+}
+
+响应（成功）：{"ok": true, "rule_id": "a1b2c3d4-..."}
+响应（失败）：{"error": "target_port 不能为 0"}
+```
+
+> `peer_id_filter` 留空表示允许任意对端；填写特定 Peer ID 则限制只有该对端可以触发此规则。
+
+---
+
+#### `remove_rule` — 删除规则
+
+```json
+请求：{"cmd": "remove_rule", "rule_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"}
+
+响应（成功）：{"ok": true}
+响应（失败）：{"error": "规则不存在"}
+```
+
+---
+
 ### 错误响应格式
 
 所有命令出错时返回：
@@ -987,6 +1233,35 @@ auth_role = "user"
 # 本设备在服务器 user_devices 表中的行 ID（udid）；0 = 未绑定
 # 此 ID 会被编码进 JWT，服务端通过它关联 peer 和用户
 auth_device_row_id = 42
+
+# ── 端口转发规则（由命令行/IPC 自动维护） ⭐ 新增 ──────────────────────
+
+# 示例 1：任意对端均可访问本机 SSH
+[[forward_rules]]
+id          = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"  # 自动生成的 UUID
+name        = "SSH"
+peer_id     = ""                # 空 = 任意对端
+target_host = "127.0.0.1"
+target_port = 22
+enabled     = true
+
+# 示例 2：仅允许特定对端访问 HTTP
+# [[forward_rules]]
+# id          = "b2c3d4e5-f6a7-8901-bcde-f12345678901"
+# name        = "HTTP"
+# peer_id     = "749183026"     # 仅此对端可触发
+# target_host = "127.0.0.1"
+# target_port = 80
+# enabled     = true
+
+# 示例 3：将对端流量转发到内网另一台机器的 MySQL
+# [[forward_rules]]
+# id          = "c3d4e5f6-a7b8-9012-cdef-123456789012"
+# name        = "MySQL-内网"
+# peer_id     = ""
+# target_host = "192.168.1.100" # 内网机器 IP
+# target_port = 3306
+# enabled     = true
 ```
 
 > **安全提示**：
@@ -1073,7 +1348,55 @@ echo "隧道端口: $PORT"
 
 ---
 
-### 场景五：作为系统服务（Linux systemd）
+### 场景五：通过转发规则暴露本机服务（第三方应用内网穿透）⭐ 新增
+
+无需修改第三方应用配置，在**被连接侧（主机 A）**配置规则，任意对端均可通过 nat-client 透明访问。
+
+```bash
+# === 主机 A（被连接侧，已安装 SSH/HTTP/MySQL 等服务）===
+nat-client daemon --server 1.2.3.4
+
+# 步骤 1：扫描本机正在监听的服务
+nat-client scan-services
+# 输出：
+# 端口     服务名           可添加规则命令
+# 22       SSH              nat-client add-rule -n SSH -t 22
+# 80       HTTP             nat-client add-rule -n HTTP -t 80
+# 3306     MySQL            nat-client add-rule -n MySQL -t 3306
+
+# 步骤 2：添加需要暴露的服务规则
+nat-client add-rule -n SSH -t 22        # SSH（任意对端可连）
+nat-client add-rule -n HTTP -t 80       # Web 服务
+
+# 步骤 3：查看规则列表
+nat-client list-rules
+
+# 记下本机 Peer ID
+nat-client id
+# {"id": "386742019"}
+
+
+# === 主机 B（发起方，可在任意 NAT 后方）===
+nat-client daemon --server 1.2.3.4
+
+# 步骤 4：连接主机 A（系统自动查找匹配规则并转发）
+nat-client connect --peer-id 386742019 --local-port 2222
+# 输出：{"local_port": 2222}
+
+# 步骤 5：直接使用本地端口访问对端服务
+ssh -p 2222 user@127.0.0.1           # SSH 到主机 A
+curl http://127.0.0.1:2222/          # 访问主机 A 的 HTTP 服务（需修改本地端口）
+```
+
+> **跨机转发示例**：将对端流量转发到内网另一台机器，主机 A 作为跳板：
+> ```bash
+> # 在主机 A 上，将流量转发到内网 192.168.1.100 的 MySQL
+> nat-client add-rule -n MySQL --target-host 192.168.1.100 -t 3306
+> ```
+
+---
+
+### 场景六：作为系统服务（Linux systemd）
 
 ```ini
 # /etc/systemd/system/nat-client.service
@@ -1116,14 +1439,15 @@ nat-server 项目
 │   └── web.rs                   ← Web 路由
 │
 └── nat-client/                  ← 客户端代码（本工具）
+    ├── config.example.toml      ← 配置文件示例（含所有字段的中文注释）⭐ 新增
     └── src/
-        ├── main.rs              ← CLI 入口（含 register/login/logout/devices 等子命令）
+        ├── main.rs              ← CLI 入口（register/login/logout/devices/scan-services/add-rule/list-rules/remove-rule）⭐ 更新
         ├── auth.rs              ← 用户认证与设备管理 ⭐ 新增
-        ├── config.rs            ← 配置管理（含 auth_token 等认证字段）⭐ 更新
-        ├── rendezvous_mediator.rs ← 连接 hbbs（RegisterPk 注入 user_token）⭐ 更新
-        ├── ipc.rs               ← 本地控制（含 auth_* 命令）⭐ 更新
+        ├── config.rs            ← 配置管理（ForwardRule + 认证字段）⭐ 更新
+        ├── rendezvous_mediator.rs ← 连接 hbbs（RegisterPk 注入 user_token，入站查找转发规则）⭐ 更新
+        ├── ipc.rs               ← 本地控制（auth_* + scan_services/list_rules/add_rule/remove_rule）⭐ 更新
         ├── lan.rs               ← LAN 发现
-        └── port_forward.rs      ← TCP 隧道管理
+        └── port_forward.rs      ← TCP 隧道 + 本机服务扫描（scan_local_services）⭐ 更新
 ```
 
 ### 服务端数据库对应关系
@@ -1229,6 +1553,33 @@ nat-client daemon --server 1.2.3.4 --log-level debug
 
 ---
 
+### Q：对端连接成功但访问不了服务
+
+最常见原因是**被连接侧未配置转发规则**。守护进程日志会显示：
+
+```
+WARN [port_forward] peer=... 未配置任何转发规则，连接被拒绝
+```
+
+解决方法：在被连接侧执行：
+
+```bash
+nat-client scan-services          # 查看哪些服务可用
+nat-client add-rule -n SSH -t 22  # 添加对应规则
+```
+
+---
+
+### Q：转发规则存在哪里？
+
+规则保存在本机配置文件的 `[[forward_rules]]` TOML 数组中，路径：
+- Linux/macOS：`~/.config/nat-client/config.toml`
+- Windows：`%APPDATA%\nat-client\config.toml`
+
+可通过 `nat-client list-rules` 查看，通过 `nat-client remove-rule -r <uuid>` 删除。
+
+---
+
 ### Q：配置文件如何重置？
 
 ```bash
@@ -1278,4 +1629,4 @@ del %APPDATA%\nat-client\config.toml
 
 ---
 
-*文档版本：v0.2.0 | 最后更新：2025 年（新增用户认证与设备管理功能）*
+*文档版本：v0.3.0 | 最后更新：2026 年（新增端口转发规则、服务扫描功能）*
