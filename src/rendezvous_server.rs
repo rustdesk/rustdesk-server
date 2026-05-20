@@ -989,17 +989,16 @@ impl RendezvousServer {
 
     #[inline]
     async fn send_to_tcp(&mut self, msg: RendezvousMessage, addr: SocketAddr) {
-        let tcp_punch = self.tcp_punch.clone();
         let addr_v4 = try_into_v4(addr);
-        let mut tcp = tcp_punch.lock().await.remove(&addr_v4);
+        let mut tcp = self.tcp_punch.lock().await.remove(&addr_v4);
         if tcp.is_some() {
-            tokio::spawn(async move {
-                Self::send_to_sink(&mut tcp, msg).await;
-                // Re-insert sink so this WebSocket peer can receive future messages
-                if let Some(s) = tcp {
-                    tcp_punch.lock().await.insert(addr_v4, s);
-                }
-            });
+            Self::send_to_sink(&mut tcp, msg).await;
+            // Re-insert sink so this WebSocket peer can receive future messages.
+            // Done inline (no spawn) so there is no window where a concurrent send
+            // sees the map entry missing and incorrectly falls back to UDP.
+            if let Some(s) = tcp {
+                self.tcp_punch.lock().await.insert(addr_v4, s);
+            }
         } else if addr.port() != 0 {
             // Target not on a TCP/WS connection and has a real UDP port — fall back to UDP
             self.tx.send(Data::Msg(msg.into(), addr)).ok();
@@ -1033,6 +1032,9 @@ impl RendezvousServer {
         let mut sink = self.tcp_punch.lock().await.remove(&addr_v4);
         if sink.is_some() {
             Self::send_to_sink(&mut sink, msg).await;
+            if let Some(s) = sink {
+                self.tcp_punch.lock().await.insert(addr_v4, s);
+            }
         } else if addr.port() != 0 {
             self.tx.send(Data::Msg(msg.into(), addr)).ok();
         }
