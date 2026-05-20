@@ -658,7 +658,11 @@ impl RendezvousServer {
                             }
                         }
                         if changed {
-                            self.pm.update_pk(id, peer, addr, rk.uuid, rk.pk, ip).await;
+                            self.pm.update_pk(id.clone(), peer, addr, rk.uuid, rk.pk, ip).await;
+                        }
+                        // Refresh last_reg_time so this peer appears online for status checks
+                        if let Some(p) = self.pm.get_in_memory(&id).await {
+                            p.write().await.last_reg_time = Instant::now();
                         }
                         let mut msg_out = RendezvousMessage::new();
                         msg_out.set_register_pk_response(RegisterPkResponse {
