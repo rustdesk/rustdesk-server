@@ -717,15 +717,12 @@ impl RendezvousServer {
                     });
                     // Local sink was taken during RegisterPk — send via tcp_punch
                     let addr_v4 = try_into_v4(addr);
-                    let tcp_punch = self.tcp_punch.clone();
-                    let mut stored = tcp_punch.lock().await.remove(&addr_v4);
+                    let mut stored = self.tcp_punch.lock().await.remove(&addr_v4);
                     if stored.is_some() {
-                        tokio::spawn(async move {
-                            Self::send_to_sink(&mut stored, msg_out).await;
-                            if let Some(s) = stored {
-                                tcp_punch.lock().await.insert(addr_v4, s);
-                            }
-                        });
+                        Self::send_to_sink(&mut stored, msg_out).await;
+                        if let Some(s) = stored {
+                            self.tcp_punch.lock().await.insert(addr_v4, s);
+                        }
                     } else {
                         Self::send_to_sink(sink, msg_out).await;
                     }
@@ -993,9 +990,10 @@ impl RendezvousServer {
         let mut tcp = self.tcp_punch.lock().await.remove(&addr_v4);
         if tcp.is_some() {
             Self::send_to_sink(&mut tcp, msg).await;
-            // Re-insert sink so this WebSocket peer can receive future messages.
-            // Done inline (no spawn) so there is no window where a concurrent send
-            // sees the map entry missing and incorrectly falls back to UDP.
+            // Re-insert sink after send. There is a brief window between remove and
+            // re-insert (while send_to_sink awaits) where a concurrent send sees no
+            // entry; this is an accepted tradeoff since Sink is not Clone and holding
+            // the map lock across the await would block all other peers.
             if let Some(s) = tcp {
                 self.tcp_punch.lock().await.insert(addr_v4, s);
             }
