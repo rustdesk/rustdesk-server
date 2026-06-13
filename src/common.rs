@@ -204,11 +204,12 @@ pub async fn listen_signal() -> Result<()> {
     tokio::spawn(async move {
         // SIGHUP is only ever registered when disabled, so by default it keeps
         // its terminate disposition and nothing here changes.
-        let ignore = |kind: SignalKind, name: &'static str| {
-            if let Ok(mut s) = signal(kind) {
+        let ignore = |kind: SignalKind, name: &'static str| match signal(kind) {
+            Ok(mut s) => {
                 log::info!("ignoring signal {name}");
                 tokio::spawn(async move { while s.recv().await.is_some() {} });
             }
+            Err(e) => log::warn!("failed to register ignore handler for signal {name}: {e}"),
         };
         if disabled.hup {
             ignore(SignalKind::hangup(), "hup");
