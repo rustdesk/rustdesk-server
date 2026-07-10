@@ -1,0 +1,3 @@
+The RustDesk  has been deployed to your cluster.
+
+See https://rustdesk.com/docs/en/ for more detail.
