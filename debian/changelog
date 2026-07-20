@@ -1,3 +1,9 @@
+rustdesk-server (1.1.16) UNRELEASED; urgency=medium
+
+  * Fix i32 overflow: peers offline 24.9–49.7 days wrongly reported online #676
+  * Fix critical issue in mio via minor version upgrade from 0.8.5 to 0.8.11 in ui
+  * Fix unauthenticated UDP punch-hole request enables reflection/amplification abuse
+
 rustdesk-server (1.1.15) UNRELEASED; urgency=medium
 
   * Fix: 127.0.0.1 is not loopback (#515)
