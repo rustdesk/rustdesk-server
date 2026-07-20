@@ -401,6 +401,15 @@ async fn make_pair(
         use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
         let callback = |req: &Request, response: Response| {
             let headers = req.headers();
+            // X-Real-IP / X-Forwarded-For are trusted as-is so that the real
+            // client IP is preserved when the WebSocket port runs behind a
+            // reverse proxy (WSS). They are NOT validated: anyone who can reach
+            // this port directly can spoof an arbitrary IP, bypassing IP-based
+            // rate limiting / blocking and corrupting logged IPs. Do not expose
+            // the WebSocket port directly to untrusted networks; only the
+            // reverse proxy, which overwrites these headers, should be able to
+            // connect to it.
+            // https://github.com/rustdesk/rustdesk-server/issues/634
             let real_ip = headers
                 .get("X-Real-IP")
                 .or_else(|| headers.get("X-Forwarded-For"))
