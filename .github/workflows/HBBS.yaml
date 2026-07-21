@@ -1,0 +1,38 @@
+name: Create HBBS Windows
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - master
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    name: Build hbbs.exe (Windows)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Build hbbs.exe
+        run: cargo build --release --target x86_64-pc-windows-msvc --bin hbbs
+
+      - name: Upload hbbs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hbbs-windows
+          path: target/x86_64-pc-windows-msvc/release/hbbs.exe
