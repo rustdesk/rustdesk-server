@@ -1,3 +1,7 @@
+rustdesk-server (1.1.17) UNRELEASED; urgency=medium
+
+  * Fix more UDP reflection/amplification
+
 rustdesk-server (1.1.16) UNRELEASED; urgency=medium
 
   * Fix i32 overflow: peers offline 24.9–49.7 days wrongly reported online #676
