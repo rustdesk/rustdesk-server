@@ -12,8 +12,8 @@ environment variables, and configuration files.
 
 ## How configuration is loaded
 
-Both servers read their configuration from three sources. For **`hbbs`** the
-order of precedence, from highest to lowest, is:
+Both servers read their configuration from the following sources. For
+**`hbbs`** the order of precedence, from highest to lowest, is:
 
 1. **Command‑line flag** (e.g. `-p 21116`, `-k mykey`)
 2. **`--config <file>`** — an INI file passed with `-c`/`--config`
@@ -27,6 +27,10 @@ three ways to set the same thing.
 
 For **`hbbr`** the precedence is: **flag** (`-p`, `-k`) → **`.env`** →
 **inherited environment**.
+
+`RUST_LOG` is an exception to these rules. Both binaries initialize logging
+before loading `.env` (or `hbbs`'s `--config` file), so `RUST_LOG` must be set
+in the inherited process environment.
 
 ### ⚠️ The `.env` naming gotcha (read this)
 
@@ -43,11 +47,16 @@ For **`hbbr`** the precedence is: **flag** (`-p`, `-k`) → **`.env`** →
   the `DB_URL` / `TEST_HBBS` the code looks for. Those "direct" variables
   (marked 🅴 in the tables below) can therefore **only** be set as a real
   environment variable, not through the `hbbs` `.env`/`--config` file.
-* `hbbr` uses `.env` keys verbatim, so `.env` works for all of its variables.
+* `hbbr` uses `.env` keys verbatim, so names must match the documented
+  uppercase spelling exactly. This works for variables read after `.env` is
+  loaded; `RUST_LOG` is the exception described above.
 
 **Recommendation:**
-* Set the documented flag options via the **command line** or the **`.env`
+* Set multi-word `hbbs` flag options via the **command line** or the **`.env`
   file** (using the dashed lowercase name, e.g. `relay-servers`).
+* In a `.env` file shared by both binaries, spell shared names such as `KEY` and
+  `PORT` in uppercase. `hbbs` accepts that spelling after normalization, and
+  `hbbr` requires it.
 * Set the 🅴 "direct" tuning variables as **real environment variables**
   (docker‑compose `environment:`, systemd `Environment=`, or `export`).
 
@@ -63,7 +72,7 @@ as exported environment variables.
 
 | Variable | CLI flag | Default | Description |
 |---|---|---|---|
-| `KEY` | `-k`, `--key` | `-` | Public key clients must use, or a base64 secret key, or `-` / `_` to auto‑generate a key pair (`id_ed25519`, `id_ed25519.pub`). Use `_` to require encryption (see [Keys](#keys-and-encryption)). |
+| `KEY` | `-k`, `--key` | `-` | Public key clients must use, a base64 secret key, or `-` / `_` to load or generate a key pair (`id_ed25519`, `id_ed25519.pub`). Use `_` to require encryption. An explicitly empty value disables key validation; see [Keys](#keys-and-encryption). |
 | `PORT` | `-p`, `--port` | `21116` | Main TCP/UDP listening port. `hbbs` also binds `PORT-1` (NAT type test) and `PORT+2` (WebSocket). |
 | `RELAY-SERVERS` | `-r`, `--relay-servers` | *(empty)* | Default relay server(s) handed to clients, comma‑separated `host` or `host:port`. Usually your public IP / domain. |
 | `RENDEZVOUS-SERVERS` | `-R`, `--rendezvous-servers` | *(empty)* | Peer rendezvous servers to forward to, comma‑separated. For multi‑server setups; leave empty for a single server. |
@@ -74,7 +83,7 @@ as exported environment variables.
 | `SOFTWARE-URL` | `-u`, `--software-url` | *(empty)* | Download URL of the newest RustDesk client; the version is parsed from it and offered to clients. |
 | *(config file)* | `-c`, `--config` | *(none)* | Path to an extra INI config file (see precedence above). |
 | `TEST_HBBS` 🅴 | *(none)* | *(auto)* | UDP self‑test target checked at start‑up. Set to `no` to skip the check (useful behind some NATs/proxies), or to an explicit `host:port`. |
-| `ALWAYS_USE_RELAY` 🅴 | *(none)* | `N` | `Y` forces every session through a relay (disables direct/hole‑punched connections). Also toggleable at runtime via the `rustdesk-utils` / console `always-use-relay` command. |
+| `ALWAYS_USE_RELAY` 🅴 | *(none)* | `N` | `Y` forces every session through a relay (disables direct/hole‑punched connections). At runtime, send `always-use-relay Y` or `always-use-relay N` to the `hbbs` [loopback console](#runtime-console). |
 | `DB_URL` 🅴 | *(none)* | `./db_v2.sqlite3` | Path/URL of the SQLite database file. See [Database](#database). |
 | `MAX_DATABASE_CONNECTIONS` 🅴 | *(none)* | `1` | Size of the SQLite connection pool. |
 
@@ -90,21 +99,29 @@ as exported environment variables.
 
 | Variable | CLI flag | Default | Description |
 |---|---|---|---|
-| `KEY` | `-k`, `--key` | *(empty)* | Same meaning as for `hbbs`. Must match the key `hbbs` uses. `-` / `_` auto‑generate / require encryption. |
+| `KEY` | `-k`, `--key` | *(empty)* | Must match the non-empty key `hbbs` uses. `-` / `_` load or generate a key pair. The empty default disables key validation and leaves the relay unauthenticated; do not leave it empty on an exposed server. |
 | `PORT` | `-p`, `--port` | `21117` | Relay listening port. `hbbr` also binds `PORT+2` for WebSocket relay. **Note:** when set via the `PORT` env var (not `-p`), `hbbr` listens on `PORT + 1`, so a shared `PORT=21116` makes `hbbs`=21116 and `hbbr`=21117. |
 
 ### Relay bandwidth / QoS (all 🅴, set as environment variables)
 
-These have no CLI flag and can also be changed at runtime through the `hbbr`
-interactive console (`ba`, `tb`, `sb`, `ls`, `dt`, `t`, …; type `h` for help).
+These have no CLI flag and can also be changed through the `hbbr`
+[loopback console](#runtime-console) (`tb`, `sb`, `ls`, `dt`, `t`, …; send `h`
+for help).
 
 | Variable | Default | Unit | Description |
 |---|---|---|---|
-| `SINGLE_BANDWIDTH` | `128` | Mb/s | Max bandwidth a single relay connection may use. |
-| `TOTAL_BANDWIDTH` | `1024` | Mb/s | Max aggregate bandwidth across all relay connections before throttling kicks in. |
-| `LIMIT_SPEED` | `32` | Mb/s | Reduced per‑connection speed applied to "heavy" connections once the relay is congested. |
-| `DOWNGRADE_THRESHOLD` | `0.66` | ratio (0–1) | Load ratio above which a connection is treated as heavy and eligible for downgrade. |
-| `DOWNGRADE_START_CHECK` | `1800` | seconds | How long a connection must run before it is evaluated for downgrade. |
+| `SINGLE_BANDWIDTH` | `128` | Mb/s | Normal maximum bandwidth for each relay connection. |
+| `TOTAL_BANDWIDTH` | `1024` | Mb/s | Aggregate bandwidth cap shared by all relay connections. |
+| `LIMIT_SPEED` | `32` | Mb/s | Per-connection cap applied after a connection is downgraded, and to IPs in `blacklist.txt`. |
+| `DOWNGRADE_THRESHOLD` | `0.66` | ratio (0–1) | Fraction of `SINGLE_BANDWIDTH` that a connection's lifetime-average throughput must exceed to trigger downgrade. |
+| `DOWNGRADE_START_CHECK` | `1800` | seconds | Delay before a connection becomes eligible for the lifetime-average downgrade check. |
+
+Downgrade is decided independently for each connection; it does **not** check
+aggregate relay congestion. After `DOWNGRADE_START_CHECK`, a connection is
+capped to `LIMIT_SPEED` once its average throughput since it started exceeds
+`SINGLE_BANDWIDTH * DOWNGRADE_THRESHOLD`. A lone transfer can therefore be
+downgraded even when the relay is otherwise idle. `TOTAL_BANDWIDTH` is a
+separate aggregate cap.
 
 `hbbr` reads its `.env` verbatim, so these may also be placed in `.env`
 (e.g. `SINGLE_BANDWIDTH=256`).
@@ -117,7 +134,24 @@ interactive console (`ba`, `tb`, `sb`, `ls`, `dt`, `t`, …; type `h` for help).
   anything after the first space on a line is ignored).
 * **`blocklist.txt`** — IPs that are **refused** outright.
 
-Both can also be edited live from the `hbbr` console (`ba`/`br`, `Ba`/`Br`).
+Both can also be edited live through the `hbbr` loopback console (`ba`/`br`,
+`Ba`/`Br`).
+
+### Runtime console
+
+The runtime consoles are TCP command transports built into the services; they
+are not `rustdesk-utils` commands or interactive standard-input consoles. A
+connection from a loopback address is treated as a single console command:
+
+```bash
+# hbbs: toggle forced relay on PORT-1 (21115 by default)
+printf 'always-use-relay Y' | nc 127.0.0.1 21115
+
+# hbbr: list commands on its relay PORT (21117 by default)
+printf 'h' | nc 127.0.0.1 21117
+```
+
+Use the corresponding configured ports if you changed `PORT`.
 
 ---
 
@@ -137,7 +171,9 @@ directory.
 ## Logging
 
 Both binaries use `flexi_logger`, which honours the standard **`RUST_LOG`**
-environment variable (default level `info`).
+environment variable (default level `info`). Set it in the process environment
+before launching the binary. A value in `.env` or `hbbs`'s `--config` file is
+loaded too late and has no effect on logging.
 
 ```bash
 RUST_LOG=debug hbbs -r example.com
@@ -152,24 +188,30 @@ The `KEY` / `-k` value can be:
 * a **public key** string — clients must present the matching key;
 * a **base64‑encoded 64‑byte secret key** — the server derives the public key
   from it;
-* **`-`, `_`, or empty** — the server auto‑generates a key pair on first start,
-  writing `id_ed25519` (private) and `id_ed25519.pub` (public) to the working
-  directory, and prints the public key in the log.
+* **`-` or `_`** — the server loads a key pair from the working directory or
+  generates one on first start, writing `id_ed25519` (private) and
+  `id_ed25519.pub` (public);
+* **empty** — key validation is disabled. `hbbs` still loads or generates key
+  files for signing but deliberately leaves its active validation key empty;
+  `hbbr` neither loads nor generates a key. Both services then accept clients
+  without validating a key. Do not use an empty value on an exposed server.
 
 By convention `-k _` is used to run an **encryption‑only** server (the official
-Docker image exposes this as `ENCRYPTED_ONLY=1`). `hbbs` and `hbbr` must be
-started with the **same** key.
+supervisor Docker image exposes this as `ENCRYPTED_ONLY=1`). `hbbs` and `hbbr`
+must be started with the **same non-empty** key.
 
-To supply your own key pair, place `id_ed25519` and `id_ed25519.pub` next to the
-binaries (or in `/data` for Docker) before first start.
+To supply your own key pair, place `id_ed25519` and `id_ed25519.pub` in the
+process's **current working directory** before first start. That directory may
+differ from the directory containing the executable. For the supervisor Docker
+image, the working directory is `/data`.
 
 ---
 
 ## Docker image variables
 
-The official image (`rustdesk/rustdesk-server`) wraps the binaries with an
-s6 supervisor and adds a few convenience variables handled by the entrypoint,
-**not** by `hbbs`/`hbbr` directly:
+The supervisor image (`rustdesk/rustdesk-server-s6`) starts both binaries with
+s6 and adds a few convenience variables handled by its service scripts, **not**
+by `hbbs`/`hbbr` directly:
 
 | Variable | Default | Description |
 |---|---|---|
@@ -180,6 +222,10 @@ s6 supervisor and adds a few convenience variables handled by the entrypoint,
 
 Any variable from the tables above can also be passed straight through the
 container's environment (e.g. `-e ALWAYS_USE_RELAY=Y`, `-e RUST_LOG=debug`).
+
+The classic scratch image (`rustdesk/rustdesk-server`) contains only the
+binaries and does **not** implement `RELAY`, `ENCRYPTED_ONLY`, `KEY_PUB`, or
+`KEY_PRIV`; those variables are ignored by that image.
 
 ---
 
@@ -198,10 +244,10 @@ hbbr -k _
 ### `.env` file (working directory)
 
 ```ini
-# Works for both binaries. Use dashed lowercase names for hbbs flag options.
-relay-servers = rustdesk.example.com:21117
-key = _
-port = 21116
+# Shared by both binaries. hbbr requires exact uppercase KEY and PORT names.
+relay-servers=rustdesk.example.com:21117
+KEY=_
+PORT=21116
 ```
 
 > Reminder: put the 🅴 variables (`DB_URL`, `TEST_HBBS`, `ALWAYS_USE_RELAY`,
@@ -211,25 +257,22 @@ port = 21116
 
 ```yaml
 services:
-  hbbs:
-    image: rustdesk/rustdesk-server:latest
-    command: hbbs -r rustdesk.example.com:21117
+  rustdesk-server:
+    image: rustdesk/rustdesk-server-s6:latest
     environment:
+      - RELAY=rustdesk.example.com:21117
       - ENCRYPTED_ONLY=1
       - ALWAYS_USE_RELAY=Y
       - RUST_LOG=info
-    ports: ["21115:21115", "21116:21116", "21116:21116/udp", "21118:21118"]
-    volumes: ["./data:/root"]
-    restart: unless-stopped
-
-  hbbr:
-    image: rustdesk/rustdesk-server:latest
-    command: hbbr
-    environment:
-      - ENCRYPTED_ONLY=1
       - SINGLE_BANDWIDTH=256
-    ports: ["21117:21117", "21119:21119"]
-    volumes: ["./data:/root"]
+    ports:
+      - "21115:21115"
+      - "21116:21116"
+      - "21116:21116/udp"
+      - "21117:21117"
+      - "21118:21118"
+      - "21119:21119"
+    volumes: ["./data:/data"]
     restart: unless-stopped
 ```
 

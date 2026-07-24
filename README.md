@@ -14,6 +14,11 @@
 
 Self-host your own RustDesk server, it is free and open source.
 
+> [!IMPORTANT]
+> **Need more features?** [RustDesk Server Pro](https://rustdesk.com/pricing.html) might suit you better.
+>
+> **Want to develop your own server?** Start with [rustdesk-server-demo](https://github.com/rustdesk/rustdesk-server-demo), a simpler starting point than this repository.
+
 ## How to build manually
 
 ```bash
@@ -47,10 +52,6 @@ The most common options:
 See **[docs/environment-variables.md](docs/environment-variables.md)** for the
 full list of variables, the file/flag/env precedence rules, database and relay
 bandwidth tuning, Docker image variables, and examples.
-
-If you want extra features, [RustDesk Server Pro](https://rustdesk.com/pricing.html) might suit you better.
-
-If you want to develop your own server, [rustdesk-server-demo](https://github.com/rustdesk/rustdesk-server-demo) might be a better and simpler start for you than this repo.
 
 ## Installation
 
