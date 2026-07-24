@@ -155,28 +155,85 @@ pub fn gen_sk(wait: u64) -> (String, Option<sign::SecretKey>) {
 }
 
 #[cfg(unix)]
+#[derive(Default, Debug, PartialEq)]
+struct DisabledSignals {
+    hup: bool,
+    term: bool,
+    int: bool,
+    quit: bool,
+}
+
+// opt-in via the DISABLE_SIGNALS env var, e.g. "hup", "term,int" or "all".
+// a disabled signal is caught and swallowed so the process ignores it; the
+// main use case is DISABLE_SIGNALS=hup to survive an ssh logout without nohup.
+#[cfg(unix)]
+fn parse_disabled_signals(s: &str) -> DisabledSignals {
+    let mut d = DisabledSignals::default();
+    for tok in s.split(',') {
+        let t = tok.trim().to_lowercase();
+        match t.strip_prefix("sig").unwrap_or(&t) {
+            "" => {}
+            "all" => d = DisabledSignals { hup: true, term: true, int: true, quit: true },
+            "hup" => d.hup = true,
+            "term" => d.term = true,
+            "int" => d.int = true,
+            "quit" => d.quit = true,
+            other => log::warn!("ignoring unknown signal in DISABLE_SIGNALS: {other}"),
+        }
+    }
+    d
+}
+
+#[cfg(unix)]
+async fn recv(s: &mut Option<hbb_common::tokio::signal::unix::Signal>) {
+    match s {
+        Some(sig) => {
+            sig.recv().await;
+        }
+        None => std::future::pending::<()>().await,
+    }
+}
+
+#[cfg(unix)]
 pub async fn listen_signal() -> Result<()> {
     use hbb_common::tokio;
     use hbb_common::tokio::signal::unix::{signal, SignalKind};
 
-    tokio::spawn(async {
-        let mut s = signal(SignalKind::terminate())?;
-        let terminate = s.recv();
-        let mut s = signal(SignalKind::interrupt())?;
-        let interrupt = s.recv();
-        let mut s = signal(SignalKind::quit())?;
-        let quit = s.recv();
+    let disabled = parse_disabled_signals(&std::env::var("DISABLE_SIGNALS").unwrap_or_default());
 
+    tokio::spawn(async move {
+        // SIGHUP is only ever registered when disabled, so by default it keeps
+        // its terminate disposition and nothing here changes.
+        let ignore = |kind: SignalKind, name: &'static str| match signal(kind) {
+            Ok(mut s) => {
+                log::info!("ignoring signal {name}");
+                tokio::spawn(async move { while s.recv().await.is_some() {} });
+            }
+            Err(e) => log::warn!("failed to register ignore handler for signal {name}: {e}"),
+        };
+        if disabled.hup {
+            ignore(SignalKind::hangup(), "hup");
+        }
+        if disabled.term {
+            ignore(SignalKind::terminate(), "term");
+        }
+        if disabled.int {
+            ignore(SignalKind::interrupt(), "int");
+        }
+        if disabled.quit {
+            ignore(SignalKind::quit(), "quit");
+        }
+
+        let mut term = if disabled.term { None } else { Some(signal(SignalKind::terminate())?) };
+        let mut int = if disabled.int { None } else { Some(signal(SignalKind::interrupt())?) };
+        let mut quit = if disabled.quit { None } else { Some(signal(SignalKind::quit())?) };
+
+        // with every graceful signal disabled all three branches pend forever,
+        // so the server only stops on SIGKILL.
         tokio::select! {
-            _ = terminate => {
-                log::info!("signal terminate");
-            }
-            _ = interrupt => {
-                log::info!("signal interrupt");
-            }
-            _ = quit => {
-                log::info!("signal quit");
-            }
+            _ = recv(&mut term) => log::info!("signal terminate"),
+            _ = recv(&mut int) => log::info!("signal interrupt"),
+            _ = recv(&mut quit) => log::info!("signal quit"),
         }
         Ok(())
     })
@@ -215,4 +272,30 @@ async fn check_software_update_() -> hbb_common::ResultType<()> {
        log::info!("new version is available: {}", latest_release_version);
     }
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_signals() {
+        assert_eq!(parse_disabled_signals(""), DisabledSignals::default());
+        assert_eq!(
+            parse_disabled_signals("hup"),
+            DisabledSignals { hup: true, ..Default::default() }
+        );
+        assert_eq!(
+            parse_disabled_signals(" SIGTERM , int "),
+            DisabledSignals { term: true, int: true, ..Default::default() }
+        );
+        assert_eq!(
+            parse_disabled_signals("all"),
+            DisabledSignals { hup: true, term: true, int: true, quit: true }
+        );
+        assert_eq!(
+            parse_disabled_signals("bogus,quit"),
+            DisabledSignals { quit: true, ..Default::default() }
+        );
+    }
 }
