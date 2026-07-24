@@ -43,9 +43,10 @@ The most common options:
 
 | Option | Flag | Env var | Applies to | Purpose |
 | --- | --- | --- | --- | --- |
-| Key | `-k` | `KEY` | hbbs, hbbr | Server key; `-k _` requires encryption |
+| Key | `-k` | `KEY` | hbbs, hbbr | `hbbs` loads/generates one by default |
+| Bind address | `-b` | `BIND` | hbbs, hbbr | Local IP address to listen on (default: all interfaces; requires 1.1.17+) |
 | Port | `-p` | `PORT` | hbbs, hbbr | Listening port (hbbs `21116`, hbbr `21117`) |
-| Relay servers | `-r` | `RELAY-SERVERS` | hbbs | Relay address given to clients, e.g. your domain |
+| Relay servers | `-r` | `RELAY-SERVERS` | hbbs | Override when the relay uses a different address or a non-standard port |
 | Force relay | — | `ALWAYS_USE_RELAY` | hbbs | `Y` disables direct connections |
 | Log level | — | `RUST_LOG` | hbbs, hbbr | e.g. `debug` (default `info`) |
 

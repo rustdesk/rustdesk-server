@@ -25,46 +25,12 @@ the hood every source is turned into a process environment variable, and the
 code then reads that variable — so "flag", "config file" and "env var" are just
 three ways to set the same thing.
 
-For **`hbbr`** the precedence is: **flag** (`-p`, `-k`) → **`.env`** →
+For **`hbbr`** the precedence is: **flag** (`-b`, `-p`, `-k`) → **`.env`** →
 **inherited environment**.
 
 `RUST_LOG` is an exception to these rules. Both binaries initialize logging
 before loading `.env` (or `hbbs`'s `--config` file), so `RUST_LOG` must be set
 in the inherited process environment.
-
-### ⚠️ The `.env` naming gotcha (read this)
-
-`hbbs` and `hbbr` do **not** parse `.env` the same way:
-
-| | Key written in `.env` | Variable the code sees |
-|---|---|---|
-| **`hbbs`** | `relay_servers` **or** `relay-servers` | `RELAY-SERVERS` (upper‑cased, `_`→`-`) |
-| **`hbbr`** | `downgrade_threshold` | `DOWNGRADE_THRESHOLD` (used verbatim) |
-
-* `hbbs` rewrites every `.env`/`--config` key to **UPPERCASE** and replaces
-  underscores with dashes. So a key with an underscore in `.env` (for example
-  `DB_URL` or `TEST_HBBS`) becomes `DB-URL` / `TEST-HBBS` and will **not** match
-  the `DB_URL` / `TEST_HBBS` the code looks for. Those "direct" variables
-  (marked 🅴 in the tables below) can therefore **only** be set as a real
-  environment variable, not through the `hbbs` `.env`/`--config` file.
-* `hbbr` uses `.env` keys verbatim, so names must match the documented
-  uppercase spelling exactly. This works for variables read after `.env` is
-  loaded; `RUST_LOG` is the exception described above.
-
-**Recommendation:**
-* Set multi-word `hbbs` flag options via the **command line** or the **`.env`
-  file** (using the dashed lowercase name, e.g. `relay-servers`).
-* In a `.env` file shared by both binaries, spell shared names such as `KEY` and
-  `PORT` in uppercase. `hbbs` accepts that spelling after normalization, and
-  `hbbr` requires it.
-* Set the 🅴 "direct" tuning variables as **real environment variables**
-  (docker‑compose `environment:`, systemd `Environment=`, or `export`).
-
-Multi‑word options such as `relay-servers` have an internal env‑var name that
-contains a dash (`RELAY-SERVERS`). Most shells cannot `export RELAY-SERVERS=…`,
-so for those prefer the CLI flag or the `.env` file. Single‑word options
-(`PORT`, `KEY`, `MASK`, `SERIAL`, `RMEM`) are ordinary identifiers and work fine
-as exported environment variables.
 
 ---
 
@@ -72,23 +38,18 @@ as exported environment variables.
 
 | Variable | CLI flag | Default | Description |
 |---|---|---|---|
-| `KEY` | `-k`, `--key` | `-` | Public key clients must use, a base64 secret key, or `-` / `_` to load or generate a key pair (`id_ed25519`, `id_ed25519.pub`). Use `_` to require encryption. An explicitly empty value disables key validation; see [Keys](#keys-and-encryption). |
+| `KEY` | `-k`, `--key` | `-` | Public key clients must use, a base64 secret key, or `-` / `_` to load or generate a key pair (`id_ed25519`, `id_ed25519.pub`). `-` and `_` have the same behavior, so explicitly passing `-k _` to `hbbs` is unnecessary. An explicitly empty value disables key validation; see [Keys](#keys-and-encryption). |
+| `BIND` | `-b`, `--bind` | all interfaces | **Available since 1.1.17.** Local IPv4 or IPv6 address on which all `hbbs` TCP, UDP, and WebSocket listeners bind. This does not change the addresses advertised to clients. Supported by `--config`, `.env`, and the inherited environment. |
 | `PORT` | `-p`, `--port` | `21116` | Main TCP/UDP listening port. `hbbs` also binds `PORT-1` (NAT type test) and `PORT+2` (WebSocket). |
-| `RELAY-SERVERS` | `-r`, `--relay-servers` | *(empty)* | Default relay server(s) handed to clients, comma‑separated `host` or `host:port`. Usually your public IP / domain. |
-| `RENDEZVOUS-SERVERS` | `-R`, `--rendezvous-servers` | *(empty)* | Peer rendezvous servers to forward to, comma‑separated. For multi‑server setups; leave empty for a single server. |
-| `MASK` | `--mask` | *(none)* | CIDR that marks a client as "LAN", e.g. `192.168.0.0/16`. When set, LAN peers get `LOCAL-IP` instead of their public address. |
-| `LOCAL-IP` | *(none — env/`.env` only)* | auto‑detected | LAN address advertised to peers matched by `MASK`. Defaults to the machine's primary local IP. |
-| `SERIAL` | `-s`, `--serial` | `0` | Config update serial. Bump it to push updated relay/rendezvous lists to clients. |
+| `RELAY-SERVERS` | `-r`, `--relay-servers` | *(empty)* | Optional relay server override handed to clients, as comma-separated `host` or `host:port` values. Leave empty when `hbbr` uses the same address as `hbbs` and the standard port `21117`; clients derive it automatically. Set this only when the relay uses a different IP/hostname or a non-standard port. |
 | `RMEM` | `-M`, `--rmem` | `0` (system default) | UDP receive‑buffer size in bytes. Raise the OS limit first: `sudo sysctl -w net.core.rmem_max=52428800`. |
-| `SOFTWARE-URL` | `-u`, `--software-url` | *(empty)* | Download URL of the newest RustDesk client; the version is parsed from it and offered to clients. |
 | *(config file)* | `-c`, `--config` | *(none)* | Path to an extra INI config file (see precedence above). |
 | `TEST_HBBS` 🅴 | *(none)* | *(auto)* | UDP self‑test target checked at start‑up. Set to `no` to skip the check (useful behind some NATs/proxies), or to an explicit `host:port`. |
 | `ALWAYS_USE_RELAY` 🅴 | *(none)* | `N` | `Y` forces every session through a relay (disables direct/hole‑punched connections). At runtime, send `always-use-relay Y` or `always-use-relay N` to the `hbbs` [loopback console](#runtime-console). |
 | `DB_URL` 🅴 | *(none)* | `./db_v2.sqlite3` | Path/URL of the SQLite database file. See [Database](#database). |
 | `MAX_DATABASE_CONNECTIONS` 🅴 | *(none)* | `1` | Size of the SQLite connection pool. |
 
-🅴 = read directly from the environment; **cannot** be set through the `hbbs`
-`.env`/`--config` file (see the gotcha above).
+🅴 = set through the inherited process environment.
 
 > `PORT_FOR_API` / `KEY_FOR_API` are only used by RustDesk Server **Pro** and its
 > API; they have no effect in the open‑source server.
@@ -99,10 +60,11 @@ as exported environment variables.
 
 | Variable | CLI flag | Default | Description |
 |---|---|---|---|
-| `KEY` | `-k`, `--key` | *(empty)* | Must match the non-empty key `hbbs` uses. `-` / `_` load or generate a key pair. The empty default disables key validation and leaves the relay unauthenticated; do not leave it empty on an exposed server. |
+| `KEY` | `-k`, `--key` | *(empty)* | The empty default intentionally disables relay key validation, avoiding key-pair setup and mismatch failures. To enable relay key validation, use the same non-empty key as `hbbs`; `-` / `_` have the same behavior and load or generate a key pair. An empty key allows clients without a matching key to use the relay, so choose this tradeoff deliberately on an exposed server. |
+| `BIND` | `-b`, `--bind` | all interfaces | **Available since 1.1.17.** Local IPv4 or IPv6 address on which the relay TCP and WebSocket listeners bind. Supported by `.env` and the inherited environment; `hbbr` does not support `--config`. |
 | `PORT` | `-p`, `--port` | `21117` | Relay listening port. `hbbr` also binds `PORT+2` for WebSocket relay. **Note:** when set via the `PORT` env var (not `-p`), `hbbr` listens on `PORT + 1`, so a shared `PORT=21116` makes `hbbs`=21116 and `hbbr`=21117. |
 
-### Relay bandwidth / QoS (all 🅴, set as environment variables)
+### Relay bandwidth / QoS
 
 These have no CLI flag and can also be changed through the `hbbr`
 [loopback console](#runtime-console) (`tb`, `sb`, `ls`, `dt`, `t`, …; send `h`
@@ -123,7 +85,7 @@ capped to `LIMIT_SPEED` once its average throughput since it started exceeds
 downgraded even when the relay is otherwise idle. `TOTAL_BANDWIDTH` is a
 separate aggregate cap.
 
-`hbbr` reads its `.env` verbatim, so these may also be placed in `.env`
+These may also be placed in `.env` using the uppercase spellings shown above
 (e.g. `SINGLE_BANDWIDTH=256`).
 
 ### Blocklists / blacklists (files, not env vars)
@@ -176,7 +138,7 @@ before launching the binary. A value in `.env` or `hbbs`'s `--config` file is
 loaded too late and has no effect on logging.
 
 ```bash
-RUST_LOG=debug hbbs -r example.com
+RUST_LOG=debug hbbs
 ```
 
 ---
@@ -194,11 +156,16 @@ The `KEY` / `-k` value can be:
 * **empty** — key validation is disabled. `hbbs` still loads or generates key
   files for signing but deliberately leaves its active validation key empty;
   `hbbr` neither loads nor generates a key. Both services then accept clients
-  without validating a key. Do not use an empty value on an exposed server.
+  without validating a key. This is the intentional `hbbr` default; use a
+  non-empty value when relay key validation is required.
 
-By convention `-k _` is used to run an **encryption‑only** server (the official
-supervisor Docker image exposes this as `ENCRYPTED_ONLY=1`). `hbbs` and `hbbr`
-must be started with the **same non-empty** key.
+`hbbs` defaults to `-`, so it already loads or generates a key pair without an
+explicit `-k _`. `hbbr` intentionally defaults to an empty key to avoid
+key-pair setup and mismatch failures. Leave it empty for the default mode
+without key validation. To enable relay key validation, give it the same
+non-empty key as `hbbs`; both services can reuse key material from a shared
+working directory. The `_` value is not a stricter mode than `-` in the current
+implementation.
 
 To supply your own key pair, place `id_ed25519` and `id_ed25519.pub` in the
 process's **current working directory** before first start. That directory may
@@ -216,7 +183,7 @@ by `hbbs`/`hbbr` directly:
 | Variable | Default | Description |
 |---|---|---|
 | `RELAY` | `relay.example.com` | Passed to `hbbs` as `-r $RELAY` (your public address). |
-| `ENCRYPTED_ONLY` | `0` | `1` adds `-k _` to both servers, forcing encryption. |
+| `ENCRYPTED_ONLY` | `0` | `1` adds `-k _` to both servers. This is redundant for `hbbs`, whose default is `-`, and opts `hbbr` into key validation instead of its intentional empty default. |
 | `KEY_PUB` | *(unset)* | If set, written to `/data/id_ed25519.pub` on first start. |
 | `KEY_PRIV` | *(unset)* | If set, written to `/data/id_ed25519` on first start. Provide **both** `KEY_PUB` and `KEY_PRIV`, or neither. |
 
@@ -231,27 +198,21 @@ binaries and does **not** implement `RELAY`, `ENCRYPTED_ONLY`, `KEY_PUB`, or
 
 ## Examples
 
-### Command line
+### Command line — non-standard ports
 
 ```bash
-# ID server: relay clients to this host, LAN detection, force encryption
-hbbs -r rustdesk.example.com:21117 --mask 192.168.0.0/16 -k _
-
-# Relay server, same key
-hbbr -k _
+# Tell clients where the relay listens because it is not using port 21117.
+hbbs -p 22116 -r rustdesk.example.com:22117
+hbbr -p 22117
 ```
 
 ### `.env` file (working directory)
 
 ```ini
-# Shared by both binaries. hbbr requires exact uppercase KEY and PORT names.
-relay-servers=rustdesk.example.com:21117
-KEY=_
-PORT=21116
+# Non-standard ports shared by both binaries; hbbr listens on PORT+1.
+relay-servers=rustdesk.example.com:22117
+PORT=22116
 ```
-
-> Reminder: put the 🅴 variables (`DB_URL`, `TEST_HBBS`, `ALWAYS_USE_RELAY`,
-> `MAX_DATABASE_CONNECTIONS`) in the real environment, not in the `hbbs` `.env`.
 
 ### docker-compose
 
@@ -261,7 +222,6 @@ services:
     image: rustdesk/rustdesk-server-s6:latest
     environment:
       - RELAY=rustdesk.example.com:21117
-      - ENCRYPTED_ONLY=1
       - ALWAYS_USE_RELAY=Y
       - RUST_LOG=info
       - SINGLE_BANDWIDTH=256
@@ -282,7 +242,7 @@ services:
 [Service]
 Environment=ALWAYS_USE_RELAY=Y
 Environment=RUST_LOG=info
-ExecStart=/usr/bin/hbbs -r rustdesk.example.com:21117 -k _
+ExecStart=/usr/bin/hbbs
 ```
 
 ---
