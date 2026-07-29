@@ -1,0 +1,20 @@
+# Build hbbs/hbbr with the TCP KeyExchange patch (linux/amd64, glibc).
+FROM rust:1-bookworm AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+COPY . .
+RUN cargo build --release --bin hbbs --bin hbbr
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /root
+COPY --from=builder /build/target/release/hbbs /usr/bin/hbbs
+COPY --from=builder /build/target/release/hbbr /usr/bin/hbbr
+# hbbs: 21115 (nat test), 21116 tcp+udp (rendezvous), 21118 (ws)
+# hbbr: 21117 (relay), 21119 (ws relay)
+EXPOSE 21115 21116 21116/udp 21117 21118 21119
+CMD ["hbbs"]
