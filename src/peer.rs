@@ -177,4 +177,15 @@ impl PeerMap {
     pub(crate) async fn is_in_memory(&self, id: &str) -> bool {
         self.map.read().await.contains_key(id)
     }
+
+    #[inline]
+    pub(crate) async fn get_id_by_socket_addr(&self, addr: SocketAddr) -> Option<String> {
+        let map = self.map.read().await;
+        for (id, peer) in map.iter() {
+            if peer.read().await.socket_addr == addr {
+                return Some(id.clone());
+            }
+        }
+        None
+    }
 }
