@@ -2,7 +2,7 @@ use crate::common::*;
 use crate::peer::*;
 use hbb_common::{
     allow_err, bail,
-    bytes::{Bytes, BytesMut},
+    bytes::{BufMut, Bytes, BytesMut},
     bytes_codec::BytesCodec,
     config,
     futures::future::join_all,
@@ -31,7 +31,11 @@ use hbb_common::{
     AddrMangle, ResultType,
 };
 use ipnetwork::Ipv4Network;
-use sodiumoxide::crypto::sign;
+use sodiumoxide::crypto::{
+    box_,
+    secretbox::{self, Key, Nonce},
+    sign,
+};
 use std::{
     collections::HashMap,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
@@ -50,9 +54,47 @@ enum Data {
 const REG_TIMEOUT: i64 = 30_000;
 type TcpStreamSink = SplitSink<Framed<TcpStream, BytesCodec>, Bytes>;
 type WsSink = SplitSink<tokio_tungstenite::WebSocketStream<TcpStream>, tungstenite::Message>;
-enum Sink {
+enum SinkType {
     TcpStream(TcpStreamSink),
     Ws(WsSink),
+}
+
+// A TCP connection can be upgraded to an encrypted channel via KeyExchange
+// (see key_exchange_phase1 / the KeyExchange arm in handle_tcp). Clients >= 1.4.1
+// require this whenever they are logged into an API server and a key is set.
+struct Sink {
+    tx: SinkType,
+    key: Arc<Mutex<Option<Encrypt>>>,
+    // Ephemeral secret for the pending exchange on this connection. Dropped with
+    // the connection, so recorded traffic cannot be decrypted after the fact.
+    exchange_sk: Option<box_::SecretKey>,
+}
+
+#[derive(Clone)]
+struct Encrypt {
+    key: Key,
+    enc_seqnum: u64,
+    dec_seqnum: u64,
+}
+
+// Light version of hbb_common::tcp::Encrypt — nonce is derived from the sequence
+// number, which both sides increment in lockstep.
+impl Encrypt {
+    fn dec(&mut self, bytes: &BytesMut) -> Result<Vec<u8>, ()> {
+        self.dec_seqnum += 1;
+        secretbox::open(bytes, &Self::get_nonce(self.dec_seqnum), &self.key)
+    }
+
+    fn enc(&mut self, data: &[u8]) -> Vec<u8> {
+        self.enc_seqnum += 1;
+        secretbox::seal(data, &Self::get_nonce(self.enc_seqnum), &self.key)
+    }
+
+    fn get_nonce(seqnum: u64) -> Nonce {
+        let mut nonce = Nonce([0u8; secretbox::NONCEBYTES]);
+        nonce.0[..std::mem::size_of_val(&seqnum)].copy_from_slice(&seqnum.to_le_bytes());
+        nonce
+    }
 }
 type Sender = mpsc::UnboundedSender<Data>;
 type Receiver = mpsc::UnboundedReceiver<Data>;
@@ -511,6 +553,16 @@ impl RendezvousServer {
     ) -> bool {
         if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(bytes) {
             match msg_in.union {
+                Some(rendezvous_message::Union::KeyExchange(ex)) => {
+                    if ws {
+                        // wss already encrypts the transport and the client skips
+                        // the handshake there; adding a secretbox layer would make
+                        // every later reply unreadable to a WebSocket peer.
+                        log::warn!("Ignoring KeyExchange on WebSocket connection {}", addr);
+                        return true;
+                    }
+                    return Self::key_exchange_phase2(addr, sink, ex).await;
+                }
                 Some(rendezvous_message::Union::PunchHoleRequest(ph)) => {
                     // there maybe several attempt, so sink can be none
                     if let Some(sink) = sink.take() {
@@ -850,12 +902,15 @@ impl RendezvousServer {
     #[inline]
     async fn send_to_sink(sink: &mut Option<Sink>, msg: RendezvousMessage) {
         if let Some(sink) = sink.as_mut() {
-            if let Ok(bytes) = msg.write_to_bytes() {
-                match sink {
-                    Sink::TcpStream(s) => {
+            if let Ok(mut bytes) = msg.write_to_bytes() {
+                if let Some(enc) = sink.key.lock().await.as_mut() {
+                    bytes = enc.enc(&bytes);
+                }
+                match &mut sink.tx {
+                    SinkType::TcpStream(s) => {
                         allow_err!(s.send(Bytes::from(bytes)).await);
                     }
-                    Sink::Ws(ws) => {
+                    SinkType::Ws(ws) => {
                         allow_err!(ws.send(tungstenite::Message::Binary(bytes)).await);
                     }
                 }
@@ -1206,7 +1261,12 @@ impl RendezvousServer {
             };
             let ws_stream = tokio_tungstenite::accept_hdr_async(stream, callback).await?;
             let (a, mut b) = ws_stream.split();
-            sink = Some(Sink::Ws(a));
+            // wss already encrypts the transport, so no KeyExchange here.
+            sink = Some(Sink {
+                tx: SinkType::Ws(a),
+                key: Arc::new(Mutex::new(None)),
+                exchange_sk: None,
+            });
             while let Ok(Some(Ok(msg))) = timeout(30_000, b.next()).await {
                 if let tungstenite::Message::Binary(bytes) = msg {
                     if !self.handle_tcp(&bytes, &mut sink, addr, key, ws).await {
@@ -1216,8 +1276,32 @@ impl RendezvousServer {
             }
         } else {
             let (a, mut b) = Framed::new(stream, BytesCodec::new()).split();
-            sink = Some(Sink::TcpStream(a));
-            while let Ok(Some(Ok(bytes))) = timeout(30_000, b.next()).await {
+            let enc = Arc::new(Mutex::new(None));
+            sink = Some(Sink {
+                tx: SinkType::TcpStream(a),
+                key: enc.clone(),
+                exchange_sk: None,
+            });
+            // The nat helper port answers with an empty key; no handshake there.
+            if !key.is_empty() {
+                self.key_exchange_phase1(addr, &mut sink).await;
+            }
+            while let Ok(Some(Ok(mut bytes))) = timeout(30_000, b.next()).await {
+                let mut enc_lock = enc.lock().await;
+                if let Some(enc) = enc_lock.as_mut() {
+                    match enc.dec(&bytes) {
+                        Ok(dec) => {
+                            bytes.clear();
+                            bytes.put_slice(&dec);
+                        }
+                        Err(_) => {
+                            log::warn!("Decryption error from {}", addr);
+                            drop(enc_lock);
+                            break;
+                        }
+                    }
+                }
+                drop(enc_lock);
                 if !self.handle_tcp(&bytes, &mut sink, addr, key, ws).await {
                     break;
                 }
@@ -1256,6 +1340,66 @@ impl RendezvousServer {
     }
 
     #[inline]
+    // KeyExchange phase 1: hand the client this connection's public key, signed
+    // with the server key so the client can verify it against the configured Key.
+    async fn key_exchange_phase1(&mut self, addr: SocketAddr, sink: &mut Option<Sink>) {
+        let Some(sk) = self.inner.sk.as_ref() else {
+            return;
+        };
+        log::debug!("KeyExchange phase 1 with {}", addr);
+        // Fresh keypair per connection: the secret dies with the connection, so
+        // a later compromise cannot unseal keys from recorded sessions.
+        let (our_pk_b, our_sk_b) = box_::gen_keypair();
+        let signed_pk = sign::sign(&our_pk_b.0, sk);
+        if let Some(sink) = sink.as_mut() {
+            sink.exchange_sk = Some(our_sk_b);
+        }
+        let mut msg_out = RendezvousMessage::new();
+        msg_out.set_key_exchange(KeyExchange {
+            keys: vec![Bytes::from(signed_pk)],
+            ..Default::default()
+        });
+        Self::send_to_sink(sink, msg_out).await;
+    }
+
+    // KeyExchange phase 2: the client sealed a symmetric key to our public key.
+    // Opening it upgrades this connection to an encrypted channel.
+    async fn key_exchange_phase2(
+        addr: SocketAddr,
+        sink: &mut Option<Sink>,
+        ex: KeyExchange,
+    ) -> bool {
+        if ex.keys.len() != 2 {
+            log::error!("KeyExchange from {}: expected 2 keys", addr);
+            return false;
+        }
+        let (Ok(their_pk), Ok(sealed)) = (
+            <[u8; 32]>::try_from(&ex.keys[0][..]),
+            <[u8; 48]>::try_from(&ex.keys[1][..]),
+        ) else {
+            log::error!("KeyExchange from {}: malformed key sizes", addr);
+            return false;
+        };
+        // Taken, not borrowed: one exchange per connection.
+        let Some(our_sk_b) = sink.as_mut().and_then(|s| s.exchange_sk.take()) else {
+            log::error!("KeyExchange from {}: no exchange in progress", addr);
+            return false;
+        };
+        let Some(symmetric_key) = get_symmetric_key_from_msg(&our_sk_b, their_pk, &sealed) else {
+            log::error!("KeyExchange from {}: failed to open sealed key", addr);
+            return false;
+        };
+        if let Some(sink) = sink.as_mut() {
+            sink.key.lock().await.replace(Encrypt {
+                key: symmetric_key,
+                enc_seqnum: 0,
+                dec_seqnum: 0,
+            });
+        }
+        log::debug!("KeyExchange with {} done, connection secured", addr);
+        true
+    }
+
     fn get_server_sk(key: &str) -> (String, Option<sign::SecretKey>) {
         let mut out_sk = None;
         let mut key = key.to_owned();
@@ -1408,9 +1552,74 @@ async fn create_tcp_listener(bind_addr: Option<IpAddr>, port: i32) -> ResultType
     Ok(s)
 }
 
+// The client seals the symmetric key with a zero nonce (see create_symmetric_key_msg
+// on the client side); returns None on any malformed / unopenable input.
+fn get_symmetric_key_from_msg(
+    our_sk_b: &box_::SecretKey,
+    their_pk_b: [u8; 32],
+    sealed_value: &[u8; 48],
+) -> Option<Key> {
+    let their_pk_b = box_::PublicKey(their_pk_b);
+    let nonce = box_::Nonce([0u8; box_::NONCEBYTES]);
+    let opened = box_::open(sealed_value, &nonce, &their_pk_b, our_sk_b).ok()?;
+    Key::from_slice(&opened)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn key_exchange_round_trip() {
+        // Mirrors the client: seal a fresh symmetric key to the server's public key.
+        let (server_pk, server_sk) = box_::gen_keypair();
+        let (client_pk, client_sk) = box_::gen_keypair();
+        let symmetric = secretbox::gen_key();
+        let nonce = box_::Nonce([0u8; box_::NONCEBYTES]);
+        let sealed = box_::seal(&symmetric.0, &nonce, &server_pk, &client_sk);
+        let sealed: [u8; 48] = sealed.try_into().unwrap();
+
+        let opened = get_symmetric_key_from_msg(&server_sk, client_pk.0, &sealed).unwrap();
+        assert_eq!(opened.0, symmetric.0);
+
+        // And the derived channel must round-trip a message.
+        let mut enc = Encrypt {
+            key: opened.clone(),
+            enc_seqnum: 0,
+            dec_seqnum: 0,
+        };
+        let mut dec = Encrypt {
+            key: opened,
+            enc_seqnum: 0,
+            dec_seqnum: 0,
+        };
+        let ciphertext = enc.enc(b"hello rendezvous");
+        let plain = dec.dec(&BytesMut::from(&ciphertext[..])).unwrap();
+        assert_eq!(&plain, b"hello rendezvous");
+    }
+
+    #[test]
+    fn key_exchange_rejects_garbage() {
+        let (_, server_sk) = box_::gen_keypair();
+        let (client_pk, _) = box_::gen_keypair();
+        assert!(get_symmetric_key_from_msg(&server_sk, client_pk.0, &[0u8; 48]).is_none());
+    }
+
+    #[test]
+    fn key_exchange_secret_does_not_open_another_connections_payload() {
+        // Each connection negotiates with its own keypair, so a secret recovered
+        // from one connection is useless against another's sealed key.
+        let (pk_a, sk_a) = box_::gen_keypair();
+        let (_pk_b, sk_b) = box_::gen_keypair();
+        let (client_pk, client_sk) = box_::gen_keypair();
+        let nonce = box_::Nonce([0u8; box_::NONCEBYTES]);
+        let sealed_to_a: [u8; 48] = box_::seal(&secretbox::gen_key().0, &nonce, &pk_a, &client_sk)
+            .try_into()
+            .unwrap();
+
+        assert!(get_symmetric_key_from_msg(&sk_a, client_pk.0, &sealed_to_a).is_some());
+        assert!(get_symmetric_key_from_msg(&sk_b, client_pk.0, &sealed_to_a).is_none());
+    }
 
     #[hbb_common::tokio::test]
     async fn udp_listener_uses_bind_address() {
