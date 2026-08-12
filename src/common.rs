@@ -278,6 +278,8 @@ pub async fn listen_signal() -> Result<()> {
     unreachable!();
 }
 
+#[allow(dead_code)]
+const VERSION_CHECK_URL: &str = "https://api.rustdesk.com/version/latest";
 
 pub fn check_software_update() {
     const ONE_DAY_IN_SECONDS: u64 = 60 * 60 * 24;
@@ -289,9 +291,10 @@ pub fn check_software_update() {
 
 #[tokio::main(flavor = "current_thread")]
 async fn check_software_update_() -> hbb_common::ResultType<()> {
-    let (request, url) = hbb_common::version_check_request(hbb_common::VER_TYPE_RUSTDESK_SERVER.to_string());
-    let latest_release_response = reqwest::Client::builder().build()?
-        .post(url)
+    let request = server_version_check_request();
+    let latest_release_response = reqwest::Client::builder()
+        .build()?
+        .post(VERSION_CHECK_URL)
         .json(&request)
         .send()
         .await?;
@@ -301,9 +304,46 @@ async fn check_software_update_() -> hbb_common::ResultType<()> {
     let response_url = resp.url;
     let latest_release_version = response_url.rsplit('/').next().unwrap_or_default();
     if get_version_number(&latest_release_version) > get_version_number(crate::version::VERSION) {
-       log::info!("new version is available: {}", latest_release_version);
+        log::info!("new version is available: {}", latest_release_version);
     }
     Ok(())
+}
+
+#[allow(dead_code)]
+fn server_version_check_request() -> hbb_common::VersionCheckRequest {
+    use hbb_common::sysinfo::System;
+
+    // Avoid hbb_common::version_check_request here; its client fingerprint path
+    // initializes Config and can write RustDesk.toml in server data directories.
+    let system = System::new();
+    hbb_common::VersionCheckRequest {
+        os: system.distribution_id(),
+        os_version: system.os_version().unwrap_or_default(),
+        arch: std::env::consts::ARCH.to_string(),
+        device_id: server_update_device_id(),
+        typ: hbb_common::VER_TYPE_RUSTDESK_SERVER.to_string(),
+    }
+}
+
+#[allow(dead_code)]
+fn server_update_device_id() -> Vec<u8> {
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    if let Ok(id) = machine_uid::get() {
+        return id.into();
+    }
+
+    anonymous_server_device_id()
+}
+
+#[allow(dead_code)]
+fn anonymous_server_device_id() -> Vec<u8> {
+    use hbb_common::sha2::{Digest, Sha256};
+
+    let mut hasher = Sha256::new();
+    hasher.update(b"rustdesk-server-version-check");
+    hasher.update(std::env::consts::OS.as_bytes());
+    hasher.update(std::env::consts::ARCH.as_bytes());
+    hasher.finalize().to_vec()
 }
 
 #[cfg(test)]
@@ -352,6 +392,20 @@ mod tests {
             Some(IpAddr::V6(Ipv6Addr::LOCALHOST))
         );
         assert!(parse_bind_address("not-an-ip").is_err());
+    }
+
+    #[test]
+    fn server_version_check_request_uses_server_type() {
+        let request = server_version_check_request();
+        assert_eq!(request.typ, hbb_common::VER_TYPE_RUSTDESK_SERVER);
+        assert!(!request.device_id.is_empty());
+    }
+
+    #[test]
+    fn anonymous_server_device_id_is_stable_hash() {
+        let id = anonymous_server_device_id();
+        assert_eq!(id, anonymous_server_device_id());
+        assert_eq!(id.len(), 32);
     }
 
     #[hbb_common::tokio::test]
