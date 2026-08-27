@@ -1237,6 +1237,11 @@ impl RendezvousServer {
                         break;
                     }
                 } else if let Some(o) = offer.take() {
+                    // The answer has to be the very first frame: the client
+                    // calls `secure_tcp` before it sends anything else, so the
+                    // offer is consumed here whatever comes in. A frame that is
+                    // not a key exchange means the client ignored the offer,
+                    // and the connection stays in the clear for good.
                     match o.accept(&bytes) {
                         KeyExchangeOutcome::Secured(key) => {
                             decrypt = Some(Encrypt::new(key.clone()));
@@ -1589,6 +1594,31 @@ mod tests {
         let mut msg_out = RendezvousMessage::new();
         msg_out.set_key_exchange(KeyExchange {
             keys: vec![Bytes::from(vec![0u8; box_::PUBLICKEYBYTES])],
+            ..Default::default()
+        });
+        let bytes = msg_out.write_to_bytes().expect("serialize answer");
+        assert!(matches!(
+            offer.accept(&BytesMut::from(&bytes[..])),
+            KeyExchangeOutcome::Failed(_)
+        ));
+    }
+
+    #[test]
+    fn an_answer_sealed_for_another_key_is_rejected() {
+        use sodiumoxide::crypto::secretbox;
+        let (_, sk) = sign::gen_keypair();
+        let offer = KeyExchangeOffer::new(Some(&sk)).expect("offer with a server key");
+        // Well formed, two keys, but sealed for an unrelated public key: this
+        // is the answer the server cannot open, as opposed to the one it
+        // rejects on sight.
+        let (other_pk_b, _) = box_::gen_keypair();
+        let (our_pk_b, our_sk_b) = box_::gen_keypair();
+        let key = secretbox::gen_key();
+        let nonce = box_::Nonce([0u8; box_::NONCEBYTES]);
+        let sealed_key = box_::seal(&key.0, &nonce, &other_pk_b, &our_sk_b);
+        let mut msg_out = RendezvousMessage::new();
+        msg_out.set_key_exchange(KeyExchange {
+            keys: vec![Bytes::from(our_pk_b.0.to_vec()), Bytes::from(sealed_key)],
             ..Default::default()
         });
         let bytes = msg_out.write_to_bytes().expect("serialize answer");

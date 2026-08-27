@@ -15,6 +15,11 @@ use hbb_common::{
 use sodiumoxide::crypto::{box_, secretbox, sign};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
+// hbbs binds three ports around this one: PORT - 1 (NAT type test), PORT (the
+// rendezvous listener this test speaks to) and PORT + 2 (the websocket
+// listener). 41115, 41116 and 41118 are the defaults shifted by 20000, kept
+// clear of anything a developer machine or a CI runner is likely to use; if the
+// test cannot bind, that whole range is what has to be free.
 const PORT: i32 = 41116;
 
 async fn secure_tcp(conn: &mut FramedStream, server_pk: &sign::PublicKey) {
@@ -56,28 +61,43 @@ async fn signed_in_client_completes_the_exchange_and_keeps_talking_encrypted() {
     let (pk, sk) = sign::gen_keypair();
     let key = base64::encode(sk.0);
     // `start_with_bind` is `#[tokio::main]`, i.e. it builds its own runtime and
-    // blocks, so it gets a thread of its own.
+    // blocks, so it gets a thread of its own. Its error travels back over a
+    // channel: panicking on that thread would leave this one retrying the
+    // connection for five seconds and then failing with the wrong reason.
+    let (failed_tx, failed_rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        hbbs::RendezvousServer::start_with_bind(
+        if let Err(err) = hbbs::RendezvousServer::start_with_bind(
             Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
             PORT,
             0,
             &key,
             0,
-        )
-        .expect("hbbs starts");
+        ) {
+            let _ = failed_tx.send(err.to_string());
+        }
     });
 
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), PORT as u16);
     let mut conn = None;
     for _ in 0..50 {
+        if let Ok(err) = failed_rx.try_recv() {
+            panic!("hbbs did not start: {err}");
+        }
         if let Ok(c) = FramedStream::new(addr, None, 1_000).await {
             conn = Some(c);
             break;
         }
         hbb_common::sleep(0.1).await;
     }
-    let mut conn = conn.expect("hbbs accepts tcp connections");
+    // Check the channel once more before blaming the connection: if the server
+    // never came up, that is the failure worth reporting.
+    let mut conn = match conn {
+        Some(conn) => conn,
+        None => match failed_rx.try_recv() {
+            Ok(err) => panic!("hbbs did not start: {err}"),
+            Err(_) => panic!("hbbs accepts tcp connections"),
+        },
+    };
 
     secure_tcp(&mut conn, &pk).await;
 
