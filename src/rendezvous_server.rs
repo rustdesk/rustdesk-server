@@ -68,9 +68,12 @@ use tokio::sync::Mutex as TokioMutex; // differentiate if needed
 struct PunchReqEntry { tm: Instant, from_ip: String, to_ip: String, to_id: String }
 static PUNCH_REQS: Lazy<TokioMutex<VecDeque<PunchReqEntry>>> = Lazy::new(|| TokioMutex::new(VecDeque::new()));
 const PUNCH_REQ_DEDUPE_SEC: u64 = 60;
-const PUNCH_REQ_MAX: usize = 10_000;
+static PUNCH_REQ_MAX: Lazy<usize> =
+    Lazy::new(|| get_arg("MAX_PUNCH_REQUESTS").parse().unwrap_or(10_000));
 
 async fn record_punch_req(from_ip: String, to_ip: String, to_id: String) {
+    let max = *PUNCH_REQ_MAX;
+    if max == 0 { return; }
     let mut lock = PUNCH_REQS.lock().await;
     let mut dup = false;
     for e in lock.iter().rev().take(30) { // only check recent tail subset for speed
@@ -80,7 +83,7 @@ async fn record_punch_req(from_ip: String, to_ip: String, to_id: String) {
         }
     }
     if !dup {
-        if lock.len() >= PUNCH_REQ_MAX { lock.pop_front(); }
+        if lock.len() >= max { lock.pop_front(); }
         lock.push_back(PunchReqEntry { tm: Instant::now(), from_ip, to_ip, to_id });
     }
 }
@@ -1430,7 +1433,7 @@ mod tests {
     #[hbb_common::tokio::test]
     async fn punch_reqs_bounded() {
         // 31 ids keep every request just outside the 30-entry dedupe window
-        for i in 0..PUNCH_REQ_MAX * 2 {
+        for i in 0..*PUNCH_REQ_MAX * 2 {
             record_punch_req(
                 "1.2.3.4".to_owned(),
                 "5.6.7.8".to_owned(),
@@ -1438,6 +1441,6 @@ mod tests {
             )
             .await;
         }
-        assert_eq!(PUNCH_REQS.lock().await.len(), PUNCH_REQ_MAX);
+        assert_eq!(PUNCH_REQS.lock().await.len(), *PUNCH_REQ_MAX);
     }
 }
