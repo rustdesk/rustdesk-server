@@ -373,7 +373,7 @@ impl RendezvousServer {
             match msg_in.union {
                 Some(rendezvous_message::Union::RegisterPeer(rp)) => {
                     // B registered
-                    if !rp.id.is_empty() {
+                    if !rp.id.is_empty() && rp.id.len() <= MAX_PEER_ID_LEN {
                         log::trace!("New peer registered: {:?} {:?}", &rp.id, &addr);
                         self.update_addr(rp.id, addr, socket).await?;
                         if self.inner.serial > rp.serial {
@@ -393,7 +393,7 @@ impl RendezvousServer {
                     }
                     let id = rk.id;
                     let ip = addr.ip().to_string();
-                    if id.len() < 6 {
+                    if id.len() < 6 || id.len() > MAX_PEER_ID_LEN {
                         return send_rk_res(socket, addr, UUID_MISMATCH).await;
                     } else if !self.check_ip_blocker(&ip, &id).await {
                         return send_rk_res(socket, addr, TOO_FREQUENT).await;
