@@ -1712,6 +1712,7 @@ dependencies = [
  "serde_json",
  "sodiumoxide",
  "sqlx",
+ "tempfile",
  "tokio-tungstenite 0.17.1",
  "tower-http",
  "tungstenite 0.17.2",
