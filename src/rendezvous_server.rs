@@ -1432,8 +1432,10 @@ mod tests {
 
     #[hbb_common::tokio::test]
     async fn punch_reqs_bounded() {
-        // 31 ids keep every request just outside the 30-entry dedupe window
-        for i in 0..*PUNCH_REQ_MAX * 2 {
+        let max = *PUNCH_REQ_MAX;
+        // 31 ids keep every request just outside the 30-entry dedupe window;
+        // one request at least, so MAX_PUNCH_REQUESTS=0 is exercised too
+        for i in 0..(max * 2).max(1) {
             record_punch_req(
                 "1.2.3.4".to_owned(),
                 "5.6.7.8".to_owned(),
@@ -1441,10 +1443,12 @@ mod tests {
             )
             .await;
         }
-        assert_eq!(PUNCH_REQS.lock().await.len(), *PUNCH_REQ_MAX);
-        // the oldest half is evicted and the newest kept
         let lock = PUNCH_REQS.lock().await;
-        assert_eq!(lock.front().unwrap().to_id, format!("peer{}", *PUNCH_REQ_MAX % 31));
-        assert_eq!(lock.back().unwrap().to_id, format!("peer{}", (*PUNCH_REQ_MAX * 2 - 1) % 31));
+        assert_eq!(lock.len(), max);
+        if max > 0 {
+            // the oldest half is evicted and the newest kept
+            assert_eq!(lock.front().unwrap().to_id, format!("peer{}", max % 31));
+            assert_eq!(lock.back().unwrap().to_id, format!("peer{}", (max * 2 - 1) % 31));
+        }
     }
 }
