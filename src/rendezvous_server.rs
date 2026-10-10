@@ -1442,5 +1442,9 @@ mod tests {
             .await;
         }
         assert_eq!(PUNCH_REQS.lock().await.len(), *PUNCH_REQ_MAX);
+        // the oldest half is evicted and the newest kept
+        let lock = PUNCH_REQS.lock().await;
+        assert_eq!(lock.front().unwrap().to_id, format!("peer{}", *PUNCH_REQ_MAX % 31));
+        assert_eq!(lock.back().unwrap().to_id, format!("peer{}", (*PUNCH_REQ_MAX * 2 - 1) % 31));
     }
 }
