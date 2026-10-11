@@ -1,0 +1,7 @@
+apiVersion: v2
+appVersion: "1.1.10-3"
+name: rustdesk-server
+description: A Rustdesk Helm chart for Kubernetes
+type: application
+icon: https://raw.githubusercontent.com/rustdesk/rustdesk-server/master/ui/icons/icon.png
+version: 0.1.0
