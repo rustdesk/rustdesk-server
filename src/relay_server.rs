@@ -13,12 +13,13 @@ use hbb_common::{
     tokio::{
         self,
         io::{AsyncReadExt, AsyncWriteExt},
-        net::{TcpListener, TcpStream},
+        net::TcpListener,
         sync::{Mutex, RwLock},
         time::{interval, Duration},
     },
     ResultType,
 };
+use crate::common::WsStream;
 use sodiumoxide::crypto::sign;
 use std::{
     collections::{HashMap, HashSet},
@@ -83,16 +84,22 @@ pub async fn start_with_bind(
         BLOCKLIST.read().await.len()
     );
     let port: u16 = port.parse()?;
-    log::info!("Listening on tcp :{}", port);
     let port2 = port + 2;
-    log::info!("Listening on websocket :{}", port2);
+    let ws_only = crate::common::ws_only();
+    if !ws_only {
+        log::info!("Listening on tcp :{}", port);
+    }
     let main_task = async move {
         loop {
             log::info!("Start");
             io_loop(
-                crate::common::listen_tcp(bind_addr, port).await?,
-                crate::common::listen_tcp(bind_addr, port2).await?,
-                crate::common::listen_console(bind_addr, port).await?,
+                crate::common::listen_tcp_unless_ws_only(bind_addr, port).await?,
+                crate::common::listen_ws(bind_addr, port2).await?,
+                if ws_only {
+                    None
+                } else {
+                    crate::common::listen_console(bind_addr, port).await?
+                },
                 &key,
             )
             .await;
@@ -334,8 +341,8 @@ async fn check_cmd(cmd: &str, limiter: Limiter) -> String {
 }
 
 async fn io_loop(
-    listener: TcpListener,
-    listener2: TcpListener,
+    listener: Option<TcpListener>,
+    listener2: crate::common::WsListener,
     listener_console: Option<TcpListener>,
     key: &str,
 ) {
@@ -343,11 +350,11 @@ async fn io_loop(
     let limiter = <Limiter>::new(TOTAL_BANDWIDTH.load(Ordering::SeqCst) as _);
     loop {
         tokio::select! {
-            res = listener.accept() => {
+            res = crate::common::accept_or_pending(listener.as_ref()) => {
                 match res {
                     Ok((stream, addr))  => {
                         stream.set_nodelay(true).ok();
-                        handle_connection(stream, addr, &limiter, key, false).await;
+                        handle_connection(WsStream::Tcp(stream), addr, &limiter, key, false).await;
                     }
                     Err(err) => {
                        log::error!("listener.accept failed: {}", err);
@@ -358,7 +365,6 @@ async fn io_loop(
             res = listener2.accept() => {
                 match res {
                     Ok((stream, addr))  => {
-                        stream.set_nodelay(true).ok();
                         handle_connection(stream, addr, &limiter, key, true).await;
                     }
                     Err(err) => {
@@ -371,7 +377,7 @@ async fn io_loop(
                 match res {
                     Ok((stream, addr))  => {
                         stream.set_nodelay(true).ok();
-                        handle_connection(stream, addr, &limiter, key, false).await;
+                        handle_connection(WsStream::Tcp(stream), addr, &limiter, key, false).await;
                     }
                     Err(err) => {
                        log::error!("console listener.accept failed: {}", err);
@@ -384,7 +390,7 @@ async fn io_loop(
 }
 
 async fn handle_connection(
-    stream: TcpStream,
+    stream: WsStream,
     addr: SocketAddr,
     limiter: &Limiter,
     key: &str,
@@ -418,7 +424,7 @@ async fn handle_connection(
 }
 
 async fn make_pair(
-    stream: TcpStream,
+    stream: WsStream,
     mut addr: SocketAddr,
     key: &str,
     limiter: Limiter,
@@ -650,7 +656,7 @@ impl StreamTrait for FramedStream {
 }
 
 #[async_trait]
-impl StreamTrait for tokio_tungstenite::WebSocketStream<TcpStream> {
+impl StreamTrait for tokio_tungstenite::WebSocketStream<WsStream> {
     async fn recv(&mut self) -> Option<Result<BytesMut, Error>> {
         if let Some(msg) = self.next().await {
             match msg {
