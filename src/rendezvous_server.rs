@@ -16,7 +16,7 @@ use hbb_common::{
         register_pk_response::Result::{TOO_FREQUENT, UUID_MISMATCH},
         *,
     },
-    tcp::FramedStream,
+    tcp::{Encrypt, FramedStream},
     timeout,
     tokio::{
         self,
@@ -31,7 +31,7 @@ use hbb_common::{
     AddrMangle, ResultType,
 };
 use ipnetwork::Ipv4Network;
-use sodiumoxide::crypto::sign;
+use sodiumoxide::crypto::{box_, sign};
 use std::{
     collections::{HashMap, VecDeque},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
@@ -50,6 +50,14 @@ enum Data {
 const REG_TIMEOUT: i64 = 30_000;
 type TcpStreamSink = SplitSink<Framed<TcpStream, BytesCodec>, Bytes>;
 type WsSink = SplitSink<tokio_tungstenite::WebSocketStream<TcpStream>, tungstenite::Message>;
+// Shared, per-connection secure_tcp state: `Arc<Mutex<..>>` (not a plain `Option<Encrypt>`
+// cloned around) because the SAME logical connection's crypto state must stay reachable both
+// from the still-running receive loop in `handle_listener_inner` AND from a `Sink` that gets
+// `.take()`n out of that loop and stashed in `tcp_punch` for a later, out-of-band send (see
+// the PunchHoleRequest/RequestRelay arms in `handle_tcp`) -- cloning `Encrypt` itself would
+// give the two sides independent nonce counters and desync/reuse nonces. See
+// "secure_tcp key exchange" below for why this exists at all.
+type EncryptState = Arc<Mutex<Option<Encrypt>>>;
 enum Sink {
     TcpStream(TcpStreamSink),
     Ws(WsSink),
@@ -100,7 +108,9 @@ struct Inner {
 
 #[derive(Clone)]
 pub struct RendezvousServer {
-    tcp_punch: Arc<Mutex<HashMap<SocketAddr, Sink>>>,
+    // (Sink, EncryptState) -- see EncryptState's own doc comment above for why the two travel
+    // together.
+    tcp_punch: Arc<Mutex<HashMap<SocketAddr, (Sink, EncryptState)>>>,
     pm: PeerMap,
     tx: Sender,
     relay_servers: Arc<RelayServers>,
@@ -527,13 +537,53 @@ impl RendezvousServer {
         addr: SocketAddr,
         key: &str,
         ws: bool,
+        encrypt: &EncryptState,
+        ephemeral_sk: &mut Option<box_::SecretKey>,
     ) -> bool {
         if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(bytes) {
             match msg_in.union {
+                // secure_tcp key exchange, client's reply to the KeyExchange this connection
+                // was proactively sent on accept (see handle_listener_inner). Byte layout
+                // confirmed against the client's own create_symmetric_key_msg
+                // (rustdesk/rustdesk src/common.rs): keys[0] is the client's own ephemeral
+                // box_ public key (plain), keys[1] is a symmetric key sealed with that
+                // ephemeral keypair against OUR ephemeral public key -- decode() below is
+                // exactly the inverse of that seal. This arm previously didn't exist at all,
+                // which is the actual root cause of "Failed to secure tcp: deadline has
+                // elapsed": a TCP-mode client waits for a server-initiated KeyExchange that
+                // vanilla hbbs never sent (https://github.com/rustdesk/rustdesk-server/issues/394).
+                Some(rendezvous_message::Union::KeyExchange(ex)) => {
+                    if ex.keys.len() != 2 {
+                        return false;
+                    }
+                    let Some(sk) = ephemeral_sk.take() else {
+                        // No handshake in flight on this connection (e.g. a stray/replayed
+                        // message, or ws -- ws clients never attempt this exchange at all
+                        // since they treat wss:// itself as already encrypted). Ignore rather
+                        // than error: this arm must never be reachable before we've actually
+                        // sent our own KeyExchange first.
+                        return true;
+                    };
+                    let their_pk_b = &ex.keys[0];
+                    let sealed_key = &ex.keys[1];
+                    match Encrypt::decode(sealed_key, their_pk_b, &sk) {
+                        Ok(symmetric_key) => {
+                            *encrypt.lock().await = Some(Encrypt::new(symmetric_key));
+                        }
+                        Err(err) => {
+                            log::warn!("secure_tcp key exchange failed from {}: {}", addr, err);
+                            return false;
+                        }
+                    }
+                    return true;
+                }
                 Some(rendezvous_message::Union::PunchHoleRequest(ph)) => {
                     // there maybe several attempt, so sink can be none
                     if let Some(sink) = sink.take() {
-                        self.tcp_punch.lock().await.insert(try_into_v4(addr), sink);
+                        self.tcp_punch
+                            .lock()
+                            .await
+                            .insert(try_into_v4(addr), (sink, encrypt.clone()));
                     }
                     allow_err!(self.handle_tcp_punch_hole_request(addr, ph, key, ws).await);
                     return true;
@@ -541,7 +591,10 @@ impl RendezvousServer {
                 Some(rendezvous_message::Union::RequestRelay(mut rf)) => {
                     // there maybe several attempt, so sink can be none
                     if let Some(sink) = sink.take() {
-                        self.tcp_punch.lock().await.insert(try_into_v4(addr), sink);
+                        self.tcp_punch
+                            .lock()
+                            .await
+                            .insert(try_into_v4(addr), (sink, encrypt.clone()));
                     }
                     if let Some(peer) = self.pm.get_in_memory(&rf.id).await {
                         let mut msg_out = RendezvousMessage::new();
@@ -591,7 +644,7 @@ impl RendezvousServer {
                         res.cu = MessageField::from_option(Some(cu));
                     }
                     msg_out.set_test_nat_response(res);
-                    Self::send_to_sink(sink, msg_out).await;
+                    Self::send_to_sink(sink, msg_out, encrypt).await;
                 }
                 Some(rendezvous_message::Union::RegisterPk(_)) => {
                     let res = register_pk_response::Result::NOT_SUPPORT;
@@ -600,7 +653,7 @@ impl RendezvousServer {
                         result: res.into(),
                         ..Default::default()
                     });
-                    Self::send_to_sink(sink, msg_out).await;
+                    Self::send_to_sink(sink, msg_out, encrypt).await;
                 }
                 _ => {}
             }
@@ -852,16 +905,32 @@ impl RendezvousServer {
 
     #[inline]
     async fn send_to_tcp(&mut self, msg: RendezvousMessage, addr: SocketAddr) {
-        let mut tcp = self.tcp_punch.lock().await.remove(&try_into_v4(addr));
+        let stashed = self.tcp_punch.lock().await.remove(&try_into_v4(addr));
+        let (mut sink, encrypt) = Self::unstash(stashed);
         tokio::spawn(async move {
-            Self::send_to_sink(&mut tcp, msg).await;
+            Self::send_to_sink(&mut sink, msg, &encrypt).await;
         });
     }
 
+    // tcp_punch stores (Sink, EncryptState) pairs; callers that only care about the Sink
+    // still need a valid EncryptState to hand to send_to_sink, so this fills in a fresh
+    // (never-touched, since send_to_sink only reads it when sink is Some) empty one when
+    // nothing was stashed at all.
     #[inline]
-    async fn send_to_sink(sink: &mut Option<Sink>, msg: RendezvousMessage) {
+    fn unstash(stashed: Option<(Sink, EncryptState)>) -> (Option<Sink>, EncryptState) {
+        match stashed {
+            Some((sink, encrypt)) => (Some(sink), encrypt),
+            None => (None, Arc::new(Mutex::new(None))),
+        }
+    }
+
+    #[inline]
+    async fn send_to_sink(sink: &mut Option<Sink>, msg: RendezvousMessage, encrypt: &EncryptState) {
         if let Some(sink) = sink.as_mut() {
-            if let Ok(bytes) = msg.write_to_bytes() {
+            if let Ok(mut bytes) = msg.write_to_bytes() {
+                if let Some(enc) = encrypt.lock().await.as_mut() {
+                    bytes = enc.enc(&bytes);
+                }
                 match sink {
                     Sink::TcpStream(s) => {
                         allow_err!(s.send(Bytes::from(bytes)).await);
@@ -880,8 +949,9 @@ impl RendezvousServer {
         msg: RendezvousMessage,
         addr: SocketAddr,
     ) -> ResultType<()> {
-        let mut sink = self.tcp_punch.lock().await.remove(&try_into_v4(addr));
-        Self::send_to_sink(&mut sink, msg).await;
+        let stashed = self.tcp_punch.lock().await.remove(&try_into_v4(addr));
+        let (mut sink, encrypt) = Self::unstash(stashed);
+        Self::send_to_sink(&mut sink, msg, &encrypt).await;
         Ok(())
     }
 
@@ -1189,6 +1259,14 @@ impl RendezvousServer {
         ws: bool,
     ) -> ResultType<()> {
         let mut sink;
+        // secure_tcp key exchange state for this connection -- see handle_tcp's KeyExchange
+        // arm and the EncryptState/Encrypt doc comments above for the full design. Deliberately
+        // NOT set up for the ws branch: the client's own secure_tcp_impl skips this exchange
+        // entirely for wss:// connections (it already gets transport-layer encryption from
+        // WebSocket Secure), so a ws client never waits for or sends a KeyExchange -- sending
+        // one here would just be a wasted, ignored message.
+        let encrypt: EncryptState = Arc::new(Mutex::new(None));
+        let mut ephemeral_sk: Option<box_::SecretKey> = None;
         if ws {
             use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
             let callback = |req: &Request, response: Response| {
@@ -1220,7 +1298,18 @@ impl RendezvousServer {
             sink = Some(Sink::Ws(a));
             while let Ok(Some(Ok(msg))) = timeout(30_000, b.next()).await {
                 if let tungstenite::Message::Binary(bytes) = msg {
-                    if !self.handle_tcp(&bytes, &mut sink, addr, key, ws).await {
+                    if !self
+                        .handle_tcp(
+                            &bytes,
+                            &mut sink,
+                            addr,
+                            key,
+                            ws,
+                            &encrypt,
+                            &mut ephemeral_sk,
+                        )
+                        .await
+                    {
                         break;
                     }
                 }
@@ -1228,8 +1317,44 @@ impl RendezvousServer {
         } else {
             let (a, mut b) = Framed::new(stream, BytesCodec::new()).split();
             sink = Some(Sink::TcpStream(a));
-            while let Ok(Some(Ok(bytes))) = timeout(30_000, b.next()).await {
-                if !self.handle_tcp(&bytes, &mut sink, addr, key, ws).await {
+            // Proactively send our half of the exchange (see handle_tcp's KeyExchange arm)
+            // before waiting to receive anything, unencrypted, matching what the client's own
+            // key_exchange() expects as its first message. Skipped when self.inner.sk is None,
+            // i.e. hbbs was started with an arbitrary non-crypto -k string (legacy shared-key
+            // mode, nothing to sign with) -- that mode's behavior is unchanged.
+            if let Some(sk) = self.inner.sk.as_ref() {
+                let (our_pk, our_sk) = box_::gen_keypair();
+                let signed = sign::sign(&our_pk.0, sk);
+                let mut msg_out = RendezvousMessage::new();
+                msg_out.set_key_exchange(KeyExchange {
+                    keys: vec![Bytes::from(signed)],
+                    ..Default::default()
+                });
+                Self::send_to_sink(&mut sink, msg_out, &encrypt).await;
+                ephemeral_sk = Some(our_sk);
+            }
+            while let Ok(Some(Ok(mut bytes))) = timeout(30_000, b.next()).await {
+                {
+                    let mut enc = encrypt.lock().await;
+                    if let Some(enc) = enc.as_mut() {
+                        if enc.dec(&mut bytes).is_err() {
+                            log::warn!("secure_tcp decryption failed from {}", addr);
+                            break;
+                        }
+                    }
+                }
+                if !self
+                    .handle_tcp(
+                        &bytes,
+                        &mut sink,
+                        addr,
+                        key,
+                        ws,
+                        &encrypt,
+                        &mut ephemeral_sk,
+                    )
+                    .await
+                {
                     break;
                 }
             }
@@ -1422,12 +1547,288 @@ async fn create_tcp_listener(bind_addr: Option<IpAddr>, port: i32) -> ResultType
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sodiumoxide::crypto::secretbox;
 
     #[hbb_common::tokio::test]
     async fn udp_listener_uses_bind_address() {
         let bind_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let socket = create_udp_listener(Some(bind_addr), 0, 0).await.unwrap();
         assert_eq!(socket.local_addr().unwrap().ip(), bind_addr);
+    }
+
+    // Replicates both sides of the secure_tcp key exchange (server's proactive send in
+    // handle_listener_inner + handle_tcp's new KeyExchange arm on one side, the client's own
+    // key_exchange()/create_symmetric_key_msg() in rustdesk/src/common.rs on the other) using
+    // only the same public primitives production code calls, without needing a full
+    // RendezvousServer/live TCP connection. Confirms: (1) the client can verify our signed
+    // ephemeral public key using only the long-term public key it already trusts, exactly as
+    // key_exchange() does; (2) the symmetric key our decode() derives from the client's sealed
+    // reply matches the plain key the client actually generated and is about to use -- i.e.
+    // both sides really do end up sharing the same secret, not just "some" key each.
+    #[test]
+    fn secure_tcp_key_exchange_round_trip() {
+        // Server's long-term identity (what get_server_sk would return for a real -k value).
+        let (server_pk, server_sk) = sign::gen_keypair();
+
+        // --- Server: what handle_listener_inner now sends first on every new connection ---
+        let (server_eph_pk, server_eph_sk) = box_::gen_keypair();
+        let signed = sign::sign(&server_eph_pk.0, &server_sk);
+
+        // --- Client: key_exchange()'s handling of that first message ---
+        // get_rs_pk(key) in the real client just base64-decodes the configured Key field into
+        // this same sign::PublicKey; using it directly here since decoding isn't what's under
+        // test.
+        let verified = sign::verify(&signed, &server_pk).expect("client must verify our signature");
+        assert_eq!(
+            verified, server_eph_pk.0,
+            "client must recover our real ephemeral pubkey"
+        );
+
+        // --- Client: create_symmetric_key_msg(their_pk_b) ---
+        let their_pk_b = box_::PublicKey(verified.try_into().unwrap());
+        let (client_eph_pk, client_eph_sk) = box_::gen_keypair();
+        let plain_key = secretbox::gen_key();
+        let nonce = box_::Nonce([0u8; box_::NONCEBYTES]);
+        let sealed_key = box_::seal(&plain_key.0, &nonce, &their_pk_b, &client_eph_sk);
+        // This is exactly the two-element KeyExchange.keys the client actually sends back.
+        let client_reply_keys = [Vec::from(client_eph_pk.0), sealed_key];
+
+        // --- Server: handle_tcp's new KeyExchange arm ---
+        let derived = Encrypt::decode(&client_reply_keys[1], &client_reply_keys[0], &server_eph_sk)
+            .expect("server must decode the client's sealed reply");
+
+        assert_eq!(
+            derived, plain_key,
+            "server-derived symmetric key must equal the client's own plain key"
+        );
+
+        // Both sides now construct Encrypt with the same key; confirm messages actually
+        // round-trip end to end, not just that the raw key bytes happen to match.
+        let mut server_side = Encrypt::new(derived);
+        let mut client_side = Encrypt::new(plain_key);
+        let plaintext = b"RegisterPk".to_vec();
+        let ciphertext = server_side.enc(&plaintext);
+        let mut buf = BytesMut::from(&ciphertext[..]);
+        client_side
+            .dec(&mut buf)
+            .expect("client must decrypt what the server encrypted");
+        assert_eq!(&buf[..], &plaintext[..]);
+    }
+
+    // The wire framing `Framed<TcpStream, BytesCodec>` (hbb_common's own bytes_codec, NOT
+    // tokio_util's raw pass-through codec of the same name) actually uses: a 1-4 byte
+    // variable-length header (`(len << 2) | size_class`, little-endian, size_class picked by
+    // how many bytes `len` needs) followed by that many payload bytes. Test helpers below
+    // replicate encode()/decode() exactly so a plain TcpStream (no Framed wrapper) can speak
+    // the same protocol handle_listener_inner's real client connections use.
+    fn encode_frame(payload: &[u8]) -> Vec<u8> {
+        let len = payload.len();
+        let mut out = Vec::with_capacity(len + 4);
+        if len <= 0x3F {
+            out.push((len << 2) as u8);
+        } else if len <= 0x3FFF {
+            out.extend_from_slice(&(((len << 2) as u16) | 0x1).to_le_bytes());
+        } else if len <= 0x3FFFFF {
+            let h = ((len << 2) as u32) | 0x2;
+            out.extend_from_slice(&h.to_le_bytes()[..3]);
+        } else {
+            out.extend_from_slice(&(((len << 2) as u32) | 0x3).to_le_bytes());
+        }
+        out.extend_from_slice(payload);
+        out
+    }
+
+    async fn read_frame(stream: &mut TcpStream) -> Vec<u8> {
+        let mut first = [0u8; 1];
+        stream
+            .read_exact(&mut first)
+            .await
+            .expect("must read the frame header's first byte");
+        let head_len = ((first[0] & 0x3) + 1) as usize;
+        let mut head = vec![0u8; head_len];
+        head[0] = first[0];
+        if head_len > 1 {
+            stream
+                .read_exact(&mut head[1..])
+                .await
+                .expect("must read the remaining frame header bytes");
+        }
+        let mut n = head[0] as usize;
+        if head_len > 1 {
+            n |= (head[1] as usize) << 8;
+        }
+        if head_len > 2 {
+            n |= (head[2] as usize) << 16;
+        }
+        if head_len > 3 {
+            n |= (head[3] as usize) << 24;
+        }
+        n >>= 2;
+        let mut payload = vec![0u8; n];
+        stream
+            .read_exact(&mut payload)
+            .await
+            .expect("must read the full frame payload");
+        payload
+    }
+
+    // Addresses the gap the round-trip test above deliberately doesn't cover: this drives the
+    // REAL production code path over an actual TCP socket -- handle_listener_inner's proactive
+    // send, handle_tcp's KeyExchange arm, the main loop's plaintext-to-encrypted transition
+    // (the `enc.dec(&mut bytes)` step in handle_listener_inner), and handle_tcp's
+    // PunchHoleRequest arm, which stashes (sink, encrypt) into tcp_punch and then immediately
+    // calls send_to_tcp_sync to retrieve that exact stashed pair and send an encrypted
+    // response back through it. A regression in any of that wiring (frame ordering, the wrong
+    // Encrypt instance ending up in the sink, etc.) would fail here even though the isolated
+    // crypto primitives above would still pass.
+    #[hbb_common::tokio::test]
+    async fn secure_tcp_production_handshake_and_stashed_sink_response() {
+        // PeerMap::new_with_db_url (test-only, see peer.rs) instead of PeerMap::new() +
+        // std::env::set_var("DB_URL", ...): DB_URL is process-global, and cargo test runs
+        // tests in parallel by default within one binary, so mutating it here with no
+        // restore/serialization would risk another test observing this test's DB path (or
+        // vice versa). Database::new() also unconditionally pre-creates a literal file
+        // matching whatever path it's given (see database.rs), so route it through the OS
+        // temp dir and clean up explicitly at the end, rather than leaving a stray file in
+        // the crate's own working directory.
+        let db_path = std::env::temp_dir().join(format!(
+            "hbbs_secure_tcp_test_{}.sqlite3",
+            std::process::id()
+        ));
+
+        let (server_pk, server_sk) = sign::gen_keypair();
+        let pm = PeerMap::new_with_db_url(db_path.to_str().unwrap())
+            .await
+            .expect("PeerMap::new_with_db_url must succeed");
+        let (tx, _rx) = mpsc::unbounded_channel::<Data>();
+        let mut server = RendezvousServer {
+            tcp_punch: Arc::new(Mutex::new(HashMap::new())),
+            pm,
+            tx,
+            relay_servers: Default::default(),
+            relay_servers0: Default::default(),
+            rendezvous_servers: Arc::new(Vec::new()),
+            inner: Arc::new(Inner {
+                serial: 0,
+                version: String::new(),
+                software_url: String::new(),
+                mask: None,
+                local_ip: String::new(),
+                sk: Some(server_sk),
+            }),
+        };
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("must bind a local test listener");
+        let server_addr = listener.local_addr().unwrap();
+
+        // handle_listener_inner takes &mut self and only returns when the connection closes,
+        // so it runs on a clone (tcp_punch is Arc-wrapped, so writes from this task are still
+        // visible through the original `server` handle kept in this test).
+        let mut server_conn = server.clone();
+        tokio::spawn(async move {
+            let (stream, addr) = listener
+                .accept()
+                .await
+                .expect("must accept the test client");
+            allow_err!(
+                server_conn
+                    .handle_listener_inner(stream, addr, "", false)
+                    .await
+            );
+        });
+
+        let mut client = TcpStream::connect(server_addr)
+            .await
+            .expect("must connect to the test listener");
+
+        // --- Read the server's proactive, unencrypted KeyExchange (handle_listener_inner) ---
+        let frame = read_frame(&mut client).await;
+        let msg_in = RendezvousMessage::parse_from_bytes(&frame)
+            .expect("server's first message must be a valid RendezvousMessage");
+        let Some(rendezvous_message::Union::KeyExchange(ex)) = msg_in.union else {
+            panic!(
+                "server's first message must be a KeyExchange, got {:?}",
+                msg_in.union
+            );
+        };
+        assert_eq!(
+            ex.keys.len(),
+            1,
+            "server's KeyExchange must carry exactly its signed ephemeral pubkey"
+        );
+        let server_eph_pk_bytes = sign::verify(&ex.keys[0], &server_pk)
+            .expect("client must be able to verify the server's signature with its trusted long-term pubkey");
+        let server_eph_pk = box_::PublicKey(
+            server_eph_pk_bytes
+                .try_into()
+                .expect("verified payload must be exactly one box_ public key"),
+        );
+
+        // --- Client's reply, exactly as key_exchange()/create_symmetric_key_msg() build it ---
+        let (client_eph_pk, client_eph_sk) = box_::gen_keypair();
+        let plain_key = secretbox::gen_key();
+        let nonce = box_::Nonce([0u8; box_::NONCEBYTES]);
+        let sealed_key = box_::seal(&plain_key.0, &nonce, &server_eph_pk, &client_eph_sk);
+        let mut reply = RendezvousMessage::new();
+        reply.set_key_exchange(KeyExchange {
+            keys: vec![
+                Bytes::from(Vec::from(client_eph_pk.0)),
+                Bytes::from(sealed_key),
+            ],
+            ..Default::default()
+        });
+        client
+            .write_all(&encode_frame(&reply.write_to_bytes().unwrap()))
+            .await
+            .expect("must send the client's KeyExchange reply");
+
+        // --- Encrypted PunchHoleRequest for a nonexistent id: exercises the plaintext-to-
+        // encrypted transition, handle_tcp's PunchHoleRequest arm, and the stashed-sink
+        // response path (handle_tcp_punch_hole_request -> send_to_tcp_sync) end to end ---
+        let mut client_crypto = Encrypt::new(plain_key);
+        let mut req = RendezvousMessage::new();
+        req.set_punch_hole_request(PunchHoleRequest {
+            id: "secure-tcp-test-nonexistent-id".to_owned(),
+            ..Default::default()
+        });
+        let ciphertext = client_crypto.enc(&req.write_to_bytes().unwrap());
+        client
+            .write_all(&encode_frame(&ciphertext))
+            .await
+            .expect("must send the encrypted PunchHoleRequest");
+
+        let frame = read_frame(&mut client).await;
+        let mut resp_bytes = BytesMut::from(&frame[..]);
+        client_crypto
+            .dec(&mut resp_bytes)
+            .expect("client must decrypt the response sent back through the stashed sink");
+        let msg_resp = RendezvousMessage::parse_from_bytes(&resp_bytes)
+            .expect("decrypted response must be a valid RendezvousMessage");
+        match msg_resp.union {
+            Some(rendezvous_message::Union::PunchHoleResponse(r)) => {
+                assert_eq!(
+                    r.failure,
+                    punch_hole_response::Failure::ID_NOT_EXIST.into(),
+                    "nonexistent id must produce ID_NOT_EXIST, not some other response"
+                );
+            }
+            other => panic!("expected an encrypted PunchHoleResponse, got {:?}", other),
+        }
+
+        // The sink was taken out of the connection loop and stashed in tcp_punch by
+        // send_to_tcp_sync's own `.remove(...)` -- confirms this test actually exercised the
+        // stash-then-retrieve path, not some other reply mechanism that happened to look the
+        // same from the client's side.
+        assert!(
+            server.tcp_punch.lock().await.is_empty(),
+            "the stashed (sink, encrypt) pair must have been removed by send_to_tcp_sync"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(format!("{}-shm", db_path.display()));
+        let _ = std::fs::remove_file(format!("{}-wal", db_path.display()));
     }
 
     #[hbb_common::tokio::test]
