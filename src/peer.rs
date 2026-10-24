@@ -42,6 +42,9 @@ pub(crate) struct Peer {
     pub(crate) info: PeerInfo,
     // pub(crate) disabled: bool,
     pub(crate) reg_pk: (u32, Instant), // how often register_pk
+    // last reply came from a client older than 1.5.0, whose UDP punch does not
+    // talk to the newer one's (in memory only)
+    pub(crate) legacy_punch: bool,
 }
 
 impl Default for Peer {
@@ -56,6 +59,7 @@ impl Default for Peer {
             // user: None,
             // disabled: false,
             reg_pk: (0, get_expired_time()),
+            legacy_punch: false,
         }
     }
 }

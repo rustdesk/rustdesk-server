@@ -1,5 +1,7 @@
 use crate::common::*;
+use crate::key_exchange;
 use crate::peer::*;
+use crate::punch::{self, Ice, PunchRoutes, RateLimiter, TcpHosts};
 use hbb_common::{
     allow_err, bail,
     bytes::{Bytes, BytesMut},
@@ -16,7 +18,7 @@ use hbb_common::{
         register_pk_response::Result::{TOO_FREQUENT, UUID_MISMATCH},
         *,
     },
-    tcp::FramedStream,
+    tcp::{Encrypt, FramedStream},
     timeout,
     tokio::{
         self,
@@ -48,18 +50,34 @@ enum Data {
 }
 
 const REG_TIMEOUT: i64 = 30_000;
+// largest rendezvous frame accepted on TCP; a PunchHoleRequest with an offer is a few KiB
+const MAX_TCP_FRAME: usize = 64 * 1024;
+// How long a new TCP connection may speak first before the key exchange is
+// offered, see kx_offer_delay.
+const KX_OFFER_DELAY_MIN: u64 = 500;
+const KX_OFFER_DELAY_MAX: u64 = 3_000;
 type TcpStreamSink = SplitSink<Framed<TcpStream, BytesCodec>, Bytes>;
 type WsSink = SplitSink<tokio_tungstenite::WebSocketStream<TcpStream>, tungstenite::Message>;
 enum Sink {
-    TcpStream(TcpStreamSink),
+    // the key once the connection's key exchange is done
+    TcpStream(TcpStreamSink, Option<Encrypt>),
     Ws(WsSink),
 }
+type SharedSink = Arc<Mutex<Sink>>;
+// write timeout for a stashed sink, so a stalled controller cannot hold it
+const SINK_SEND_TIMEOUT: u64 = 3_000;
 type Sender = mpsc::UnboundedSender<Data>;
 type Receiver = mpsc::UnboundedReceiver<Data>;
 static ROTATION_RELAY_SERVER: AtomicUsize = AtomicUsize::new(0);
 type RelayServers = Vec<String>;
 const CHECK_RELAY_TIMEOUT: u64 = 3_000;
 static ALWAYS_USE_RELAY: AtomicBool = AtomicBool::new(false);
+static SECURE_TCP: AtomicBool = AtomicBool::new(true);
+static IPV6_PUNCH: AtomicBool = AtomicBool::new(true);
+static WEBRTC: AtomicBool = AtomicBool::new(true);
+static UDP_PUNCH: AtomicBool = AtomicBool::new(true);
+// AddrMangle of an IPv6 socket address: 16 bytes address, 2 bytes port
+const MANGLED_V6_LEN: usize = 18;
 const MAX_RELAY_UUID_LEN: usize = 128;
 
 // The peer sends this uuid to whatever relay_server names, so keep control bytes out of it.
@@ -120,9 +138,20 @@ struct Inner {
     sk: Option<sign::SecretKey>,
 }
 
+// IceCandidate frames a TCP connection carried
+#[derive(Default)]
+struct IceCount {
+    frames: u32,
+    misses: u32,
+}
+
 #[derive(Clone)]
 pub struct RendezvousServer {
-    tcp_punch: Arc<Mutex<HashMap<SocketAddr, Sink>>>,
+    tcp_punch: Arc<Mutex<HashMap<SocketAddr, SharedSink>>>,
+    routes: Arc<PunchRoutes>,
+    test_nat: Arc<RateLimiter>,
+    ipv6_limits: Arc<punch::V6Limits>,
+    tcp_hosts: Arc<TcpHosts>,
     pm: PeerMap,
     tx: Sender,
     relay_servers: Arc<RelayServers>,
@@ -178,6 +207,16 @@ impl RendezvousServer {
         };
         let mut rs = Self {
             tcp_punch: Arc::new(Mutex::new(HashMap::new())),
+            routes: Default::default(),
+            test_nat: Arc::new(RateLimiter::test_nat(
+                get_arg("UDP_TEST_NAT_LIMIT")
+                    .parse()
+                    .ok()
+                    .filter(|n| *n > 0)
+                    .unwrap_or(punch::TEST_NAT_GLOBAL_RATE),
+            )),
+            ipv6_limits: Default::default(),
+            tcp_hosts: Default::default(),
             pm,
             tx: tx.clone(),
             relay_servers: Default::default(),
@@ -218,6 +257,15 @@ impl RendezvousServer {
                 "N"
             }
         );
+        load_switch("SECURE_TCP", &SECURE_TCP);
+        if SECURE_TCP.load(Ordering::SeqCst) && rs.inner.sk.is_none() {
+            log::warn!(
+                "SECURE_TCP has no effect: the key is not a private key, nothing to sign with"
+            );
+        }
+        load_switch("IPV6_PUNCH", &IPV6_PUNCH);
+        load_switch("WEBRTC", &WEBRTC);
+        load_switch("UDP_PUNCH", &UDP_PUNCH);
         if test_addr.to_lowercase() != "no" {
             let test_addr = if test_addr.is_empty() {
                 listener.local_addr()?
@@ -499,7 +547,27 @@ impl RendezvousServer {
                     // The supported client path sends PunchHoleRequest over TCP/WS.
                 }
                 Some(rendezvous_message::Union::PunchHoleSent(phs)) => {
-                    // UDP PunchHoleSent is intentionally unsupported to avoid UDP reflection/amplification
+                    // never answered over UDP, see handle_udp_hole_sent
+                    if UDP_PUNCH.load(Ordering::SeqCst) {
+                        self.handle_udp_hole_sent(phs, addr).await;
+                    }
+                }
+                Some(rendezvous_message::Union::TestNatRequest(_)) => {
+                    // the UDP NAT test of the controller (test_udp_uat): the observed port,
+                    // nothing else, so the answer is not larger than needed, rate-limited
+                    if UDP_PUNCH.load(Ordering::SeqCst)
+                        && punch::replyable(addr)
+                        && self
+                            .test_nat
+                            .allow(addr.ip(), self.tcp_hosts.contains(addr.ip()))
+                    {
+                        let mut msg_out = RendezvousMessage::new();
+                        msg_out.set_test_nat_response(TestNatResponse {
+                            port: addr.port() as _,
+                            ..Default::default()
+                        });
+                        try_send_udp(socket, &msg_out, addr);
+                    }
                 }
                 Some(rendezvous_message::Union::LocalAddr(la)) => {
                     // UDP LocalAddr is intentionally unsupported to avoid UDP reflection/amplification
@@ -549,13 +617,17 @@ impl RendezvousServer {
         addr: SocketAddr,
         key: &str,
         ws: bool,
+        ice: &mut IceCount,
     ) -> bool {
         if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(bytes) {
             match msg_in.union {
                 Some(rendezvous_message::Union::PunchHoleRequest(ph)) => {
                     // there maybe several attempt, so sink can be none
                     if let Some(sink) = sink.take() {
-                        self.tcp_punch.lock().await.insert(try_into_v4(addr), sink);
+                        self.tcp_punch
+                            .lock()
+                            .await
+                            .insert(try_into_v4(addr), Arc::new(Mutex::new(sink)));
                     }
                     allow_err!(self.handle_tcp_punch_hole_request(addr, ph, key, ws).await);
                     return true;
@@ -570,7 +642,10 @@ impl RendezvousServer {
                     }
                     // there maybe several attempt, so sink can be none
                     if let Some(sink) = sink.take() {
-                        self.tcp_punch.lock().await.insert(try_into_v4(addr), sink);
+                        self.tcp_punch
+                            .lock()
+                            .await
+                            .insert(try_into_v4(addr), Arc::new(Mutex::new(sink)));
                     }
                     if let Some(peer) = self.pm.get_in_memory(&rf.id).await {
                         let mut msg_out = RendezvousMessage::new();
@@ -589,8 +664,19 @@ impl RendezvousServer {
                         );
                         return false;
                     }
-                    let addr_b = AddrMangle::decode(&rr.socket_addr);
+                    let addr_b = decode_or_unspecified(&rr.socket_addr);
                     rr.socket_addr = Default::default();
+                    let grant = self.reply_grant(addr_b, rr.id(), addr, ws);
+                    rr.socket_addr_v6 = if self.relay_forced(addr, addr_b) {
+                        Default::default()
+                    } else {
+                        self.reply_v6(&rr.socket_addr_v6, addr, &grant)
+                    };
+                    if !self.answer_allowed(&rr.webrtc_sdp_answer, &grant) {
+                        rr.webrtc_sdp_answer.clear();
+                    }
+                    self.note_peer_version(rr.id(), &rr.version, addr, addr_b, ws)
+                        .await;
                     let id = rr.id();
                     if !id.is_empty() {
                         let pk = self.get_pk(&rr.version, id.to_owned()).await;
@@ -609,10 +695,16 @@ impl RendezvousServer {
                     allow_err!(self.send_to_tcp_sync(msg_out, addr_b).await);
                 }
                 Some(rendezvous_message::Union::PunchHoleSent(phs)) => {
-                    allow_err!(self.handle_hole_sent(phs, addr, None).await);
+                    let ctl = decode_or_unspecified(&phs.socket_addr);
+                    self.note_peer_version(&phs.id, &phs.version, addr, ctl, ws)
+                        .await;
+                    allow_err!(self.handle_hole_sent(phs, addr, None, ws).await);
                 }
                 Some(rendezvous_message::Union::LocalAddr(la)) => {
-                    allow_err!(self.handle_local_addr(la, addr, None).await);
+                    let ctl = decode_or_unspecified(&la.socket_addr);
+                    self.note_peer_version(&la.id, &la.version, addr, ctl, ws)
+                        .await;
+                    allow_err!(self.handle_local_addr(la, addr, None, ws).await);
                 }
                 Some(rendezvous_message::Union::TestNatRequest(tar)) => {
                     let mut msg_out = RendezvousMessage::new();
@@ -628,6 +720,11 @@ impl RendezvousServer {
                     }
                     msg_out.set_test_nat_response(res);
                     Self::send_to_sink(sink, msg_out).await;
+                }
+                Some(rendezvous_message::Union::IceCandidate(ice_candidate))
+                    if !ws && WEBRTC.load(Ordering::SeqCst) =>
+                {
+                    return self.handle_ice_candidate(ice_candidate, addr, ice).await;
                 }
                 Some(rendezvous_message::Union::RegisterPk(_)) => {
                     let res = register_pk_response::Result::NOT_SUPPORT;
@@ -694,9 +791,10 @@ impl RendezvousServer {
         phs: PunchHoleSent,
         addr: SocketAddr,
         socket: Option<&'a mut FramedSocket>,
+        ws: bool,
     ) -> ResultType<()> {
         // punch hole sent from B, tell A that B is ready to be connected
-        let addr_a = AddrMangle::decode(&phs.socket_addr);
+        let addr_a = decode_or_unspecified(&phs.socket_addr);
         log::debug!(
             "{} punch hole response to {:?} from {:?}",
             if socket.is_none() { "TCP" } else { "UDP" },
@@ -704,10 +802,18 @@ impl RendezvousServer {
             &addr
         );
         let mut msg_out = RendezvousMessage::new();
+        let grant = self.reply_grant(addr_a, &phs.id, addr, ws);
+        let webrtc_sdp_answer = if self.answer_allowed(&phs.webrtc_sdp_answer, &grant) {
+            phs.webrtc_sdp_answer
+        } else {
+            Default::default()
+        };
         let mut p = PunchHoleResponse {
             socket_addr: AddrMangle::encode(addr).into(),
+            socket_addr_v6: self.reply_v6(&phs.socket_addr_v6, addr, &grant),
             pk: self.get_pk(&phs.version, phs.id).await,
             relay_server: phs.relay_server.clone(),
+            webrtc_sdp_answer,
             ..Default::default()
         };
         if let Ok(t) = phs.nat_type.enum_value() {
@@ -722,15 +828,62 @@ impl RendezvousServer {
         Ok(())
     }
 
+    // The controlled side's UDP PunchHoleSent (punch_udp_hole): sent from the socket
+    // it punches with, so its source is the public address the controller must
+    // punch. Accepted once, for an open UDP route of the controller named in
+    // socket_addr and from the controlled peer's host, and answered only on the
+    // controller's TCP connection. Nothing is ever sent back over UDP. From any
+    // other host (forged, or a NAT pool or multi-WAN router) it counts as lost:
+    // the controller's parallel TCP round or its retries go on as after a lost
+    // datagram, and nobody can use up the route the peer's reply needs.
+    async fn handle_udp_hole_sent(&mut self, phs: PunchHoleSent, addr: SocketAddr) {
+        let Some(addr_a) = punch::decode_addr(&phs.socket_addr) else {
+            return;
+        };
+        if !self.routes.claim_udp(addr_a, &phs.id, addr) {
+            log::debug!("Ignored UDP punch hole sent from {:?}", addr);
+            return;
+        }
+        self.note_peer_version(&phs.id, &phs.version, addr, addr_a, false)
+            .await;
+        log::debug!(
+            "UDP punch hole response to {:?} from {:?}, is_udp: true",
+            &addr_a,
+            &addr
+        );
+        let mut msg_out = RendezvousMessage::new();
+        let grant = self.reply_grant(addr_a, &phs.id, addr, false);
+        let webrtc_sdp_answer = if self.answer_allowed(&phs.webrtc_sdp_answer, &grant) {
+            phs.webrtc_sdp_answer
+        } else {
+            Default::default()
+        };
+        let mut p = PunchHoleResponse {
+            socket_addr: AddrMangle::encode(addr).into(),
+            socket_addr_v6: self.reply_v6(&phs.socket_addr_v6, addr, &grant),
+            pk: self.get_pk(&phs.version, phs.id).await,
+            relay_server: phs.relay_server,
+            is_udp: true,
+            webrtc_sdp_answer,
+            ..Default::default()
+        };
+        if let Ok(t) = phs.nat_type.enum_value() {
+            p.set_nat_type(t);
+        }
+        msg_out.set_punch_hole_response(p);
+        self.send_to_tcp(msg_out, addr_a).await;
+    }
+
     #[inline]
     async fn handle_local_addr<'a>(
         &mut self,
         la: LocalAddr,
         addr: SocketAddr,
         socket: Option<&'a mut FramedSocket>,
+        ws: bool,
     ) -> ResultType<()> {
         // relay local addrs of B to A
-        let addr_a = AddrMangle::decode(&la.socket_addr);
+        let addr_a = decode_or_unspecified(&la.socket_addr);
         log::debug!(
             "{} local addrs response to {:?} from {:?}",
             if socket.is_none() { "TCP" } else { "UDP" },
@@ -738,8 +891,10 @@ impl RendezvousServer {
             &addr
         );
         let mut msg_out = RendezvousMessage::new();
+        let grant = self.reply_grant(addr_a, &la.id, addr, ws);
         let mut p = PunchHoleResponse {
             socket_addr: la.local_addr.clone(),
+            socket_addr_v6: self.reply_v6(&la.socket_addr_v6, addr, &grant),
             pk: self.get_pk(&la.version, la.id).await,
             relay_server: la.relay_server,
             ..Default::default()
@@ -779,9 +934,13 @@ impl RendezvousServer {
         // because punch hole won't work if in the same intranet,
         // all routers will drop such self-connections.
         if let Some(peer) = self.pm.get(&id).await {
-            let (elapsed, peer_addr) = {
+            let (elapsed, peer_addr, peer_legacy) = {
                 let r = peer.read().await;
-                (r.last_reg_time.elapsed().as_millis() as i64, r.socket_addr)
+                (
+                    r.last_reg_time.elapsed().as_millis() as i64,
+                    r.socket_addr,
+                    r.legacy_punch,
+                )
             };
             if elapsed >= REG_TIMEOUT {
                 let mut msg_out = RendezvousMessage::new();
@@ -804,7 +963,8 @@ impl RendezvousServer {
             let peer_is_lan = self.is_lan(peer_addr);
             let is_lan = self.is_lan(addr);
             let mut relay_server = self.get_relay_server(addr.ip(), peer_addr.ip());
-            if ALWAYS_USE_RELAY.load(Ordering::SeqCst) || (peer_is_lan ^ is_lan) {
+            let relay_forced = ALWAYS_USE_RELAY.load(Ordering::SeqCst) || (peer_is_lan ^ is_lan);
+            if relay_forced {
                 if peer_is_lan {
                     // https://github.com/rustdesk/rustdesk-server/issues/24
                     relay_server = self.inner.local_ip.clone()
@@ -820,7 +980,63 @@ impl RendezvousServer {
                     }
                 });
             let socket_addr = AddrMangle::encode(addr).into();
-            if same_intranet {
+            // IPv6 and WebRTC would bypass a forced relay; WebSocket clients keep the old behavior
+            let p2p = !ws && !relay_forced;
+            // UDP and IPv6 would also bypass a relay the controller asked for itself;
+            // WebRTC then stays relayed by its own ICE policy
+            // 1.4.x controllers wait up to 20 s for a failing UDP or IPv6 attempt
+            // before they relay (punch_udp), and 1.4.1 has no TCP round besides,
+            // so UDP and IPv6 start with 1.5.0; older ones get the old behavior.
+            // A 1.4.x controlled side would punch UDP instead of TCP with a
+            // protocol 1.5.0 does not answer, so it gets the old behavior too
+            // once it has replied with its version.
+            let direct = p2p
+                && !ph.force_relay
+                && punch::version_at_least(&ph.version, (1, 5, 0))
+                && !peer_legacy;
+            let mut socket_addr_v6 = Bytes::new();
+            if direct {
+                socket_addr_v6 = forward_v6(&ph.socket_addr_v6);
+                // the peer punches whatever address it gets: limit per controller
+                // and per target
+                let target = punch::decode_addr(&socket_addr_v6).map(|a| a.ip());
+                if let Some(target) = target {
+                    if !self.ipv6_limits.forward(addr.ip(), target) {
+                        log::debug!("Too many IPv6 punch requests from {:?}", addr);
+                        socket_addr_v6 = Bytes::new();
+                    }
+                }
+            }
+            let mut session_key = None;
+            if p2p && WEBRTC.load(Ordering::SeqCst) && !ph.webrtc_sdp_offer.is_empty() {
+                session_key = punch::offer_session_key(&ph.webrtc_sdp_offer);
+                if session_key.is_none() {
+                    log::debug!(
+                        "Dropped unreadable WebRTC offer ({} bytes) from {:?}",
+                        ph.webrtc_sdp_offer.len(),
+                        addr
+                    );
+                }
+            }
+            // FetchLocalAddr has no udp_port
+            let udp = direct
+                && UDP_PUNCH.load(Ordering::SeqCst)
+                && (1..=u16::MAX as i32).contains(&ph.udp_port)
+                && (!same_intranet || session_key.is_some());
+            // the route also lets the peer's IPv6 address back to this controller
+            let v6 = !socket_addr_v6.is_empty();
+            let grant = if udp || v6 || session_key.is_some() {
+                let peer_ip = try_into_v4(peer_addr).ip();
+                let want = punch::Want { udp, v6 };
+                self.routes.open(addr, &id, peer_ip, want, session_key)
+            } else {
+                Default::default()
+            };
+            if !grant.v6 {
+                socket_addr_v6 = Bytes::new();
+            }
+            // FetchLocalAddr cannot carry an offer; WebRTC works in a LAN anyway
+            if same_intranet && !grant.webrtc {
                 log::debug!(
                     "Fetch local addr {:?} {:?} request from {:?}",
                     id,
@@ -830,6 +1046,7 @@ impl RendezvousServer {
                 msg_out.set_fetch_local_addr(FetchLocalAddr {
                     socket_addr,
                     relay_server,
+                    socket_addr_v6,
                     ..Default::default()
                 });
             } else {
@@ -839,12 +1056,27 @@ impl RendezvousServer {
                     peer_addr,
                     addr
                 );
-                msg_out.set_punch_hole(PunchHole {
+                let mut punch_hole = PunchHole {
                     socket_addr,
                     nat_type: ph.nat_type,
                     relay_server,
+                    socket_addr_v6,
                     ..Default::default()
-                });
+                };
+                if grant.udp {
+                    punch_hole.udp_port = ph.udp_port;
+                }
+                if grant.webrtc {
+                    log::debug!(
+                        "WebRTC offer ({} bytes) from {:?} to {:?}",
+                        ph.webrtc_sdp_offer.len(),
+                        addr,
+                        id
+                    );
+                    punch_hole.webrtc_sdp_offer = ph.webrtc_sdp_offer;
+                    punch_hole.force_relay = ph.force_relay;
+                }
+                msg_out.set_punch_hole(punch_hole);
             }
             Ok((msg_out, Some(peer_addr)))
         } else {
@@ -888,23 +1120,61 @@ impl RendezvousServer {
 
     #[inline]
     async fn send_to_tcp(&mut self, msg: RendezvousMessage, addr: SocketAddr) {
-        let mut tcp = self.tcp_punch.lock().await.remove(&try_into_v4(addr));
+        let sink = self.take_tcp_sink(addr).await;
         tokio::spawn(async move {
-            Self::send_to_sink(&mut tcp, msg).await;
+            Self::send_to_shared_sink(sink, msg).await;
         });
+    }
+
+    // A stashed sink serves one response. A WebRTC route keeps it for the ICE
+    // candidates afterwards, but no further response: replies can be forged by
+    // anyone and must not queue up behind a controller that stopped reading.
+    async fn take_tcp_sink(&self, addr: SocketAddr) -> Option<SharedSink> {
+        let addr = try_into_v4(addr);
+        let already_replied = self.routes.replied(addr);
+        let mut tcp_punch = self.tcp_punch.lock().await;
+        if self.routes.keeps_sink(addr) {
+            if already_replied {
+                return None;
+            }
+            tcp_punch.get(&addr).cloned()
+        } else {
+            tcp_punch.remove(&addr)
+        }
+    }
+
+    async fn send_to_shared_sink(sink: Option<SharedSink>, msg: RendezvousMessage) {
+        if let Some(sink) = sink {
+            // the timeout covers waiting for the sink as well
+            let send = async {
+                let mut sink = sink.lock().await;
+                Self::write_sink(&mut sink, msg).await;
+            };
+            if timeout(SINK_SEND_TIMEOUT, send).await.is_err() {
+                log::debug!("Timeout writing to a tcp connection");
+            }
+        }
     }
 
     #[inline]
     async fn send_to_sink(sink: &mut Option<Sink>, msg: RendezvousMessage) {
         if let Some(sink) = sink.as_mut() {
-            if let Ok(bytes) = msg.write_to_bytes() {
-                match sink {
-                    Sink::TcpStream(s) => {
-                        allow_err!(s.send(Bytes::from(bytes)).await);
-                    }
-                    Sink::Ws(ws) => {
-                        allow_err!(ws.send(tungstenite::Message::Binary(bytes)).await);
-                    }
+            Self::write_sink(sink, msg).await;
+        }
+    }
+
+    async fn write_sink(sink: &mut Sink, msg: RendezvousMessage) {
+        if let Ok(bytes) = msg.write_to_bytes() {
+            match sink {
+                Sink::TcpStream(s, enc) => {
+                    let bytes = match enc.as_mut() {
+                        Some(enc) => enc.enc(&bytes),
+                        None => bytes,
+                    };
+                    allow_err!(s.send(Bytes::from(bytes)).await);
+                }
+                Sink::Ws(ws) => {
+                    allow_err!(ws.send(tungstenite::Message::Binary(bytes)).await);
                 }
             }
         }
@@ -916,9 +1186,139 @@ impl RendezvousServer {
         msg: RendezvousMessage,
         addr: SocketAddr,
     ) -> ResultType<()> {
-        let mut sink = self.tcp_punch.lock().await.remove(&try_into_v4(addr));
-        Self::send_to_sink(&mut sink, msg).await;
+        let sink = self.take_tcp_sink(addr).await;
+        Self::send_to_shared_sink(sink, msg).await;
         Ok(())
+    }
+
+    // Remembers whether the controlled peer `id` runs a client older than 1.5.0,
+    // from a reply to a waiting controller `ctl` that it sent from the host it
+    // registered from. Not over WebSocket, whose address can come from a header.
+    async fn note_peer_version(
+        &self,
+        id: &str,
+        version: &str,
+        sender: SocketAddr,
+        ctl: SocketAddr,
+        ws: bool,
+    ) {
+        if ws || id.is_empty() || version.is_empty() {
+            return;
+        }
+        if !self.tcp_punch.lock().await.contains_key(&try_into_v4(ctl)) {
+            return;
+        }
+        if let Some(peer) = self.pm.get_in_memory(id).await {
+            let mut peer = peer.write().await;
+            if punch::same_host(peer.socket_addr.ip(), sender.ip()) {
+                peer.legacy_punch = !punch::version_at_least(version, (1, 5, 0));
+            }
+        }
+    }
+
+    // What a reply to controller connection `ctl` may carry back besides the
+    // original fields (see PunchRoutes::reply_grant). Nothing over WebSocket,
+    // whose address can come from a header.
+    fn reply_grant(
+        &self,
+        ctl: SocketAddr,
+        peer_id: &str,
+        sender: SocketAddr,
+        ws: bool,
+    ) -> punch::Grant {
+        if ws {
+            return Default::default();
+        }
+        self.routes.reply_grant(ctl, peer_id, sender.ip())
+    }
+
+    // A WebRTC answer is passed on only for the controller's own route.
+    fn answer_allowed(&self, answer: &str, grant: &punch::Grant) -> bool {
+        !answer.is_empty()
+            && answer.len() <= punch::MAX_SDP_LEN
+            && WEBRTC.load(Ordering::SeqCst)
+            && grant.webrtc
+    }
+
+    // The peer's IPv6 address goes back only where the controller's went to the
+    // peer, so not past a forced relay or to a 1.4.x controller, and it counts
+    // against the per-target limit: the controller punches it.
+    fn reply_v6(&self, peer_v6: &Bytes, sender: SocketAddr, grant: &punch::Grant) -> Bytes {
+        if !grant.v6 {
+            return Bytes::new();
+        }
+        let v6 = forward_v6(peer_v6);
+        match punch::decode_addr(&v6) {
+            Some(target) if self.ipv6_limits.reply(sender.ip(), target.ip()) => v6,
+            _ => Bytes::new(),
+        }
+    }
+
+    // Trickle ICE. The controller sends its candidates on its punch connection, with
+    // the target id; the controlled side sends them on a connection of its own, with
+    // the controller's address from PunchHole. Both must match the route's session.
+    async fn handle_ice_candidate(
+        &mut self,
+        ice: IceCandidate,
+        addr: SocketAddr,
+        count: &mut IceCount,
+    ) -> bool {
+        count.frames += 1;
+        if count.frames > punch::MAX_ICE_FRAMES {
+            log::debug!("Too many IceCandidate from {:?}", addr);
+            return false;
+        }
+        let len = ice.candidate.len();
+        let valid = len > 0
+            && len <= punch::MAX_ICE_CANDIDATE_LEN
+            && !ice.session_key.is_empty()
+            && ice.session_key.len() <= punch::MAX_SESSION_KEY_LEN;
+        let forward = |ice: IceCandidate| {
+            let mut msg_out = RendezvousMessage::new();
+            msg_out.set_ice_candidate(IceCandidate {
+                session_key: ice.session_key,
+                candidate: ice.candidate,
+                ..Default::default()
+            });
+            msg_out
+        };
+        // over the route's budget: dropped quietly; only candidates without a
+        // matching route count as misses, which close the connection
+        let mut over_budget = false;
+        if valid && ice.socket_addr.is_empty() {
+            match self.routes.ice_to_peer(addr, &ice.id, &ice.session_key) {
+                Ice::Forward => {
+                    if let Some(peer) = self.pm.get_in_memory(&ice.id).await {
+                        let peer_addr = peer.read().await.socket_addr;
+                        self.tx.send(Data::Msg(forward(ice).into(), peer_addr)).ok();
+                        return true;
+                    }
+                }
+                Ice::OverBudget => over_budget = true,
+                Ice::NoMatch => {}
+            }
+        } else if valid {
+            if let Some(ctl) = punch::decode_addr(&ice.socket_addr) {
+                match self.routes.ice_to_controller(ctl, &ice.session_key) {
+                    Ice::Forward => {
+                        let sink = self.tcp_punch.lock().await.get(&try_into_v4(ctl)).cloned();
+                        if sink.is_some() {
+                            Self::send_to_shared_sink(sink, forward(ice)).await;
+                            return true;
+                        }
+                    }
+                    Ice::OverBudget => over_budget = true,
+                    Ice::NoMatch => {}
+                }
+            }
+        }
+        if over_budget {
+            log::debug!("IceCandidate over the route's budget from {:?}", addr);
+            return true;
+        }
+        count.misses += 1;
+        log::debug!("Dropped IceCandidate ({} bytes) from {:?}", len, addr);
+        count.misses <= punch::MAX_ICE_MISSES
     }
 
     #[inline]
@@ -1211,8 +1611,13 @@ impl RendezvousServer {
         log::debug!("Tcp connection from {:?}, ws: {}", addr, ws);
         let mut rs = self.clone();
         let key = key.to_owned();
+        // a controller's UDP NAT test runs while it is connected, so count the
+        // host already on accept; WebSocket addresses can come from a header,
+        // so only plain TCP counts
+        let tcp_host = (!ws).then(|| self.tcp_hosts.enter(addr.ip()));
         tokio::spawn(async move {
             allow_err!(rs.handle_listener_inner(stream, addr, &key, ws).await);
+            drop(tcp_host);
         });
     }
 
@@ -1254,24 +1659,98 @@ impl RendezvousServer {
             let ws_stream = tokio_tungstenite::accept_hdr_async(stream, callback).await?;
             let (a, mut b) = ws_stream.split();
             sink = Some(Sink::Ws(a));
+            let mut ice = IceCount::default();
             while let Ok(Some(Ok(msg))) = timeout(30_000, b.next()).await {
                 if let tungstenite::Message::Binary(bytes) = msg {
-                    if !self.handle_tcp(&bytes, &mut sink, addr, key, ws).await {
+                    if !self
+                        .handle_tcp(&bytes, &mut sink, addr, key, ws, &mut ice)
+                        .await
+                    {
                         break;
                     }
                 }
             }
         } else {
-            let (a, mut b) = Framed::new(stream, BytesCodec::new()).split();
-            sink = Some(Sink::TcpStream(a));
-            while let Ok(Some(Ok(bytes))) = timeout(30_000, b.next()).await {
-                if !self.handle_tcp(&bytes, &mut sink, addr, key, ws).await {
+            let offer_delay = kx_offer_delay(tcp_rtt(&stream));
+            let mut codec = BytesCodec::new();
+            codec.set_max_packet_length(MAX_TCP_FRAME);
+            let (a, mut b) = Framed::new(stream, codec).split();
+            sink = Some(Sink::TcpStream(a, None));
+            let mut first = None;
+            let mut offer = None;
+            if SECURE_TCP.load(Ordering::SeqCst) {
+                if let Some(sk) = self.inner.sk.as_ref() {
+                    // Clients that want the exchange wait for our offer. The others speak
+                    // first and often close right after; an unread offer would turn that
+                    // close into a reset, which can lose their message.
+                    match timeout(offer_delay, b.next()).await {
+                        Ok(Some(Ok(bytes))) => first = Some(bytes),
+                        Ok(_) => return Ok(()),
+                        Err(_) => match key_exchange::offer(sk) {
+                            Ok((ex, o)) => {
+                                let mut msg_out = RendezvousMessage::new();
+                                msg_out.set_key_exchange(ex);
+                                Self::send_to_sink(&mut sink, msg_out).await;
+                                offer = Some(o);
+                            }
+                            Err(err) => log::error!("Failed to offer key exchange: {}", err),
+                        },
+                    }
+                }
+            }
+            let mut dec: Option<Encrypt> = None;
+            let mut ice = IceCount::default();
+            loop {
+                let mut bytes = match first.take() {
+                    Some(bytes) => bytes,
+                    None => match timeout(30_000, b.next()).await {
+                        Ok(Some(Ok(bytes))) => bytes,
+                        _ => break,
+                    },
+                };
+                if let Some(dec) = dec.as_mut() {
+                    if dec.dec(&mut bytes).is_err() {
+                        log::debug!("Tcp connection from {:?} failed to decrypt", addr);
+                        break;
+                    }
+                } else if let Some(offer) = offer.take() {
+                    // only the first frame can answer our offer, anything else stays plaintext
+                    if let Ok(RendezvousMessage {
+                        union: Some(rendezvous_message::Union::KeyExchange(ex)),
+                        ..
+                    }) = RendezvousMessage::parse_from_bytes(&bytes)
+                    {
+                        match key_exchange::complete(&offer, &ex) {
+                            Ok(enc) => {
+                                if let Some(Sink::TcpStream(_, key)) = sink.as_mut() {
+                                    *key = Some(enc.clone());
+                                }
+                                dec = Some(enc);
+                                log::debug!(
+                                    "Tcp connection from {:?} secured, version {}",
+                                    addr,
+                                    ex.version
+                                );
+                                continue;
+                            }
+                            Err(err) => {
+                                log::debug!("Key exchange with {:?} failed: {}", addr, err);
+                                break;
+                            }
+                        }
+                    }
+                }
+                if !self
+                    .handle_tcp(&bytes, &mut sink, addr, key, ws, &mut ice)
+                    .await
+                {
                     break;
                 }
             }
         }
         if sink.is_none() {
             self.tcp_punch.lock().await.remove(&try_into_v4(addr));
+            self.routes.remove(addr);
         }
         log::debug!("Tcp connection from {:?} closed", addr);
         Ok(())
@@ -1330,6 +1809,11 @@ impl RendezvousServer {
         Ok((key, out_sk))
     }
 
+    // the same rule handle_punch_hole_request uses to force a relay
+    fn relay_forced(&self, a: SocketAddr, b: SocketAddr) -> bool {
+        ALWAYS_USE_RELAY.load(Ordering::SeqCst) || (self.is_lan(a) ^ self.is_lan(b))
+    }
+
     #[inline]
     fn is_lan(&self, addr: SocketAddr) -> bool {
         if let Some(network) = &self.inner.mask {
@@ -1347,6 +1831,94 @@ impl RendezvousServer {
         }
         false
     }
+}
+
+// Sends a datagram without waiting. A failed send only drops it; returned as
+// an error, it would end the loop and rebuild the socket, which a spoofed
+// source the kernel refuses could then trigger at will.
+fn try_send_udp(socket: &FramedSocket, msg: &RendezvousMessage, addr: SocketAddr) {
+    if let (FramedSocket::Direct(framed), Ok(bytes)) = (socket, msg.write_to_bytes()) {
+        if let Err(err) = framed.get_ref().try_send_to(&bytes, addr) {
+            log::debug!("UDP reply to {:?} failed: {}", addr, err);
+        }
+    }
+}
+
+// The controlled side sends its plaintext reply at once and closes without
+// reading. The offer must not reach it before a lost first segment of that
+// reply is retransmitted (RTO: at least 200 ms, about three round trips after
+// the handshake), or the close turns into a reset that discards the reply.
+// Clients that want the exchange wait up to 18 s for it.
+fn kx_offer_delay(rtt: Option<Duration>) -> u64 {
+    let rtt = rtt.map(|d| d.as_millis() as u64).unwrap_or(0);
+    rtt.saturating_mul(4)
+        .saturating_add(100)
+        .clamp(KX_OFFER_DELAY_MIN, KX_OFFER_DELAY_MAX)
+}
+
+// The round trip the kernel measured during the TCP handshake.
+#[cfg(target_os = "linux")]
+fn tcp_rtt(stream: &TcpStream) -> Option<Duration> {
+    use hbb_common::libc;
+    use std::os::unix::io::AsRawFd;
+    // SAFETY: tcp_info is plain data; getsockopt writes at most `len` bytes
+    // into it and reports the size it wrote.
+    let mut info: libc::tcp_info = unsafe { std::mem::zeroed() };
+    let mut len = std::mem::size_of::<libc::tcp_info>() as libc::socklen_t;
+    let rc = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::IPPROTO_TCP,
+            libc::TCP_INFO,
+            &mut info as *mut libc::tcp_info as *mut libc::c_void,
+            &mut len,
+        )
+    };
+    (rc == 0 && info.tcpi_rtt > 0).then(|| Duration::from_micros(info.tcpi_rtt as u64))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn tcp_rtt(_stream: &TcpStream) -> Option<Duration> {
+    None
+}
+
+// A mangled address from the network; like AddrMangle::decode, an invalid one
+// becomes 0.0.0.0:0, which matches no connection.
+fn decode_or_unspecified(bytes: &[u8]) -> SocketAddr {
+    punch::decode_addr(bytes).unwrap_or_else(|| SocketAddr::from(([0, 0, 0, 0], 0)))
+}
+
+// Only global IPv6 addresses with a port are passed on, and only while IPv6
+// punching is on.
+fn forward_v6(addr: &Bytes) -> Bytes {
+    if IPV6_PUNCH.load(Ordering::SeqCst) && addr.len() == MANGLED_V6_LEN && punch::global_v6(addr) {
+        addr.clone()
+    } else {
+        Bytes::new()
+    }
+}
+
+// Feature switches default to on; "N" (or no, 0, false, off) turns them off.
+fn load_switch(name: &str, switch: &AtomicBool) {
+    let value = get_arg(name).trim().to_uppercase();
+    match value.as_str() {
+        "N" | "NO" | "0" | "FALSE" | "OFF" => switch.store(false, Ordering::SeqCst),
+        "" | "Y" | "YES" | "1" | "TRUE" | "ON" => {}
+        _ => log::warn!(
+            "{}={} is neither Y nor N, the feature stays on",
+            name,
+            value
+        ),
+    }
+    log::info!(
+        "{}={}",
+        name,
+        if switch.load(Ordering::SeqCst) {
+            "Y"
+        } else {
+            "N"
+        }
+    );
 }
 
 async fn check_relay_servers(rs0: Arc<RelayServers>, tx: Sender) {
@@ -1497,6 +2069,54 @@ mod tests {
         let bind_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let socket = create_udp_listener(Some(bind_addr), 0, 0).await.unwrap();
         assert_eq!(socket.local_addr().unwrap().ip(), bind_addr);
+    }
+
+    #[hbb_common::tokio::test]
+    async fn an_oversized_forward_does_not_block_the_socket() {
+        let receiver = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        receiver
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .unwrap();
+        let good = receiver.local_addr().unwrap();
+        let mut big = RendezvousMessage::new();
+        big.set_request_relay(RequestRelay {
+            token: "t".repeat(65_600),
+            ..Default::default()
+        });
+        let mut small = RendezvousMessage::new();
+        small.set_test_nat_response(TestNatResponse::default());
+        let mut socket = FramedSocket::new("127.0.0.1:0").await.unwrap();
+        // a RequestRelay arrives in TCP frames up to 64 KiB, beyond one datagram
+        assert!(socket.send(&big, good).await.is_err());
+        socket.send(&small, good).await.unwrap();
+        socket.send(&small, good).await.unwrap();
+        let mut buf = [0u8; 64];
+        for _ in 0..2 {
+            let (n, _) = receiver.recv_from(&mut buf).unwrap();
+            assert!(n < 64);
+        }
+    }
+
+    #[test]
+    fn kx_offer_delay_follows_the_round_trip() {
+        let ms = |n| Some(Duration::from_millis(n));
+        assert_eq!(kx_offer_delay(None), KX_OFFER_DELAY_MIN);
+        assert_eq!(kx_offer_delay(ms(50)), KX_OFFER_DELAY_MIN);
+        assert_eq!(kx_offer_delay(ms(200)), 900);
+        assert_eq!(kx_offer_delay(ms(600)), 2_500);
+        assert_eq!(kx_offer_delay(ms(5_000)), KX_OFFER_DELAY_MAX);
+        assert_eq!(kx_offer_delay(Some(Duration::MAX)), KX_OFFER_DELAY_MAX);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[hbb_common::tokio::test]
+    async fn tcp_rtt_reads_the_handshake() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let _client = TcpStream::connect(addr).await.unwrap();
+        let (server, _) = listener.accept().await.unwrap();
+        let rtt = tcp_rtt(&server).unwrap();
+        assert!(rtt < Duration::from_millis(100));
     }
 
     #[hbb_common::tokio::test]
