@@ -48,7 +48,16 @@ The most common options:
 | Port | `-p` | `PORT` | hbbs, hbbr | Listening port (hbbs `21116`, hbbr `21117`) |
 | Relay servers | `-r` | `RELAY-SERVERS` | hbbs | Override when the relay uses a different address or a non-standard port |
 | Force relay | — | `ALWAYS_USE_RELAY` | hbbs | `Y` disables direct connections |
+| Key exchange | `--secure-tcp` | `SECURE_TCP` | hbbs | Encrypted rendezvous connections, needed by WebRTC (default `Y`) |
+| IPv6 P2P | `--ipv6-punch` | `IPV6_PUNCH` | hbbs | Direct connections over IPv6 (default `Y`) |
+| WebRTC | `--webrtc` | `WEBRTC` | hbbs | WebRTC signalling between clients (default `Y`) |
+| UDP hole punching | `--udp-punch` | `UDP_PUNCH` | hbbs | UDP NAT test and UDP hole punching (default `Y`) |
 | Log level | — | `RUST_LOG` | hbbs, hbbr | e.g. `debug` (default `info`) |
+
+The four connection types above need clients that support them (1.5.0 for
+all four) and must be enabled on the controlling client; see
+**[docs/modern-transports.md](docs/modern-transports.md)** for how they work,
+the security design and compatibility.
 
 See **[docs/environment-variables.md](docs/environment-variables.md)** for the
 full list of variables, the file/flag/env precedence rules, database and relay

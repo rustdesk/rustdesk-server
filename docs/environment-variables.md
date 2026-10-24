@@ -49,8 +49,17 @@ in the inherited process environment.
 | `DB_URL` 🅴 | *(none)* | `./db_v2.sqlite3` | Path/URL of the SQLite database file. See [Database](#database). |
 | `MAX_DATABASE_CONNECTIONS` 🅴 | *(none)* | `1` | Size of the SQLite connection pool. |
 | `MAX_PUNCH_REQUESTS` 🅴 | *(none)* | `100000` | Number of punch-request records kept in memory for the `punch-requests` [console](#runtime-console) command; the oldest is dropped when full. `0` disables recording. |
+| `SECURE_TCP` | `--secure-tcp` | `Y` | Offers the client key exchange (`KeyExchange`, versions 0 and 1) on TCP connections to `PORT` whose client does not speak within 500 ms (longer on slow links); not on the NAT test or WebSocket ports. Needed by WebRTC and by signed-in clients. Has no effect when `KEY` is a public key, because there is no private key to sign with (a warning is logged). `N` stops offering it. See [modern connection types](modern-transports.md). |
+| `IPV6_PUNCH` | `--ipv6-punch` | `Y` | Passes the peers' IPv6 addresses (`socket_addr_v6`) between them, so clients with public IPv6 can connect directly over IPv6. Only global addresses, only from controllers 1.5.0 or newer, rate-limited per controller IP and per target. `N` drops them. Never applied to WebSocket clients or when a relay is forced. |
+| `WEBRTC` | `--webrtc` | `Y` | Forwards WebRTC offers and answers and relays trickle ICE candidates (`IceCandidate`) between the peers. The controller sends its offer only over an encrypted connection, so WebRTC also needs `SECURE_TCP`, and both clients need the server's key. `N` drops offers and answers and treats `IceCandidate` as before. |
+| `UDP_PUNCH` | `--udp-punch` | `Y` | Answers the clients' UDP NAT test (`TestNatRequest` on UDP `PORT`, rate-limited, only the observed port), forwards `udp_port` (from controllers 1.5.0 or newer) and accepts the controlled side's UDP `PunchHoleSent` for an open request, answering the controller over its TCP connection. `N` ignores all of it, as before. |
+| `UDP_TEST_NAT_LIMIT` 🅴 | *(none)* | `2000` | Total UDP `TestNatRequest` answers per second (burst: twice that), on top of 30/s (burst 60) per source IP. Sources with an open TCP connection to `PORT` are not counted against it. |
 
 🅴 = set through the inherited process environment.
+
+The four connection type switches (`SECURE_TCP`, `IPV6_PUNCH`, `WEBRTC`,
+`UDP_PUNCH`) accept `N`, `no`, `0`, `false` or `off` to turn the feature off;
+any other value keeps it on (an unknown value is logged as a warning).
 
 > `PORT_FOR_API` / `KEY_FOR_API` are only used by RustDesk Server **Pro** and its
 > API; they have no effect in the open‑source server.
