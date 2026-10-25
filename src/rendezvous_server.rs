@@ -133,6 +133,14 @@ impl RendezvousServer {
         let (key, sk) = Self::get_server_sk(key)?;
         let nat_port = port - 1;
         let ws_port = port + 2;
+        if let Some(metrics_arg) = get_arg_opt("metrics") {
+            let m_port = if metrics_arg.is_empty() {
+                21113
+            } else {
+                metrics_arg.parse::<u16>()?
+            };
+            crate::metrics::start_metrics_server(bind_addr, m_port, "hbbs").await;
+        }
         let pm = PeerMap::new().await?;
         log::info!("serial={}", serial);
         let rendezvous_servers = get_servers(&get_arg("rendezvous-servers"), "rendezvous-servers");
@@ -374,6 +382,7 @@ impl RendezvousServer {
                 Some(rendezvous_message::Union::RegisterPeer(rp)) => {
                     // B registered
                     if !rp.id.is_empty() && rp.id.len() <= MAX_PEER_ID_LEN {
+                        crate::metrics::inc_heartbeat();
                         log::trace!("New peer registered: {:?} {:?}", &rp.id, &addr);
                         self.update_addr(rp.id, addr, socket).await?;
                         if self.inner.serial > rp.serial {

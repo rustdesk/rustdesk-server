@@ -145,6 +145,8 @@ pub fn init_args(args: &str, name: &str, about: &str) {
     for (k, v) in matches.args {
         if let Some(v) = v.vals.first() {
             set_arg(k, &v.to_string_lossy());
+        } else if k == "metrics" {
+            set_arg(k, "");
         }
     }
 }
