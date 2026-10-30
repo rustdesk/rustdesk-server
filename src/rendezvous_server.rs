@@ -934,30 +934,31 @@ impl RendezvousServer {
     async fn check_ip_blocker(&self, ip: &str, id: &str) -> bool {
         let mut lock = IP_BLOCKER.lock().await;
         let now = Instant::now();
-        if let Some(old) = lock.get_mut(ip) {
-            let counter = &mut old.0;
-            if counter.1.elapsed().as_secs() > IP_BLOCK_DUR {
-                counter.0 = 0;
-            } else if counter.0 > *IP_BLOCK_MAX_BURST {
-                return false;
-            }
-            counter.0 += 1;
-            counter.1 = now;
-
-            let counter = &mut old.1;
-            let is_new = counter.0.get(id).is_none();
-            if counter.1.elapsed().as_secs() > DAY_SECONDS {
-                counter.0.clear();
-            } else if counter.0.len() > *IP_BLOCK_MAX_IDS {
-                return !is_new;
-            }
-            if is_new {
-                counter.0.insert(id.to_owned());
-            }
-            counter.1 = now;
-        } else {
-            lock.insert(ip.to_owned(), ((0, now), (Default::default(), now)));
+        let old = lock
+            .entry(ip.to_owned())
+            .or_insert_with(|| ((0, now), (Default::default(), now)));
+        let counter = &mut old.0;
+        if counter.1.elapsed().as_secs() > IP_BLOCK_DUR {
+            counter.0 = 0;
         }
+        if counter.0 >= *IP_BLOCK_MAX_BURST {
+            return false;
+        }
+        counter.0 += 1;
+        counter.1 = now;
+
+        let counter = &mut old.1;
+        let is_new = counter.0.get(id).is_none();
+        if counter.1.elapsed().as_secs() > DAY_SECONDS {
+            counter.0.clear();
+        }
+        if counter.0.len() >= *IP_BLOCK_MAX_IDS {
+            return !is_new;
+        }
+        if is_new {
+            counter.0.insert(id.to_owned());
+        }
+        counter.1 = now;
         true
     }
 
