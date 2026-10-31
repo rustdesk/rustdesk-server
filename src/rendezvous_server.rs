@@ -16,7 +16,7 @@ use hbb_common::{
         register_pk_response::Result::{TOO_FREQUENT, UUID_MISMATCH},
         *,
     },
-    tcp::FramedStream,
+    tcp::{Encrypt, FramedStream},
     timeout,
     tokio::{
         self,
@@ -31,7 +31,7 @@ use hbb_common::{
     AddrMangle, ResultType,
 };
 use ipnetwork::Ipv4Network;
-use sodiumoxide::crypto::sign;
+use sodiumoxide::crypto::{box_, sign};
 use std::{
     collections::{HashMap, VecDeque},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
@@ -51,7 +51,9 @@ const REG_TIMEOUT: i64 = 30_000;
 type TcpStreamSink = SplitSink<Framed<TcpStream, BytesCodec>, Bytes>;
 type WsSink = SplitSink<tokio_tungstenite::WebSocketStream<TcpStream>, tungstenite::Message>;
 enum Sink {
-    TcpStream(TcpStreamSink),
+    // The cipher, once the client completed the secure TCP key exchange, travels with the
+    // sink because replies are sent from wherever the sink is parked (tcp_punch).
+    TcpStream(TcpStreamSink, Option<Encrypt>),
     Ws(WsSink),
 }
 type Sender = mpsc::UnboundedSender<Data>;
@@ -863,7 +865,11 @@ impl RendezvousServer {
         if let Some(sink) = sink.as_mut() {
             if let Ok(bytes) = msg.write_to_bytes() {
                 match sink {
-                    Sink::TcpStream(s) => {
+                    Sink::TcpStream(s, enc) => {
+                        let bytes = match enc.as_mut() {
+                            Some(enc) => enc.enc(&bytes),
+                            None => bytes,
+                        };
                         allow_err!(s.send(Bytes::from(bytes)).await);
                     }
                     Sink::Ws(ws) => {
@@ -1227,8 +1233,58 @@ impl RendezvousServer {
             }
         } else {
             let (a, mut b) = Framed::new(stream, BytesCodec::new()).split();
-            sink = Some(Sink::TcpStream(a));
-            while let Ok(Some(Ok(bytes))) = timeout(30_000, b.next()).await {
+            sink = Some(Sink::TcpStream(a, None));
+            // Secure TCP, key exchange version 0: offer an ephemeral key signed with the server
+            // key. Clients that require it (RustDesk 1.5 when logged in) answer with the sealed
+            // session key; others skip this message and talk in the clear as before.
+            let mut kx_sk = None;
+            let mut rx_enc: Option<Encrypt> = None;
+            if !key.is_empty() {
+                if let Some(sk) = self.inner.sk.as_ref() {
+                    let (our_pk, our_sk) = box_::gen_keypair();
+                    let mut msg_out = RendezvousMessage::new();
+                    msg_out.set_key_exchange(KeyExchange {
+                        keys: vec![Bytes::from(sign::sign(&our_pk.0, sk))],
+                        ..Default::default()
+                    });
+                    Self::send_to_sink(&mut sink, msg_out).await;
+                    kx_sk = Some(our_sk);
+                }
+            }
+            while let Ok(Some(Ok(mut bytes))) = timeout(30_000, b.next()).await {
+                if let Some(enc) = rx_enc.as_mut() {
+                    if let Err(err) = enc.dec(&mut bytes) {
+                        log::error!("Tcp connection from {:?}: {}", addr, err);
+                        break;
+                    }
+                } else if let Some(our_sk) = kx_sk.take() {
+                    // Only the first message may complete the exchange.
+                    if let Ok(RendezvousMessage {
+                        union: Some(rendezvous_message::Union::KeyExchange(ex)),
+                        ..
+                    }) = RendezvousMessage::parse_from_bytes(&bytes)
+                    {
+                        if ex.keys.len() != 2 {
+                            log::error!("Tcp connection from {:?}: invalid key exchange", addr);
+                            break;
+                        }
+                        match Encrypt::decode(&ex.keys[1], &ex.keys[0], &our_sk) {
+                            Ok(session_key) => {
+                                let enc = Encrypt::new(session_key);
+                                if let Some(Sink::TcpStream(_, tx_enc)) = sink.as_mut() {
+                                    *tx_enc = Some(enc.clone());
+                                }
+                                rx_enc = Some(enc);
+                                log::debug!("Tcp connection from {:?} secured", addr);
+                                continue;
+                            }
+                            Err(err) => {
+                                log::error!("Tcp connection from {:?}: {}", addr, err);
+                                break;
+                            }
+                        }
+                    }
+                }
                 if !self.handle_tcp(&bytes, &mut sink, addr, key, ws).await {
                     break;
                 }
