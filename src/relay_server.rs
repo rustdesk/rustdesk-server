@@ -383,6 +383,7 @@ async fn io_loop(
     }
 }
 
+/// Accepts a relay connection and routes loopback console requests separately.
 async fn handle_connection(
     stream: TcpStream,
     addr: SocketAddr,
@@ -405,6 +406,7 @@ async fn handle_connection(
         });
         return;
     }
+    let permit = match crate::common::connection_permit(addr) { Some(permit) => permit, None => return };
     let ip = ip.to_string();
     if BLOCKLIST.read().await.get(&ip).is_some() {
         log::info!("{} blocked", ip);
@@ -413,16 +415,18 @@ async fn handle_connection(
     let key = key.to_owned();
     let limiter = limiter.clone();
     tokio::spawn(async move {
-        allow_err!(make_pair(stream, addr, &key, limiter, ws).await);
+        allow_err!(make_pair(stream, addr, &key, limiter, ws, permit).await);
     });
 }
 
+/// Prepares a TCP or WebSocket relay stream and begins pairing.
 async fn make_pair(
     stream: TcpStream,
     mut addr: SocketAddr,
     key: &str,
     limiter: Limiter,
     ws: bool,
+    permit: tokio::sync::OwnedSemaphorePermit,
 ) -> ResultType<()> {
     if ws {
         use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
@@ -450,10 +454,12 @@ async fn make_pair(
             }
             Ok(response)
         };
-        let ws_stream = tokio_tungstenite::accept_hdr_async(stream, callback).await?;
-        make_pair_(ws_stream, addr, key, limiter).await;
+        let ws_stream = timeout(30_000, tokio_tungstenite::accept_hdr_async_with_config(stream, callback, Some(crate::common::websocket_config(true)))).await??;
+        make_pair_(LimitedStream { inner: ws_stream, _permit: permit }, addr, key, limiter).await;
     } else {
-        make_pair_(FramedStream::from(stream, addr), addr, key, limiter).await;
+        let mut stream = FramedStream::from(stream, addr);
+        *stream.0.codec_mut() = crate::common::control_codec();
+        make_pair_(LimitedStream { inner: stream, _permit: permit }, addr, key, limiter).await;
     }
     Ok(())
 }
@@ -624,10 +630,32 @@ fn get_server_sk(key: &str) -> ResultType<String> {
 
 #[async_trait]
 trait StreamTrait: Send + Sync + 'static {
+    /// Receives the next message from the relay stream.
     async fn recv(&mut self) -> Option<Result<BytesMut, Error>>;
+    /// Sends raw bytes through the relay stream.
     async fn send_raw(&mut self, bytes: Bytes) -> ResultType<()>;
+    /// Reports whether the relay stream uses WebSocket framing.
     fn is_ws(&self) -> bool;
+    /// Requests raw-byte mode for relay traffic.
     fn set_raw(&mut self);
+}
+
+// The permit follows the socket when a waiting stream moves into a relay pair.
+struct LimitedStream<T> {
+    inner: T,
+    _permit: tokio::sync::OwnedSemaphorePermit,
+}
+
+#[async_trait]
+impl<T: StreamTrait> StreamTrait for LimitedStream<T> {
+    /// Receives the next message from the relay stream.
+    async fn recv(&mut self) -> Option<Result<BytesMut, Error>> { self.inner.recv().await }
+    /// Sends raw bytes through the relay stream.
+    async fn send_raw(&mut self, bytes: Bytes) -> ResultType<()> { self.inner.send_raw(bytes).await }
+    /// Reports whether the relay stream uses WebSocket framing.
+    fn is_ws(&self) -> bool { self.inner.is_ws() }
+    /// Requests raw-byte mode for relay traffic.
+    fn set_raw(&mut self) { self.inner.set_raw(); }
 }
 
 #[async_trait]
