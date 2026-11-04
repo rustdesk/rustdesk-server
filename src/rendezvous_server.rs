@@ -1468,14 +1468,25 @@ mod tests {
         for value in [
             uuid,
             "E4C181D0-41C7-4AE6-8EF0-36581B6B2B12",
+            "e4c181d041c74ae68ef036581b6b2b12",
             "01890a5d-ac96-774b-bcce-b302099a8057",
             "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "a_b-c",
             max_len.as_str(),
         ] {
             assert_eq!(validate_relay_uuid(value), Ok(()), "rejected {value:?}");
         }
         let too_long = "a".repeat(129);
-        for value in ["", "\r\nPING\r\n", "a b", "a\0", "é", too_long.as_str()] {
+        for value in [
+            "",
+            "\r\nPING\r\n",
+            "e4c181d0-41c7-4ae6-8ef0-36581b6b2b12\n",
+            "e4c181d0 41c7",
+            "{e4c181d0-41c7-4ae6-8ef0-36581b6b2b12}",
+            "e4c181d0\0",
+            "é",
+            too_long.as_str(),
+        ] {
             assert!(validate_relay_uuid(value).is_err(), "accepted {value:?}");
             assert!(validate_relay_response(value, "relay.example").is_err());
         }
