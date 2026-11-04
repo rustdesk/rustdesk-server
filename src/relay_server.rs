@@ -86,6 +86,14 @@ pub async fn start_with_bind(
     log::info!("Listening on tcp :{}", port);
     let port2 = port + 2;
     log::info!("Listening on websocket :{}", port2);
+    if let Some(metrics_arg) = crate::common::get_arg_opt("METRICS") {
+        let m_port = if metrics_arg.is_empty() {
+            21114
+        } else {
+            metrics_arg.parse::<u16>()?
+        };
+        crate::metrics::start_metrics_server(bind_addr, m_port, "hbbr").await;
+    }
     let main_task = async move {
         loop {
             log::info!("Start");
@@ -504,6 +512,7 @@ async fn relay(
     total_limiter: Limiter,
     id: String,
 ) -> ResultType<()> {
+    let _peer_guard = crate::metrics::ActivePeerGuard::new(2);
     let ip = addr.ip().to_string();
     let mut tm = std::time::Instant::now();
     let mut elapsed = 0;
@@ -534,7 +543,12 @@ async fn relay(
                     total += nb;
                     total_s += nb;
                     if !bytes.is_empty() {
-                        stream.send_raw(bytes.into()).await?;
+                        let len = bytes.len();
+                        if let Err(err) = stream.send_raw(bytes.into()).await {
+                            crate::metrics::inc_packet_drop();
+                            return Err(err);
+                        }
+                        crate::metrics::add_relayed_bytes(len);
                     }
                 } else {
                     break;
@@ -553,7 +567,12 @@ async fn relay(
                     total += nb;
                     total_s += nb;
                     if !bytes.is_empty() {
-                        peer.send_raw(bytes.into()).await?;
+                        let len = bytes.len();
+                        if let Err(err) = peer.send_raw(bytes.into()).await {
+                            crate::metrics::inc_packet_drop();
+                            return Err(err);
+                        }
+                        crate::metrics::add_relayed_bytes(len);
                     }
                 } else {
                     break;
