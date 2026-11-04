@@ -17,6 +17,28 @@ lazy_static::lazy_static! {
     pub(crate) static ref IP_BLOCKER: Mutex<IpBlockMap> = Default::default();
     pub(crate) static ref USER_STATUS: RwLock<UserStatusMap> = Default::default();
     pub(crate) static ref IP_CHANGES: Mutex<IpChangesMap> = Default::default();
+    pub(crate) static ref MAX_PEER_CACHE_ENTRIES: usize = cache_limit("MAX_PEER_CACHE_ENTRIES", 100_000);
+    pub(crate) static ref MAX_IP_CACHE_ENTRIES: usize = cache_limit("MAX_IP_CACHE_ENTRIES", 10_000);
+}
+
+/// Reads a valid positive cache limit or returns the configured default.
+fn cache_limit(name: &str, default: usize) -> usize {
+    get_arg(name).parse::<usize>().ok().filter(|n| *n > 0 && *n <= 1_000_000).unwrap_or(default)
+}
+
+/// Returns the existing peer or inserts a new one only while capacity remains.
+fn cache_peer(map: &mut HashMap<String, LockPeer>, id: &str, peer: LockPeer, limit: usize) -> Option<LockPeer> {
+    if let Some(existing) = map.get(id) { return Some(existing.clone()); }
+    if map.len() >= limit { return None; }
+    map.insert(id.to_owned(), peer.clone());
+    Some(peer)
+}
+
+/// Removes expired peers while retaining active or externally held entries.
+fn prune_peers(map: &mut HashMap<String, LockPeer>) {
+    map.retain(|_, peer| Arc::strong_count(peer) > 1 || peer.try_read().map(|peer| {
+        peer.last_reg_time.elapsed().as_secs() < 600 || peer.reg_pk.1.elapsed().as_secs() < 600
+    }).unwrap_or(true));
 }
 pub const IP_CHANGE_DUR: u64 = 180;
 pub const IP_CHANGE_DUR_X2: u64 = IP_CHANGE_DUR * 2;
@@ -135,8 +157,14 @@ impl PeerMap {
         register_pk_response::Result::OK
     }
 
+    /// Returns a cached peer or reads its durable record without replacing an existing identity.
     #[inline]
     pub(crate) async fn get(&self, id: &str) -> Option<LockPeer> {
+        self.get_with_limit(id, *MAX_PEER_CACHE_ENTRIES).await
+    }
+
+    /// Loads a durable peer even when the selected cache limit prevents insertion.
+    async fn get_with_limit(&self, id: &str, limit: usize) -> Option<LockPeer> {
         let p = self.map.read().await.get(id).cloned();
         if p.is_some() {
             return p;
@@ -151,26 +179,33 @@ impl PeerMap {
                 ..Default::default()
             };
             let peer = Arc::new(RwLock::new(peer));
-            self.map.write().await.insert(id.to_owned(), peer.clone());
-            return Some(peer);
+            let cached = cache_peer(&mut *self.map.write().await, id, peer.clone(), limit);
+            // Durable lookups remain available even when no new cache slot fits.
+            return Some(cached.unwrap_or(peer));
         }
         None
     }
 
+    /// Returns or admits a peer only when it can be kept in the bounded cache.
     #[inline]
-    pub(crate) async fn get_or(&self, id: &str) -> LockPeer {
+    pub(crate) async fn get_or(&self, id: &str) -> Option<LockPeer> {
         if let Some(p) = self.get(id).await {
-            return p;
+            return cache_peer(&mut *self.map.write().await, id, p, *MAX_PEER_CACHE_ENTRIES);
         }
         let mut w = self.map.write().await;
-        if let Some(p) = w.get(id) {
-            return p.clone();
-        }
-        let tmp = LockPeer::default();
-        w.insert(id.to_owned(), tmp.clone());
-        tmp
+        cache_peer(&mut w, id, LockPeer::default(), *MAX_PEER_CACHE_ENTRIES)
     }
 
+    /// Expires inactive peers and outdated IP bookkeeping without deleting durable records.
+    pub(crate) async fn prune(&self) {
+        prune_peers(&mut *self.map.write().await);
+        IP_BLOCKER.lock().await.retain(|_, (a, b)| {
+            a.1.elapsed().as_secs() <= IP_BLOCK_DUR || b.1.elapsed().as_secs() <= DAY_SECONDS
+        });
+        IP_CHANGES.lock().await.retain(|_, (time, _)| time.elapsed().as_secs() < IP_CHANGE_DUR_X2);
+    }
+
+    /// Returns a peer only when it is present in the in-memory cache.
     #[inline]
     pub(crate) async fn get_in_memory(&self, id: &str) -> Option<LockPeer> {
         self.map.read().await.get(id).cloned()
@@ -179,5 +214,70 @@ impl PeerMap {
     #[inline]
     pub(crate) async fn is_in_memory(&self, id: &str) -> bool {
         self.map.read().await.contains_key(id)
+    }
+}
+
+#[cfg(test)]
+mod bookkeeping_tests {
+    use super::*;
+    use hbb_common::tokio;
+
+    /// Checks that a full cache does not hide a durable peer record.
+    #[tokio::test]
+    async fn durable_lookup_remains_readable_when_the_cache_is_full() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("peers.sqlite3").to_string_lossy().replace('\\', "/");
+        let db = database::Database::new(&format!("sqlite://{path}?mode=rwc")).await.unwrap();
+        db.insert_peer("durable", &[1], &[2], "{}").await.unwrap();
+        let peers = PeerMap { map: Default::default(), db };
+        let online = LockPeer::default();
+        online.write().await.last_reg_time = Instant::now();
+        peers.map.write().await.insert("online".to_owned(), online.clone());
+        let loaded = peers.get_with_limit("durable", 1).await.unwrap();
+        assert_eq!(&loaded.read().await.pk[..], &[2]);
+        assert!(!peers.is_in_memory("durable").await);
+        let mut map = peers.map.write().await;
+        assert!(Arc::ptr_eq(map.get("online").unwrap(), &online));
+        assert!(cache_peer(&mut map, "durable", loaded, 1).is_none());
+        assert_eq!(map.len(), 1);
+    }
+
+    /// Checks the capacity limit without replacing an existing cached identity.
+    #[test]
+    fn capacity_rejects_new_peers_but_preserves_existing_identity() {
+        let mut map = HashMap::new();
+        let peer = LockPeer::default();
+        cache_peer(&mut map, "peer1", peer.clone(), 1).unwrap();
+        assert!(cache_peer(&mut map, "peer2", LockPeer::default(), 1).is_none());
+        assert!(Arc::ptr_eq(&peer, &cache_peer(&mut map, "peer1", LockPeer::default(), 1).unwrap()));
+        assert_eq!(map.len(), 1);
+    }
+
+    /// Checks that cleanup preserves active peers, in-use peers, and database records.
+    #[tokio::test]
+    async fn cleanup_preserves_online_and_in_use_peers_and_durable_records() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("peers.sqlite3").to_string_lossy().replace('\\', "/");
+        let db = database::Database::new(&format!("sqlite://{path}?mode=rwc")).await.unwrap();
+        db.insert_peer("expired", &[1], &[2], "{}").await.unwrap();
+        let peers = PeerMap { map: Default::default(), db };
+        let expired = LockPeer::default();
+        let online = LockPeer::default();
+        online.write().await.last_reg_time = Instant::now();
+        let in_use = LockPeer::default();
+        {
+            let mut map = peers.map.write().await;
+            map.insert("expired".to_owned(), expired);
+            map.insert("online".to_owned(), online);
+            map.insert("in_use".to_owned(), in_use.clone());
+        }
+        peers.prune().await;
+        assert!(!peers.is_in_memory("expired").await);
+        assert!(peers.is_in_memory("online").await);
+        assert!(peers.is_in_memory("in_use").await);
+        assert!(peers.db.get_peer("expired").await.unwrap().is_some());
+        drop(in_use);
+        peers.prune().await;
+        assert!(!peers.is_in_memory("in_use").await);
     }
 }
