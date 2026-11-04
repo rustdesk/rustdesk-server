@@ -16,6 +16,8 @@ fn main() -> ResultType<()> {
         "-b, --bind=[IP] 'Sets the IP address to bind to (default: all interfaces)'
         -p, --port=[NUMBER(default={RELAY_PORT})] 'Sets the listening port'
         -k, --key=[KEY] 'Only allow the client with the same key'
+        , --ws-socket=[PATH] 'Listens for websocket connections on a unix socket instead of a tcp port'
+        , --ws-only=[Y|N(default=N)] 'Only listens for websocket connections on the unix socket, no tcp port is opened'
         ",
     );
     let matches = App::new("hbbr")
@@ -27,6 +29,11 @@ fn main() -> ResultType<()> {
     if let Ok(v) = ini::Ini::load_from_file(".env") {
         if let Some(section) = v.section(None::<String>) {
             section.iter().for_each(|(k, v)| common::set_arg(k, v));
+        }
+    }
+    for name in ["ws-socket", "ws-only"] {
+        if let Some(value) = matches.value_of(name) {
+            common::set_arg(name, value);
         }
     }
     let mut port = RELAY_PORT;

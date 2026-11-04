@@ -71,6 +71,134 @@ pub async fn accept_or_pending(
     }
 }
 
+pub fn ws_only() -> bool {
+    let value = get_arg("ws-only").to_uppercase();
+    value == "Y" || value == "TRUE" || value == "1"
+}
+
+pub async fn listen_tcp_unless_ws_only(
+    bind_addr: Option<IpAddr>,
+    port: u16,
+) -> ResultType<Option<hbb_common::tokio::net::TcpListener>> {
+    if ws_only() {
+        Ok(None)
+    } else {
+        Ok(Some(listen_tcp(bind_addr, port).await?))
+    }
+}
+
+pub enum WsListener {
+    Tcp(hbb_common::tokio::net::TcpListener),
+    #[cfg(unix)]
+    Unix(hbb_common::tokio::net::UnixListener),
+}
+
+pub enum WsStream {
+    Tcp(hbb_common::tokio::net::TcpStream),
+    #[cfg(unix)]
+    Unix(hbb_common::tokio::net::UnixStream),
+}
+
+impl WsListener {
+    pub async fn accept(&self) -> std::io::Result<(WsStream, SocketAddr)> {
+        match self {
+            WsListener::Tcp(listener) => {
+                let (stream, addr) = listener.accept().await?;
+                stream.set_nodelay(true).ok();
+                Ok((WsStream::Tcp(stream), addr))
+            }
+            #[cfg(unix)]
+            WsListener::Unix(listener) => {
+                let (stream, _) = listener.accept().await?;
+                let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
+                Ok((WsStream::Unix(stream), addr))
+            }
+        }
+    }
+}
+
+impl hbb_common::tokio::io::AsyncRead for WsStream {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut hbb_common::tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            WsStream::Tcp(stream) => std::pin::Pin::new(stream).poll_read(cx, buf),
+            #[cfg(unix)]
+            WsStream::Unix(stream) => std::pin::Pin::new(stream).poll_read(cx, buf),
+        }
+    }
+}
+
+impl hbb_common::tokio::io::AsyncWrite for WsStream {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        match self.get_mut() {
+            WsStream::Tcp(stream) => std::pin::Pin::new(stream).poll_write(cx, buf),
+            #[cfg(unix)]
+            WsStream::Unix(stream) => std::pin::Pin::new(stream).poll_write(cx, buf),
+        }
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            WsStream::Tcp(stream) => std::pin::Pin::new(stream).poll_flush(cx),
+            #[cfg(unix)]
+            WsStream::Unix(stream) => std::pin::Pin::new(stream).poll_flush(cx),
+        }
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            WsStream::Tcp(stream) => std::pin::Pin::new(stream).poll_shutdown(cx),
+            #[cfg(unix)]
+            WsStream::Unix(stream) => std::pin::Pin::new(stream).poll_shutdown(cx),
+        }
+    }
+}
+
+pub async fn listen_ws(bind_addr: Option<IpAddr>, port: u16) -> ResultType<WsListener> {
+    let path = get_arg("ws-socket");
+    if path.is_empty() {
+        if ws_only() {
+            hbb_common::bail!("ws-only requires ws-socket");
+        }
+        let listener = listen_tcp(bind_addr, port).await?;
+        log::info!("Listening on websocket {}", listener.local_addr()?);
+        return Ok(WsListener::Tcp(listener));
+    }
+    listen_ws_unix(&path)
+}
+
+#[cfg(unix)]
+fn listen_ws_unix(path: &str) -> ResultType<WsListener> {
+    use std::os::unix::fs::FileTypeExt;
+    if let Ok(metadata) = fs::symlink_metadata(path) {
+        if !metadata.file_type().is_socket() {
+            hbb_common::bail!("{} exists and is not a socket", path);
+        }
+        fs::remove_file(path)?;
+    }
+    let listener = hbb_common::tokio::net::UnixListener::bind(path)?;
+    log::info!("Listening on websocket unix:{}", path);
+    Ok(WsListener::Unix(listener))
+}
+
+#[cfg(not(unix))]
+fn listen_ws_unix(_path: &str) -> ResultType<WsListener> {
+    hbb_common::bail!("ws-socket is only supported on unix");
+}
+
 #[allow(dead_code)]
 pub(crate) fn get_expired_time() -> Instant {
     let now = Instant::now();
@@ -456,6 +584,24 @@ async fn check_software_update_() -> hbb_common::ResultType<()> {
 mod tests {
     use super::*;
     use std::net::{Ipv4Addr, Ipv6Addr};
+
+    #[cfg(unix)]
+    #[hbb_common::tokio::test]
+    async fn ws_unix_listener_replaces_a_stale_socket_but_not_a_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("ws.sock");
+        let socket = socket.to_str().unwrap();
+        drop(listen_ws_unix(socket).unwrap());
+        assert!(matches!(
+            listen_ws_unix(socket).unwrap(),
+            WsListener::Unix(_)
+        ));
+
+        let file = dir.path().join("file");
+        fs::write(&file, "data").unwrap();
+        assert!(listen_ws_unix(file.to_str().unwrap()).is_err());
+        assert_eq!(fs::read_to_string(&file).unwrap(), "data");
+    }
 
     #[test]
     fn argument_names_ignore_case_and_separator() {
