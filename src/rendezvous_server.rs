@@ -70,6 +70,12 @@ static PUNCH_REQS: Lazy<TokioMutex<VecDeque<PunchReqEntry>>> = Lazy::new(|| Toki
 const PUNCH_REQ_DEDUPE_SEC: u64 = 60;
 static PUNCH_REQ_MAX: Lazy<usize> =
     Lazy::new(|| get_arg("MAX_PUNCH_REQUESTS").parse().unwrap_or(100_000));
+// IP blocker limits per source IP: key registrations without an IP_BLOCK_DUR pause,
+// and distinct IDs within DAY_SECONDS. Many machines behind one NAT may need more.
+static IP_BLOCK_MAX_BURST: Lazy<u32> =
+    Lazy::new(|| get_arg("MAX_REGISTER_BURST_PER_IP").parse().unwrap_or(30));
+static IP_BLOCK_MAX_IDS: Lazy<usize> =
+    Lazy::new(|| get_arg("MAX_NEW_IDS_PER_IP").parse().unwrap_or(300));
 
 async fn record_punch_req(from_ip: String, to_ip: String, to_id: String) {
     let max = *PUNCH_REQ_MAX;
@@ -195,6 +201,11 @@ impl RendezvousServer {
             } else {
                 "N"
             }
+        );
+        log::info!(
+            "MAX_REGISTER_BURST_PER_IP={}, MAX_NEW_IDS_PER_IP={}",
+            *IP_BLOCK_MAX_BURST,
+            *IP_BLOCK_MAX_IDS
         );
         if test_addr.to_lowercase() != "no" {
             let test_addr = if test_addr.is_empty() {
@@ -923,30 +934,31 @@ impl RendezvousServer {
     async fn check_ip_blocker(&self, ip: &str, id: &str) -> bool {
         let mut lock = IP_BLOCKER.lock().await;
         let now = Instant::now();
-        if let Some(old) = lock.get_mut(ip) {
-            let counter = &mut old.0;
-            if counter.1.elapsed().as_secs() > IP_BLOCK_DUR {
-                counter.0 = 0;
-            } else if counter.0 > 30 {
-                return false;
-            }
-            counter.0 += 1;
-            counter.1 = now;
-
-            let counter = &mut old.1;
-            let is_new = counter.0.get(id).is_none();
-            if counter.1.elapsed().as_secs() > DAY_SECONDS {
-                counter.0.clear();
-            } else if counter.0.len() > 300 {
-                return !is_new;
-            }
-            if is_new {
-                counter.0.insert(id.to_owned());
-            }
-            counter.1 = now;
-        } else {
-            lock.insert(ip.to_owned(), ((0, now), (Default::default(), now)));
+        let old = lock
+            .entry(ip.to_owned())
+            .or_insert_with(|| ((0, now), (Default::default(), now)));
+        let counter = &mut old.0;
+        if counter.1.elapsed().as_secs() > IP_BLOCK_DUR {
+            counter.0 = 0;
         }
+        if counter.0 >= *IP_BLOCK_MAX_BURST {
+            return false;
+        }
+        counter.0 += 1;
+        counter.1 = now;
+
+        let counter = &mut old.1;
+        let is_new = counter.0.get(id).is_none();
+        if counter.1.elapsed().as_secs() > DAY_SECONDS {
+            counter.0.clear();
+        }
+        if counter.0.len() >= *IP_BLOCK_MAX_IDS {
+            return !is_new;
+        }
+        if is_new {
+            counter.0.insert(id.to_owned());
+        }
+        counter.1 = now;
         true
     }
 

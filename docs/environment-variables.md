@@ -49,6 +49,8 @@ in the inherited process environment.
 | `DB_URL` 🅴 | *(none)* | `./db_v2.sqlite3` | Path/URL of the SQLite database file. See [Database](#database). |
 | `MAX_DATABASE_CONNECTIONS` 🅴 | *(none)* | `1` | Size of the SQLite connection pool. |
 | `MAX_PUNCH_REQUESTS` 🅴 | *(none)* | `100000` | Number of punch-request records kept in memory for the `punch-requests` [console](#runtime-console) command; the oldest is dropped when full. `0` disables recording. |
+| `MAX_NEW_IDS_PER_IP` 🅴 | *(none)* | `300` | Distinct IDs that may register from one source IP. Beyond it, new IDs from that IP get `TOO_FREQUENT`, so connecting to such a machine reports "ID does not exist", while known IDs keep working. The count starts over once 24 hours pass without a registration from that IP, or 24 hours after the limit was reached. Raise it when many machines share one public IP. Check or clear an IP with `ip-blocker <ip> [-]` on the [console](#runtime-console), written as `ip-blocker` lists it (an IPv4 client may appear as `::ffff:a.b.c.d`). |
+| `MAX_REGISTER_BURST_PER_IP` 🅴 | *(none)* | `30` | Key registrations from one source IP in a row, without a 60-second pause, before further ones from that IP get `TOO_FREQUENT`. |
 
 🅴 = set through the inherited process environment.
 
