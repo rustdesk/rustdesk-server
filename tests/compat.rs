@@ -288,10 +288,10 @@ async fn old_style_transcript(
     .await;
     o.note("tcp nat test", tcp.recv(3000).await.and_then(|m| m.union));
 
-    // a client that reads before it sends sees at most one KeyExchange first,
-    // which every client skips (get_next_nonkeyexchange_msg)
+    // a client that sends only after the offer delay (at least 500 ms) gets a
+    // KeyExchange first, which every client skips (get_next_nonkeyexchange_msg)
     let mut slow = Tcp::connect(hbbs, CONTROLLER_IP, Kx::None).await;
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(700)).await;
     slow.send(&msg(|m| m.set_punch_hole_request(req("nobody1"))))
         .await;
     o.note("slow client", slow.recv(3000).await.and_then(|m| m.union));
