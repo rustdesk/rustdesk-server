@@ -138,6 +138,7 @@ async fn old_style_transcript(
     hbbs: &Hbbs,
     version: &str,
     extra: fn(&mut PunchHoleRequest),
+    offers: bool,
 ) -> Vec<String> {
     let mut o = Observer {
         hbbs,
@@ -288,10 +289,23 @@ async fn old_style_transcript(
     .await;
     o.note("tcp nat test", tcp.recv(3000).await.and_then(|m| m.union));
 
-    // a client that sends only after the offer delay (at least 500 ms) gets a
-    // KeyExchange first, which every client skips (get_next_nonkeyexchange_msg)
+    // a client that stays silent gets a KeyExchange first, which every client
+    // skips (get_next_nonkeyexchange_msg) before it sends its request
     let mut slow = Tcp::connect(hbbs, CONTROLLER_IP, Kx::None).await;
-    tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+    if offers {
+        let first = slow.conn.next_timeout(3000).await;
+        let first = first.and_then(|b| b.ok()).and_then(|b| parse(&b));
+        assert!(
+            matches!(
+                first.and_then(|m| m.union),
+                Some(rendezvous_message::Union::KeyExchange(_))
+            ),
+            "no KeyExchange offered to a silent client"
+        );
+    } else {
+        // the same pause, past the modern server's offer delay (500 ms)
+        tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+    }
     slow.send(&msg(|m| m.set_punch_hole_request(req("nobody1"))))
         .await;
     o.note("slow client", slow.recv(3000).await.and_then(|m| m.union));
@@ -305,10 +319,11 @@ async fn compare(
     extra: fn(&mut PunchHoleRequest),
 ) {
     let a = Hbbs::start_bin(baseline, &[], &["-r", RELAY]).await;
-    let old = old_style_transcript(&a, version, extra).await;
+    let old = old_style_transcript(&a, version, extra, false).await;
     drop(a);
     let b = Hbbs::start(modern_envs, &["-r", RELAY]).await;
-    let new = old_style_transcript(&b, version, extra).await;
+    let offers = !modern_envs.contains(&("SECURE_TCP", "N"));
+    let new = old_style_transcript(&b, version, extra, offers).await;
     for (x, y) in old.iter().zip(new.iter()) {
         println!("original: {}\nmodern:   {}", x, y);
     }
