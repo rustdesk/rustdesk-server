@@ -217,12 +217,14 @@ hbbs -tcp-> A      IceCandidate { session_key, candidate }                (on A'
   the server's key in its `key` option it answers only on the UDP path. When
   A sent a `udp_port`, B puts the answer into its UDP `PunchHoleSent`
   instead (rendezvous_mediator.rs:1146, `punch_udp_hole`), without any key
-  exchange; hbbs forwards it from B's registered host. So WebRTC together
-  with UDP punching can work without the key on B, and that answer (ICE
-  credentials, DTLS fingerprint) crosses the network to hbbs unencrypted.
-  That is the client's design; the DTLS handshake and RustDesk's own check of
-  the peer's signed key still protect the session. B's ICE connection always
-  needs the key. hbbs forwards the offer only twice per controller
+  exchange; hbbs forwards it from B's registered host. So with UDP punching,
+  WebRTC can start without the key on B, and that answer (ICE credentials,
+  DTLS fingerprint) crosses the network to hbbs unencrypted. That is the
+  client's design; the DTLS handshake and RustDesk's own check of the peer's
+  signed key still protect the session. B's own candidates go over a separate
+  TCP connection that it uses only after a key exchange
+  (rendezvous_mediator.rs:961), so without the key B sends none, and the
+  connection has to come up from A's candidates alone. hbbs forwards the offer only twice per controller
   connection while nothing comes back; a third (re-sent) request goes without
   it, the peer answers with a plain punch and the controller can still
   relay, as with the original server.
@@ -269,7 +271,7 @@ A's TCP address (the `tcp_punch` key) and holds:
 * creation and expiry time.
 
 A route is created only by a `PunchHoleRequest` that passed every existing
-check: licence key, peer exists, peer online. It is removed when A's
+check: license key, peer exists, peer online. It is removed when A's
 connection closes or when it expires.
 
 While a WebRTC route is alive, A's TCP sink stays in `tcp_punch` after the
@@ -376,7 +378,7 @@ to an address taken from a packet, and `UDP_PUNCH=N` removes the reply.
 * UDP `PunchHoleRequest`, `LocalAddr` and `IceCandidate` stay ignored.
 * Messages hbbs sends to B over UDP (`PunchHole`, `IceCandidate`) go only to
   B's registered address. They are triggered by A's TCP connection, which
-  cannot be spoofed, has passed the licence key check, and is limited by the
+  cannot be spoofed, has passed the license key check, and is limited by the
   route's budgets.
 
 ### 3.1a Addresses the peers punch
@@ -391,7 +393,7 @@ be abused to make a peer send packets to a third host:
   punch probes there: for up to 3 s (1.5.0, `punch_udp`) or 20 s (1.4.x,
   about 100 datagrams). hbbs forwards only global unicast addresses with a
   port, at most 60 per controller IP and 60 per target /64 in a burst, then
-  1 per second each; a request also needs the licence key and an online
+  1 per second each; a request also needs the license key and an online
   peer id. A target in the controller's own /64 (a controller that reaches
   hbbs over IPv6) counts only per controller: the probes go to its own
   network, and nobody else can use up its budget by naming it. For a
@@ -413,7 +415,7 @@ be abused to make a peer send packets to a third host:
 |---|---|
 | Punch routes | 10,000 total, 64 per controller IP (IPv6: per /64), TTL 30 s (UDP or IPv6 only) / 60 s (WebRTC), refreshed by re-sent offers but never beyond 120 s after creation; after that a new request opens a new route. When the table is full, a newcomer takes the oldest route of the source with clearly the most routes, so one heavy user cannot lock out the others |
 | ICE per route | 128 candidates per direction (the controller sends each candidate twice, so 64 distinct ones); more are dropped quietly |
-| ICE frames per connection | 256; a connection with more than 16 candidates that match no route or session is closed |
+| ICE frames per connection | 256; a connection with more than 16 candidate frames that are invalid (empty, too long, no session key) or cannot be forwarded (no matching route, session or connection) is closed |
 | SDP offer/answer | 4096 bytes, otherwise dropped |
 | ICE candidate | 2048 bytes; session key 256 bytes |
 | `socket_addr_v6` | 18 bytes (the mangled IPv6 form), otherwise dropped |
@@ -426,7 +428,7 @@ be abused to make a peer send packets to a third host:
 
 ### 3.3 Other rules
 
-* **Licence key**: routes are only created after the existing key check in
+* **License key**: routes are only created after the existing key check in
   `PunchHoleRequest`. Every new forwarding path (answers, candidates, UDP
   `PunchHoleSent`) needs such a route, so the key check covers it. UDP
   `TestNatRequest` carries no key, like its existing TCP counterpart; it only
@@ -434,8 +436,9 @@ be abused to make a peer send packets to a third host:
 * **Logging**: keys, SDPs and ICE candidates are never logged, only sizes and
   counts.
 * **Untrusted input**: no `unwrap()` on external data; mangled addresses from
-  the network are decoded with a checked decoder (`AddrMangle::decode` relies
-  on wrapping arithmetic); malformed packets are dropped.
+  the network are decoded with `punch::decode_addr`, a checked version of
+  `AddrMangle::decode`, which subtracts without a check and so panics on
+  crafted input in debug builds; malformed packets are dropped.
 * **ICE injection**: a candidate is only forwarded if its `session_key`
   matches the DTLS fingerprint in the route's offer. A third party that knows
   A's address cannot inject candidates without it. The DTLS fingerprint
