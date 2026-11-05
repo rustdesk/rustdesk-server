@@ -16,7 +16,7 @@ use hbb_common::{
         register_pk_response::Result::{TOO_FREQUENT, UUID_MISMATCH},
         *,
     },
-    tcp::FramedStream,
+    tcp::{Encrypt, FramedStream},
     timeout,
     tokio::{
         self,
@@ -25,13 +25,13 @@ use hbb_common::{
         sync::{mpsc, Mutex},
         time::{interval, Duration},
     },
-    tokio_util::codec::Framed,
+    tokio_util::codec::{Decoder, Encoder, Framed},
     try_into_v4,
     udp::FramedSocket,
     AddrMangle, ResultType,
 };
 use ipnetwork::Ipv4Network;
-use sodiumoxide::crypto::sign;
+use sodiumoxide::crypto::{box_, sign};
 use std::{
     collections::{HashMap, VecDeque},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
@@ -48,7 +48,53 @@ enum Data {
 }
 
 const REG_TIMEOUT: i64 = 30_000;
-type TcpStreamSink = SplitSink<Framed<TcpStream, BytesCodec>, Bytes>;
+#[derive(Clone)]
+struct SecureCodec {
+    inner: BytesCodec,
+    cipher: Option<Encrypt>,
+}
+
+impl SecureCodec {
+    fn new() -> Self {
+        Self {
+            inner: BytesCodec::new(),
+            cipher: None,
+        }
+    }
+
+    fn set_cipher(&mut self, cipher: Encrypt) {
+        self.cipher = Some(cipher);
+    }
+}
+
+impl Decoder for SecureCodec {
+    type Item = BytesMut;
+    type Error = std::io::Error;
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<BytesMut>, std::io::Error> {
+        if let Some(mut data) = self.inner.decode(src)? {
+            if let Some(cipher) = self.cipher.as_mut() {
+                cipher.dec(&mut data)?;
+            }
+            return Ok(Some(data));
+        }
+        Ok(None)
+    }
+}
+
+impl Encoder<Bytes> for SecureCodec {
+    type Error = std::io::Error;
+
+    fn encode(&mut self, data: Bytes, buf: &mut BytesMut) -> Result<(), std::io::Error> {
+        if let Some(cipher) = self.cipher.as_mut() {
+            let sealed = cipher.enc(&data);
+            return self.inner.encode(Bytes::from(sealed), buf);
+        }
+        self.inner.encode(data, buf)
+    }
+}
+
+type TcpStreamSink = SplitSink<Framed<TcpStream, SecureCodec>, Bytes>;
 type WsSink = SplitSink<tokio_tungstenite::WebSocketStream<TcpStream>, tungstenite::Message>;
 enum Sink {
     TcpStream(TcpStreamSink),
@@ -359,7 +405,7 @@ impl RendezvousServer {
                     match res {
                         Ok((stream, addr))  => {
                             stream.set_nodelay(true).ok();
-                            self.handle_listener(stream, addr, key, true).await;
+                            self.handle_listener(stream, addr, key, true, false).await;
                         }
                         Err(err) => {
                            log::error!("listener3.accept failed: {}", err);
@@ -371,7 +417,7 @@ impl RendezvousServer {
                     match res {
                         Ok((stream, addr)) => {
                             stream.set_nodelay(true).ok();
-                            self.handle_listener(stream, addr, key, false).await;
+                            self.handle_listener(stream, addr, key, false, true).await;
                         }
                        Err(err) => {
                            log::error!("listener.accept failed: {}", err);
@@ -638,6 +684,15 @@ impl RendezvousServer {
                     });
                     Self::send_to_sink(sink, msg_out).await;
                 }
+                Some(rendezvous_message::Union::OnlineRequest(or)) => {
+                    let states = self.online_states(&or.peers).await;
+                    let mut msg_out = RendezvousMessage::new();
+                    msg_out.set_online_response(OnlineResponse {
+                        states,
+                        ..Default::default()
+                    });
+                    Self::send_to_sink(sink, msg_out).await;
+                }
                 _ => {}
             }
         }
@@ -863,6 +918,17 @@ impl RendezvousServer {
         stream: &mut FramedStream,
         peers: Vec<String>,
     ) -> ResultType<()> {
+        let mut msg_out = RendezvousMessage::new();
+        msg_out.set_online_response(OnlineResponse {
+            states: self.online_states(&peers).await,
+            ..Default::default()
+        });
+        stream.send(&msg_out).await?;
+
+        Ok(())
+    }
+
+    async fn online_states(&self, peers: &[String]) -> Bytes {
         let mut states = BytesMut::zeroed((peers.len() + 7) / 8);
         for (i, peer_id) in peers.iter().enumerate() {
             if let Some(peer) = self.pm.get_in_memory(peer_id).await {
@@ -875,15 +941,7 @@ impl RendezvousServer {
                 }
             }
         }
-
-        let mut msg_out = RendezvousMessage::new();
-        msg_out.set_online_response(OnlineResponse {
-            states: states.into(),
-            ..Default::default()
-        });
-        stream.send(&msg_out).await?;
-
-        Ok(())
+        states.into()
     }
 
     #[inline]
@@ -1207,14 +1265,58 @@ impl RendezvousServer {
         });
     }
 
-    async fn handle_listener(&self, stream: TcpStream, addr: SocketAddr, key: &str, ws: bool) {
-        log::debug!("Tcp connection from {:?}, ws: {}", addr, ws);
+    async fn handle_listener(
+        &self,
+        stream: TcpStream,
+        addr: SocketAddr,
+        key: &str,
+        ws: bool,
+        kx: bool,
+    ) {
+        log::debug!("Tcp connection from {:?}, ws: {}, kx: {}", addr, ws, kx);
         let mut rs = self.clone();
         let key = key.to_owned();
         tokio::spawn(async move {
-            allow_err!(rs.handle_listener_inner(stream, addr, &key, ws).await);
+            allow_err!(rs.handle_listener_inner(stream, addr, &key, ws, kx).await);
         });
     }
+
+    /// Offer the key exchange to the client and, if it answers, switch the stream to the
+    /// negotiated cipher. Returns the first message when the peer does not speak the exchange.
+    async fn kx_handshake(
+        framed: &mut Framed<TcpStream, SecureCodec>,
+        sk: &sign::SecretKey,
+        addr: SocketAddr,
+    ) -> ResultType<Option<BytesMut>> {
+        let (our_pk, our_sk) = box_::gen_keypair();
+        let signed_pk = sign::sign(&our_pk.0, sk);
+        let mut msg = RendezvousMessage::new();
+        msg.set_key_exchange(KeyExchange {
+            keys: vec![Bytes::from(signed_pk)],
+            ..Default::default()
+        });
+        framed.send(Bytes::from(msg.write_to_bytes()?)).await?;
+
+        let bytes = match timeout(5_000, framed.next()).await {
+            Ok(Some(Ok(bytes))) => bytes,
+            _ => return Ok(None),
+        };
+        let msg_in = match RendezvousMessage::parse_from_bytes(&bytes) {
+            Ok(m) => m,
+            Err(_) => return Ok(Some(bytes)),
+        };
+        match msg_in.union {
+            Some(rendezvous_message::Union::KeyExchange(ex)) if ex.keys.len() == 2 => {
+                let key = Encrypt::decode(&ex.keys[1], &ex.keys[0], &our_sk)?;
+                framed.codec_mut().set_cipher(Encrypt::new(key));
+                log::info!("key exchange ok from {}", addr);
+                Ok(None)
+            }
+            // The peer does not speak the exchange: hand the first message back untouched.
+            _ => Ok(Some(bytes)),
+        }
+    }
+
 
     #[inline]
     async fn handle_listener_inner(
@@ -1223,6 +1325,7 @@ impl RendezvousServer {
         mut addr: SocketAddr,
         key: &str,
         ws: bool,
+        kx: bool,
     ) -> ResultType<()> {
         let mut sink;
         if ws {
@@ -1262,9 +1365,27 @@ impl RendezvousServer {
                 }
             }
         } else {
-            let (a, mut b) = Framed::new(stream, BytesCodec::new()).split();
+            let mut framed = Framed::new(stream, SecureCodec::new());
+            let mut pending = None;
+            if kx {
+                if let Some(sk) = self.inner.sk.clone() {
+                    match Self::kx_handshake(&mut framed, &sk, addr).await {
+                        Ok(first) => pending = first,
+                        Err(err) => log::warn!("key exchange failed from {}: {}", addr, err),
+                    }
+                }
+            }
+            let (a, mut b) = framed.split();
             sink = Some(Sink::TcpStream(a));
-            while let Ok(Some(Ok(bytes))) = timeout(30_000, b.next()).await {
+            let mut pending = pending;
+            loop {
+                let bytes = match pending.take() {
+                    Some(bytes) => bytes,
+                    None => match timeout(30_000, b.next()).await {
+                        Ok(Some(Ok(bytes))) => bytes,
+                        _ => break,
+                    },
+                };
                 if !self.handle_tcp(&bytes, &mut sink, addr, key, ws).await {
                     break;
                 }
