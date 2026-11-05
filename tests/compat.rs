@@ -9,7 +9,7 @@
 //     && cargo build --release)
 //   HBBS_BASELINE_BIN=../hbbs-original/target/release/hbbs \
 //     cargo test --test compat -- --ignored
-// They pin that commit's behaviour, so an intended later change to the
+// They pin that commit's behavior, so an intended later change to the
 // old-style replies makes them fail; update or drop them then.
 mod common;
 
@@ -31,6 +31,8 @@ fn baseline_bin() -> String {
 struct Observer<'a> {
     hbbs: &'a Hbbs,
     roles: Vec<(SocketAddr, &'static str)>,
+    // the keys the peers registered, by id
+    keys: Vec<(String, Vec<u8>)>,
     lines: Vec<String>,
 }
 
@@ -55,7 +57,18 @@ impl<'a> Observer<'a> {
             .ok()
             .and_then(|b| IdPk::parse_from_bytes(&b).ok())
         {
-            Some(id_pk) => format!("signed({}, {} bytes)", id_pk.id, id_pk.pk.len()),
+            Some(id_pk) => {
+                let registered = self
+                    .keys
+                    .iter()
+                    .any(|(id, pk)| *id == id_pk.id && pk[..] == id_pk.pk[..]);
+                let key = if registered {
+                    "registered key".to_owned()
+                } else {
+                    format!("other key of {} bytes", id_pk.pk.len())
+                };
+                format!("signed({}, {})", id_pk.id, key)
+            }
             None => "bad signature".to_owned(),
         }
     }
@@ -103,11 +116,12 @@ impl<'a> Observer<'a> {
                 r.webrtc_sdp_answer.len()
             ),
             Some(RequestRelay(r)) => format!(
-                "RequestRelay addr={} uuid={} relay={} id={}",
+                "RequestRelay addr={} uuid={} relay={} id={} secure={}",
                 self.addr(&r.socket_addr),
                 r.uuid,
                 r.relay_server,
-                r.id
+                r.id,
+                r.secure
             ),
             Some(TestNatResponse(r)) => format!("TestNatResponse port_ok={} cu={}", r.port > 0, r.cu.is_some()),
             Some(RegisterPkResponse(r)) => format!("RegisterPkResponse {:?}", r.result.enum_value()),
@@ -128,9 +142,11 @@ async fn old_style_transcript(
     let mut o = Observer {
         hbbs,
         roles: vec![],
+        keys: vec![],
         lines: vec![],
     };
     let peer = Peer::register(hbbs, "peer01").await;
+    o.keys.push(("peer01".to_owned(), peer.pk.0.to_vec()));
     peer.send(&msg(|m| {
         m.set_register_peer(RegisterPeer {
             id: "peer01".to_owned(),
