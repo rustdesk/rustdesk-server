@@ -1167,11 +1167,21 @@ impl RendezvousServer {
         if let Ok(bytes) = msg.write_to_bytes() {
             match sink {
                 Sink::TcpStream(s, enc) => {
+                    // Wait for room before encrypting, and queue the frame right
+                    // after: a write cancelled in between (SINK_SEND_TIMEOUT)
+                    // would use up a nonce without sending a frame, and the peer
+                    // could decrypt nothing after it.
+                    if let Err(err) = std::future::poll_fn(|cx| s.poll_ready_unpin(cx)).await {
+                        log::debug!("tcp write failed: {}", err);
+                        return;
+                    }
                     let bytes = match enc.as_mut() {
                         Some(enc) => enc.enc(&bytes),
                         None => bytes,
                     };
-                    allow_err!(s.send(Bytes::from(bytes)).await);
+                    if s.start_send_unpin(Bytes::from(bytes)).is_ok() {
+                        allow_err!(std::future::poll_fn(|cx| s.poll_flush_unpin(cx)).await);
+                    }
                 }
                 Sink::Ws(ws) => {
                     allow_err!(ws.send(tungstenite::Message::Binary(bytes)).await);
@@ -2069,6 +2079,60 @@ mod tests {
         let bind_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let socket = create_udp_listener(Some(bind_addr), 0, 0).await.unwrap();
         assert_eq!(socket.local_addr().unwrap().ip(), bind_addr);
+    }
+
+    #[hbb_common::tokio::test]
+    async fn a_timed_out_write_keeps_later_frames_decryptable() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (server, _) = listener.accept().await.unwrap();
+        let key = hbb_common::sodiumoxide::crypto::secretbox::Key([7; 32]);
+        let (a, _b) = Framed::new(server, BytesCodec::new()).split();
+        let mut sink = Sink::TcpStream(a, Some(Encrypt::new(key.clone())));
+        let filler = || {
+            let mut m = RendezvousMessage::new();
+            m.set_request_relay(RequestRelay {
+                token: "t".repeat(32 * 1024),
+                ..Default::default()
+            });
+            m
+        };
+        // the client does not read, so the buffers fill up and writes time out,
+        // some while the frame is queued and some while they wait for room
+        let mut timeouts = 0;
+        for _ in 0..10_000 {
+            let write = RendezvousServer::write_sink(&mut sink, filler());
+            if timeout(100, write).await.is_err() {
+                timeouts += 1;
+                if timeouts == 3 {
+                    break;
+                }
+            }
+        }
+        assert_eq!(timeouts, 3);
+        let mut last = RendezvousMessage::new();
+        last.set_test_nat_response(TestNatResponse {
+            port: 7,
+            ..Default::default()
+        });
+        let writer = tokio::spawn(async move {
+            RendezvousServer::write_sink(&mut sink, last).await;
+            sink
+        });
+        let mut client = Framed::new(client, BytesCodec::new());
+        let mut dec = Encrypt::new(key);
+        loop {
+            let mut bytes = client.next().await.unwrap().unwrap();
+            dec.dec(&mut bytes).expect("every frame must decrypt");
+            let msg = RendezvousMessage::parse_from_bytes(&bytes).unwrap();
+            if let Some(rendezvous_message::Union::TestNatResponse(r)) = msg.union {
+                assert_eq!(r.port, 7);
+                break;
+            }
+        }
+        drop(writer.await.unwrap());
     }
 
     #[hbb_common::tokio::test]
