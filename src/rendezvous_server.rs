@@ -317,9 +317,9 @@ impl RendezvousServer {
                 res = socket.next() => {
                     match res {
                         Some(Ok((bytes, addr))) => {
-                            if let Err(err) = self.handle_udp(&bytes, addr.into(), socket, key).await {
-                                log::error!("udp failure: {}", err);
-                                return LoopFailure::UdpSocket;
+                            let addr: SocketAddr = addr.into();
+                            if let Err(err) = self.handle_udp(&bytes, addr, socket, key).await {
+                                log::error!("UDP request from {} failed: {}", addr, err);
                             }
                         }
                         Some(Err(err)) => {
