@@ -25,63 +25,50 @@ pub fn parse_bind_address(value: &str) -> Result<Option<IpAddr>> {
     }
 }
 
-/// Rejects ambiguous forwarding chains before a WebSocket connection is accepted.
-pub(crate) fn validate_forwarding_headers(
-    headers: &tungstenite::http::HeaderMap,
-) -> Result<(), tungstenite::handshake::server::ErrorResponse> {
-    if headers.get_all("X-Forwarded-For").iter().nth(1).is_some() {
-        let mut response = tungstenite::handshake::server::ErrorResponse::new(
-            Some("Repeated X-Forwarded-For headers".to_owned()),
-        );
-        *response.status_mut() = tungstenite::http::StatusCode::BAD_REQUEST;
-        return Err(response);
-    }
-    Ok(())
-}
-
-/// Uses forwarding headers only for an explicitly trusted socket peer.
+/// Resolves forwarding headers from an explicitly trusted socket peer.
 pub(crate) fn websocket_peer_addr(
     addr: SocketAddr,
     headers: &tungstenite::http::HeaderMap,
-) -> SocketAddr {
+) -> Result<SocketAddr, tungstenite::handshake::server::ErrorResponse> {
     lazy_static::lazy_static! {
         static ref TRUSTED_PROXIES: Vec<IpAddr> = get_arg("TRUSTED_PROXIES")
             .split(',').filter_map(|value| value.trim().parse().ok()).collect();
     }
-    forwarded_peer_addr(addr, headers, &TRUSTED_PROXIES)
+    forwarded_peer_addr(addr, headers, &TRUSTED_PROXIES).map_err(|()| {
+        let mut response = tungstenite::handshake::server::ErrorResponse::new(
+            Some("Invalid X-Forwarded-For header".to_owned()),
+        );
+        *response.status_mut() = tungstenite::http::StatusCode::BAD_REQUEST;
+        response
+    })
 }
 
-/// Resolves trusted proxy headers while preserving the original socket port.
+/// Reads trusted forwarding fields from right to left, preserving the socket port.
 fn forwarded_peer_addr(
     mut addr: SocketAddr,
     headers: &tungstenite::http::HeaderMap,
     trusted_proxies: &[IpAddr],
-) -> SocketAddr {
-    let peer_ip = addr.ip().to_canonical();
-    if !trusted_proxies
-        .iter()
-        .any(|ip| ip.to_canonical() == peer_ip)
-    {
-        return addr;
+) -> Result<SocketAddr, ()> {
+    let trusted = |ip: IpAddr| trusted_proxies.iter().any(|item| item.to_canonical() == ip.to_canonical());
+    if !trusted(addr.ip()) {
+        return Ok(addr);
     }
-    // X-Real-IP may be forwarded unchanged by a proxy; only the appended
-    // X-Forwarded-For chain establishes which hop supplied an address.
-    let mut values = headers.get_all("X-Forwarded-For").iter();
-    let value = values.next();
-    if values.next().is_some() {
-        return addr;
-    }
-    if let Some(Ok(value)) = value.map(|value| value.to_str()) {
-        for hop in value.rsplit(',') {
-            let Ok(ip) = hop.trim().parse::<IpAddr>() else { return addr; };
-            let ip = ip.to_canonical();
-            if !trusted_proxies.iter().any(|trusted| trusted.to_canonical() == ip) {
+    // Field order is significant: later fields and later comma-separated hops
+    // are closer to the server. Never examine a prefix beyond the first untrusted hop.
+    let values = headers.get_all("X-Forwarded-For");
+    for value in values.iter().rev() {
+        for hop in value.to_str().map_err(|_| ())?.rsplit(',') {
+            let hop = hop.trim();
+            let ip = hop.parse::<IpAddr>()
+                .or_else(|_| hop.parse::<SocketAddr>().map(|socket| socket.ip()))
+                .map_err(|_| ())?.to_canonical();
+            if !trusted(ip) {
                 addr.set_ip(ip);
-                return addr;
+                return Ok(addr);
             }
         }
     }
-    addr
+    Err(())
 }
 
 #[cfg(test)]
@@ -103,7 +90,7 @@ mod trusted_proxy_tests {
             .iter()
             .map(|ip| ip.parse().unwrap())
             .collect::<Vec<_>>();
-        forwarded_peer_addr(peer.parse().unwrap(), &headers, &trusted)
+        forwarded_peer_addr(peer.parse().unwrap(), &headers, &trusted).unwrap()
     }
 
     /// Checks that untrusted peers cannot replace their socket address.
@@ -144,31 +131,52 @@ mod trusted_proxy_tests {
             "192.0.2.10:40000".parse().unwrap());
     }
 
-    /// Rejects duplicate fields and ignores unexamined client-supplied prefixes.
+    /// Resolves ordered fields, ports, and spoofed prefixes without trusting them.
     #[test]
-    fn rejects_duplicate_fields_before_handshake() {
-        let mut headers = HeaderMap::new();
-        headers.append("X-Forwarded-For", HeaderValue::from_static("192.0.2.10"));
-        assert!(validate_forwarding_headers(&headers).is_ok());
-        headers.append("X-Forwarded-For", HeaderValue::from_static("192.0.2.20"));
-        assert_eq!(validate_forwarding_headers(&headers).unwrap_err().status(), 400);
-        assert_eq!(forwarded("127.0.0.1:40000", &["127.0.0.1"], &[("X-Forwarded-For", "bad, 192.0.2.10")]), "192.0.2.10:40000".parse().unwrap());
+    fn multiple_fields_and_forwarded_ports() {
+        let peer = "127.0.0.1:40000";
+        assert_eq!(forwarded(peer, &["127.0.0.1", "192.0.2.2"], &[
+            ("X-Forwarded-For", "203.0.113.99"),
+            ("X-Forwarded-For", "192.0.2.10:54321, 192.0.2.2")]), "192.0.2.10:40000".parse().unwrap());
+        assert_eq!(forwarded(peer, &["127.0.0.1"], &[("X-Forwarded-For", "[2001:db8::1]:54321")]),
+            "[2001:db8::1]:40000".parse().unwrap());
+        assert_eq!(forwarded(peer, &[], &[("X-Forwarded-For", "bad"), ("X-Forwarded-For", "bad")]),
+            peer.parse().unwrap());
+        assert_eq!(forwarded(peer, &["127.0.0.1"], &[("X-Forwarded-For", "bad, 192.0.2.10")]),
+            "192.0.2.10:40000".parse().unwrap());
     }
 
-    /// Rejects malformed or ambiguous chains and ignores X-Real-IP alone.
+    /// Checks the trust boundary across fields and IPv4-mapped proxy addresses.
     #[test]
-    fn malformed_or_ambiguous_headers_keep_the_socket_address() {
-        let peer = "127.0.0.1:40000";
-        for entries in [vec![], vec![("X-Real-IP", "192.0.2.10")],
-            vec![("X-Forwarded-For", "192.0.2.10, bad")],
-            vec![("X-Forwarded-For", "192.0.2.10,")],
-            vec![("X-Forwarded-For", "127.0.0.1")],
-            vec![("X-Forwarded-For", "192.0.2.10"), ("X-Forwarded-For", "192.0.2.20")]] {
-            assert_eq!(forwarded(peer, &["127.0.0.1"], &entries), peer.parse().unwrap());
+    fn ordered_fields_stop_at_the_first_untrusted_hop() {
+        let peer = "127.0.0.1:41000";
+        let trusted = &["127.0.0.1", "192.0.2.2"];
+        let entries = &[("X-Forwarded-For", "bad, 203.0.113.10"),
+            ("X-Forwarded-For", "192.0.2.2:1234"),
+            ("X-Forwarded-For", "[::ffff:192.0.2.2]:4321")];
+        assert_eq!(forwarded(peer, trusted, entries), "203.0.113.10:41000".parse().unwrap());
+        assert_eq!(forwarded(peer, &[], entries), peer.parse().unwrap());
+        let mut headers = HeaderMap::new();
+        headers.insert("X-Forwarded-For", HeaderValue::from_static("192.0.2.2"));
+        assert!(forwarded_peer_addr(peer.parse().unwrap(), &headers, &["127.0.0.1".parse().unwrap(), "192.0.2.2".parse().unwrap()]).is_err());
+        assert_eq!(forwarded(peer, trusted, &[("X-Forwarded-For", "::ffff:198.51.100.7")]),
+            "198.51.100.7:41000".parse().unwrap());
+    }
+
+    /// Rejects malformed or absent forwarding chains from trusted peers.
+    #[test]
+    fn malformed_examined_hops_are_rejected() {
+        let peer = "127.0.0.1:40000".parse().unwrap();
+        let proxies = ["127.0.0.1".parse().unwrap()];
+        for value in ["bad", "192.0.2.10,", "192.0.2.10:99999", "[2001:db8::1]:bad"] {
+            let mut headers = HeaderMap::new();
+            headers.insert("X-Forwarded-For", value.parse().unwrap());
+            assert!(forwarded_peer_addr(peer, &headers, &proxies).is_err());
         }
         let mut headers = HeaderMap::new();
         headers.insert("X-Forwarded-For", HeaderValue::from_bytes(b"\xff").unwrap());
-        assert_eq!(forwarded_peer_addr(peer.parse().unwrap(), &headers, &["127.0.0.1".parse().unwrap()]), peer.parse().unwrap());
+        assert!(forwarded_peer_addr(peer, &headers, &proxies).is_err());
+        assert!(forwarded_peer_addr(peer, &HeaderMap::new(), &proxies).is_err());
     }
 
     /// Checks IPv4 and mapped IPv6 trusted proxy addresses match.

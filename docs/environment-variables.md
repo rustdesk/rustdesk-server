@@ -258,29 +258,26 @@ Use only the exact IPv4/IPv6 addresses of your proxies as seen by the server;
 hostnames, CIDRs, wildcards and invalid entries are ignored. IPv4-mapped IPv6
 addresses match the corresponding IPv4 address. No proxy is trusted implicitly.
 
-`X-Forwarded-For` is read from right to left, skipping explicitly trusted proxy
-addresses and using the first untrusted address. Configure every proxy hop that
-appends to this chain, including the proxy connected to the server. A trusted
-proxy must append the actual connecting peer or overwrite the header; it must
-not pass a client-supplied chain through unchanged. For NGINX, configure
-`proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for`; AWS ALB append
-mode also appends the connecting peer. If another proxy sits in front, include
-its exact address only when it is under your control and follows the same rule.
-`X-Real-IP` is ignored because it can be forwarded unchanged by a proxy.
-Malformed hops examined during the right-to-left scan leave the socket address
-unchanged; repeated header fields are rejected during the WebSocket handshake.
-For HAProxy directly facing clients, disable `option forwardfor` and use
-`http-request set-header X-Forwarded-For %[src]` to send a single overwritten
-field. If HAProxy is behind another proxy, this simple configuration identifies
-that upstream proxy rather than the original client; use a tested single-field
-chain configuration instead. Never trust client-provided headers as a shortcut.
-Client IPs are
-canonicalized, and each connection keeps its proxy-to-server socket port; this
-port does not represent the original client's port. Exact-IP configuration is
-not suitable for dynamically changing load-balancer addresses without a managed
-allowlist or a stable, controlled reverse proxy. Existing deployments must set
-`TRUSTED_PROXIES` and forward `X-Forwarded-For` to retain client IPs. Keep
-backend WebSocket access limited to your proxies.
+`X-Forwarded-For` fields and their comma-separated entries are read in wire
+order from right to left, skipping explicitly trusted proxies and using the first
+untrusted address. Each trusted proxy must append the actual connecting peer or
+overwrite the chain, never pass a client-supplied chain through unchanged. Only
+trust proxies under your control that follow this rule. Plain IP addresses, IPv4
+with a port, and bracketed IPv6 with a port are supported. `X-Real-IP` is ignored.
+Missing forwarding headers, malformed examined hops, or a chain containing only
+trusted addresses reject the WebSocket handshake when the socket peer is trusted.
+This avoids treating a proxy IP as the client when client-specific blocking is
+expected. Prefixes beyond the first untrusted hop are ignored. Untrusted peers'
+forwarding headers are ignored. Configure every trusted hop by its exact address;
+dynamic load balancers require a managed allowlist or stable controlled proxy.
+
+For NGINX, `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for`
+appends the connecting peer. HAProxy `option forwardfor` can add another field.
+AWS ALB append mode can include client ports. Configure and secure all hops so
+they correctly append or overwrite headers; keep backend access limited to them.
+Existing deployments must configure `TRUSTED_PROXIES` for both servers.
+The resulting client IP is canonicalized, while the retained socket port belongs
+to the proxy-to-server connection, not the original client's port.
 
 ## Port reference
 

@@ -428,8 +428,7 @@ async fn make_pair(
     if ws {
         use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
         let callback = |req: &Request, response: Response| {
-            crate::common::validate_forwarding_headers(req.headers())?;
-            addr = crate::common::websocket_peer_addr(addr, req.headers());
+            addr = crate::common::websocket_peer_addr(addr, req.headers())?;
             Ok(response)
         };
         let ws_stream = tokio_tungstenite::accept_hdr_async(stream, callback).await?;
