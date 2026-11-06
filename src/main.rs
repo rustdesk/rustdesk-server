@@ -7,6 +7,7 @@ use hbbs::{common::*, *};
 
 const RMEM: usize = 0;
 
+/// Loads server settings and starts the rendezvous server.
 fn main() -> ResultType<()> {
     let _logger = Logger::try_with_env_or_str("info")?
         .log_to_stdout()
@@ -14,7 +15,8 @@ fn main() -> ResultType<()> {
         .write_mode(WriteMode::Async)
         .start()?;
     let args = format!(
-        "-c --config=[FILE] +takes_value 'Sets a custom config file'
+        "--disable-update-check=[Y|N] 'Disable outbound server update checks (default: N)'
+        -c --config=[FILE] +takes_value 'Sets a custom config file'
         -b, --bind=[IP] 'Sets the IP address to bind to (default: all interfaces)'
         -p, --port=[NUMBER(default={RENDEZVOUS_PORT})] 'Sets the listening port'
         -s, --serial=[NUMBER(default=0)] '[DEPRECATED] Sets configure update serial number'
