@@ -103,26 +103,16 @@ impl PeerMap {
         ip: String,
     ) -> register_pk_response::Result {
         log::info!("update_pk {} {:?} {:?} {:?}", id, addr, uuid, pk);
-        let (info_str, guid) = {
-            let mut w = peer.write().await;
-            w.socket_addr = addr;
-            w.uuid = uuid.clone();
-            w.pk = pk.clone();
-            w.last_reg_time = Instant::now();
-            w.info.ip = ip;
-            (
-                serde_json::to_string(&w.info).unwrap_or_default(),
-                w.guid.clone(),
-            )
-        };
+        let mut guid = peer.read().await.guid.clone();
+        let info_str = serde_json::to_string(&PeerInfo { ip: ip.clone() }).unwrap_or_default();
         if guid.is_empty() {
             match self.db.insert_peer(&id, &uuid, &pk, &info_str).await {
                 Err(err) => {
                     log::error!("db.insert_peer failed: {}", err);
                     return register_pk_response::Result::SERVER_ERROR;
                 }
-                Ok(guid) => {
-                    peer.write().await.guid = guid;
+                Ok(inserted_guid) => {
+                    guid = inserted_guid;
                 }
             }
         } else {
@@ -132,6 +122,13 @@ impl PeerMap {
             }
             log::info!("pk updated instead of insert");
         }
+        let mut w = peer.write().await;
+        w.guid = guid;
+        w.socket_addr = addr;
+        w.uuid = uuid;
+        w.pk = pk;
+        w.last_reg_time = Instant::now();
+        w.info.ip = ip;
         register_pk_response::Result::OK
     }
 
@@ -179,5 +176,44 @@ impl PeerMap {
     #[inline]
     pub(crate) async fn is_in_memory(&self, id: &str) -> bool {
         self.map.read().await.contains_key(id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hbb_common::tokio;
+    use sqlx::{Connection, Executor};
+
+    #[tokio::test]
+    async fn failed_database_writes_do_not_publish_registration_state() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("peers.sqlite3").to_string_lossy().replace('\\', "/");
+        let url = format!("sqlite://{path}?mode=rwc");
+        let db = database::Database::new(&url).await.unwrap();
+        let mut connection = sqlx::SqliteConnection::connect(&url).await.unwrap();
+        connection.execute("CREATE TRIGGER fail_insert BEFORE INSERT ON peer BEGIN SELECT RAISE(FAIL, 'test insert failure'); END").await.unwrap();
+        let mut peers = PeerMap { map: Default::default(), db };
+        let peer = LockPeer::default();
+        let addr = "127.0.0.1:10000".parse().unwrap();
+        let result = peers.update_pk("peer123".to_owned(), peer.clone(), addr, vec![1].into(), vec![2].into(), "127.0.0.1".to_owned()).await;
+        assert_eq!(result, register_pk_response::Result::SERVER_ERROR);
+        assert!(peer.read().await.uuid.is_empty());
+        assert!(peer.read().await.pk.is_empty());
+        assert!(peer.read().await.guid.is_empty());
+
+        connection.execute("DROP TRIGGER fail_insert").await.unwrap();
+        let result = peers.update_pk("peer123".to_owned(), peer.clone(), addr, vec![1].into(), vec![2].into(), "127.0.0.1".to_owned()).await;
+        assert_eq!(result, register_pk_response::Result::OK);
+        assert_eq!(&peer.read().await.pk[..], &[2]);
+        assert!(!peer.read().await.guid.is_empty());
+
+        connection.execute("CREATE TRIGGER fail_update BEFORE UPDATE ON peer BEGIN SELECT RAISE(FAIL, 'test update failure'); END").await.unwrap();
+        let result = peers.update_pk("peer123".to_owned(), peer.clone(), addr, vec![1].into(), vec![3].into(), "127.0.0.2".to_owned()).await;
+        assert_eq!(result, register_pk_response::Result::SERVER_ERROR);
+        assert_eq!(&peer.read().await.pk[..], &[2]);
+        assert_eq!(peer.read().await.info.ip, "127.0.0.1");
+        assert_eq!(peers.db.get_peer("peer123").await.unwrap().unwrap().pk, vec![2]);
+        connection.close().await.unwrap();
     }
 }
