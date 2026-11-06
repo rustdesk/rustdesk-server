@@ -425,6 +425,38 @@ pub async fn listen_signal() -> Result<()> {
 }
 
 
+#[cfg(test)]
+mod http_client_tests {
+    use super::*;
+    use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpListener, time::Duration};
+
+    #[tokio::test]
+    async fn update_client_posts_json_and_reads_response_bytes() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let request = serde_json::json!({"probe": true});
+        let body = serde_json::to_vec(&request).unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut received = Vec::new();
+            while !received.ends_with(&body) {
+                let mut chunk = [0; 1024];
+                let n = hbb_common::timeout(3000, stream.read(&mut chunk)).await.unwrap().unwrap();
+                assert!(n > 0);
+                received.extend_from_slice(&chunk[..n]);
+                assert!(received.len() < 4096);
+            }
+            assert!(received.starts_with(b"POST /check HTTP/1.1\r\n"));
+            stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}").await.unwrap();
+        });
+        let response = reqwest::Client::builder().no_proxy().timeout(Duration::from_secs(3))
+            .build().unwrap().post(format!("http://{address}/check"))
+            .json(&request).send().await.unwrap();
+        assert_eq!(&response.bytes().await.unwrap()[..], b"{}");
+        server.await.unwrap();
+    }
+}
+
 pub fn check_software_update() {
     const ONE_DAY_IN_SECONDS: u64 = 60 * 60 * 24;
     std::thread::spawn(move || loop {
