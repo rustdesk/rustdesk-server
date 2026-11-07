@@ -26,12 +26,14 @@ use std::{
     io::Error,
     net::{IpAddr, SocketAddr},
     sync::atomic::{AtomicUsize, Ordering},
+    sync::Arc,
 };
 
 type Usage = (usize, usize, usize, usize);
+type WaitingPeer = (Arc<()>, Box<dyn StreamTrait>);
 
 lazy_static::lazy_static! {
-    static ref PEERS: Mutex<HashMap<String, Box<dyn StreamTrait>>> = Default::default();
+    static ref PEERS: Mutex<HashMap<String, WaitingPeer>> = Default::default();
     static ref USAGE: RwLock<HashMap<String, Usage>> = Default::default();
     static ref BLACKLIST: RwLock<HashSet<String>> = Default::default();
     static ref BLOCKLIST: RwLock<HashSet<String>> = Default::default();
@@ -458,6 +460,7 @@ async fn make_pair(
     Ok(())
 }
 
+/// Checks a configured relay key and pairs a request with a waiting connection.
 async fn make_pair_(stream: impl StreamTrait, addr: SocketAddr, key: &str, limiter: Limiter) {
     let mut stream = stream;
     if let Ok(Some(Ok(bytes))) = timeout(30_000, stream.recv()).await {
@@ -468,8 +471,9 @@ async fn make_pair_(stream: impl StreamTrait, addr: SocketAddr, key: &str, limit
                     return;
                 }
                 if !rf.uuid.is_empty() {
-                    let mut peer = PEERS.lock().await.remove(&rf.uuid);
-                    if let Some(peer) = peer.as_mut() {
+                    let mut peers = PEERS.lock().await;
+                    if let Some((_, mut peer)) = peers.remove(&rf.uuid) {
+                        drop(peers);
                         log::info!("Relayrequest {} from {} got paired", rf.uuid, addr);
                         let id = format!("{}:{}", addr.ip(), addr.port());
                         USAGE.write().await.insert(id.clone(), Default::default());
@@ -478,7 +482,7 @@ async fn make_pair_(stream: impl StreamTrait, addr: SocketAddr, key: &str, limit
                             stream.set_raw();
                             log::info!("Both are raw");
                         }
-                        if let Err(err) = relay(addr, &mut stream, peer, limiter, id.clone()).await
+                        if let Err(err) = relay(addr, &mut stream, &mut peer, limiter, id.clone()).await
                         {
                             log::info!("Relay of {} closed: {}", addr, err);
                         } else {
@@ -487,9 +491,11 @@ async fn make_pair_(stream: impl StreamTrait, addr: SocketAddr, key: &str, limit
                         USAGE.write().await.remove(&id);
                     } else {
                         log::info!("New relay request {} from {}", rf.uuid, addr);
-                        PEERS.lock().await.insert(rf.uuid.clone(), Box::new(stream));
+                        let generation = Arc::new(());
+                        peers.insert(rf.uuid.clone(), (generation.clone(), Box::new(stream)));
+                        drop(peers);
                         sleep(30.).await;
-                        PEERS.lock().await.remove(&rf.uuid);
+                        expire_waiter(&mut *PEERS.lock().await, &rf.uuid, &generation);
                     }
                 }
             }
@@ -497,6 +503,14 @@ async fn make_pair_(stream: impl StreamTrait, addr: SocketAddr, key: &str, limit
     }
 }
 
+/// Removes a waiting connection only if it still owns the requested pair ID.
+fn expire_waiter(peers: &mut HashMap<String, WaitingPeer>, id: &str, generation: &Arc<()>) {
+    if peers.get(id).map(|(current, _)| Arc::ptr_eq(current, generation)).unwrap_or(false) {
+        peers.remove(id);
+    }
+}
+
+/// Forwards traffic in both directions while enforcing relay limits and timeouts.
 async fn relay(
     addr: SocketAddr,
     stream: &mut impl StreamTrait,
@@ -601,6 +615,7 @@ async fn relay(
     Ok(())
 }
 
+/// Returns the configured relay key or resolves a signing key to its public value.
 fn get_server_sk(key: &str) -> ResultType<String> {
     let mut key = key.to_owned();
     if let Ok(sk) = base64::decode(&key) {
@@ -680,4 +695,36 @@ impl StreamTrait for tokio_tungstenite::WebSocketStream<TcpStream> {
     }
 
     fn set_raw(&mut self) {}
+}
+
+#[cfg(test)]
+mod waiter_tests {
+    use super::*;
+
+    struct TestStream;
+
+    #[async_trait]
+    impl StreamTrait for TestStream {
+        /// Provides the test stream receive behavior.
+        async fn recv(&mut self) -> Option<Result<BytesMut, Error>> { None }
+        /// Simulates a relay write for the test stream.
+        async fn send_raw(&mut self, _: Bytes) -> ResultType<()> { Ok(()) }
+        /// Uses non-WebSocket framing for the test stream.
+        fn is_ws(&self) -> bool { false }
+        /// Leaves the test stream unchanged when raw mode is requested.
+        fn set_raw(&mut self) {}
+    }
+
+    /// Checks that an old timeout cannot remove a replacement waiter.
+    #[test]
+    fn old_waiter_cannot_expire_a_reused_pair_id() {
+        let old = Arc::new(());
+        let current = Arc::new(());
+        let mut peers: HashMap<String, WaitingPeer> = HashMap::new();
+        peers.insert("pair".to_owned(), (current.clone(), Box::new(TestStream)));
+        expire_waiter(&mut peers, "pair", &old);
+        assert!(peers.contains_key("pair"));
+        expire_waiter(&mut peers, "pair", &current);
+        assert!(!peers.contains_key("pair"));
+    }
 }
