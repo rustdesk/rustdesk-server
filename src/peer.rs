@@ -92,6 +92,18 @@ impl PeerMap {
         Ok(pm)
     }
 
+    // Test-only: construct with an explicit DB path, bypassing DB_URL/get_arg_opt entirely.
+    // A test that instead did `std::env::set_var("DB_URL", ...)` before calling `new()` would
+    // be mutating process-global state with no isolation from other tests running in the same
+    // (by default parallel) test binary -- this constructor exists so tests never need to.
+    #[cfg(test)]
+    pub(crate) async fn new_with_db_url(url: &str) -> ResultType<Self> {
+        Ok(Self {
+            map: Default::default(),
+            db: database::Database::new(url).await?,
+        })
+    }
+
     #[inline]
     pub(crate) async fn update_pk(
         &mut self,
