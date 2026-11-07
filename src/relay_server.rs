@@ -544,9 +544,10 @@ async fn relay(
     total_limiter: Limiter,
     id: String,
 ) -> ResultType<()> {
-    // The dual-stack listener reports an IPv4 client as ::ffff:a.b.c.d, while the lists hold the
-    // IPv4 form that `ba` and `Ba` are given.
-    let ip = hbb_common::try_into_v4(addr).ip().to_string();
+    let ip = addr.ip().to_string();
+    // The dual-stack listener reports an IPv4 client as ::ffff:a.b.c.d; lists may hold either form.
+    let unmapped = hbb_common::try_into_v4(addr).ip().to_string();
+    let listed = |list: &HashSet<String>| list.contains(&ip) || list.contains(&unmapped);
     let mut tm = std::time::Instant::now();
     let mut elapsed = 0;
     let mut total = 0;
@@ -610,11 +611,11 @@ async fn relay(
 
         let n = tm.elapsed().as_millis() as usize;
         if n >= 1_000 {
-            if BLOCKLIST.read().await.get(&ip).is_some() {
+            if listed(&*BLOCKLIST.read().await) {
                 log::info!("{} blocked", ip);
                 break;
             }
-            blacked = BLACKLIST.read().await.get(&ip).is_some();
+            blacked = listed(&*BLACKLIST.read().await);
             tm = std::time::Instant::now();
             let speed = total_s / n;
             if speed > highest_s {
@@ -698,29 +699,34 @@ mod tests {
 
     #[tokio::test]
     async fn a_blocklisted_ipv4_client_on_the_dual_stack_listener_is_cut_off() {
-        let ip = "192.0.2.55";
-        BLOCKLIST.write().await.insert(ip.to_owned());
-        let mut stream = TestStream {
-            data: None,
-            blocked: false,
-        };
-        let mut peer: Box<dyn StreamTrait> = Box::new(TestStream {
-            data: None,
-            blocked: false,
-        });
-        let result = timeout(
-            10_000,
-            relay(
-                format!("[::ffff:{ip}]:1").parse().unwrap(),
-                &mut stream,
-                &mut peer,
-                Limiter::new(1_000_000.),
-                "blocklist-test".to_owned(),
-            ),
-        )
-        .await;
-        BLOCKLIST.write().await.remove(ip);
-        assert!(result.expect("the relay kept a blocklisted client").is_ok());
+        // The plain form is what `ba` is usually given; the mapped one is what `usage` shows.
+        for entry in ["192.0.2.55", "::ffff:192.0.2.55"] {
+            BLOCKLIST.write().await.insert(entry.to_owned());
+            let mut stream = TestStream {
+                data: None,
+                blocked: false,
+            };
+            let mut peer: Box<dyn StreamTrait> = Box::new(TestStream {
+                data: None,
+                blocked: false,
+            });
+            let result = timeout(
+                10_000,
+                relay(
+                    "[::ffff:192.0.2.55]:1".parse().unwrap(),
+                    &mut stream,
+                    &mut peer,
+                    Limiter::new(1_000_000.),
+                    "blocklist-test".to_owned(),
+                ),
+            )
+            .await;
+            BLOCKLIST.write().await.remove(entry);
+            assert!(
+                matches!(result, Ok(Ok(()))),
+                "the relay kept a client blocklisted as {entry}"
+            );
+        }
     }
 }
 
