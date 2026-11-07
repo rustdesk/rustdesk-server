@@ -1216,6 +1216,7 @@ impl RendezvousServer {
         });
     }
 
+    /// Processes rendezvous messages on an accepted TCP or WebSocket connection.
     #[inline]
     async fn handle_listener_inner(
         &mut self,
@@ -1251,7 +1252,7 @@ impl RendezvousServer {
                 }
                 Ok(response)
             };
-            let ws_stream = tokio_tungstenite::accept_hdr_async(stream, callback).await?;
+            let ws_stream = timeout(30_000, tokio_tungstenite::accept_hdr_async(stream, callback)).await??;
             let (a, mut b) = ws_stream.split();
             sink = Some(Sink::Ws(a));
             while let Ok(Some(Ok(msg))) = timeout(30_000, b.next()).await {
