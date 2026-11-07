@@ -25,6 +25,170 @@ pub fn parse_bind_address(value: &str) -> Result<Option<IpAddr>> {
     }
 }
 
+/// Resolves forwarding headers from an explicitly trusted socket peer.
+pub(crate) fn websocket_peer_addr(
+    addr: SocketAddr,
+    headers: &tungstenite::http::HeaderMap,
+) -> Result<SocketAddr, tungstenite::handshake::server::ErrorResponse> {
+    lazy_static::lazy_static! {
+        static ref TRUSTED_PROXIES: Vec<IpAddr> = get_arg("TRUSTED_PROXIES")
+            .split(',').filter_map(|value| value.trim().parse().ok()).collect();
+    }
+    forwarded_peer_addr(addr, headers, &TRUSTED_PROXIES).map_err(|()| {
+        let mut response = tungstenite::handshake::server::ErrorResponse::new(
+            Some("Invalid X-Forwarded-For header".to_owned()),
+        );
+        *response.status_mut() = tungstenite::http::StatusCode::BAD_REQUEST;
+        response
+    })
+}
+
+/// Reads trusted forwarding fields from right to left, preserving the socket port.
+fn forwarded_peer_addr(
+    mut addr: SocketAddr,
+    headers: &tungstenite::http::HeaderMap,
+    trusted_proxies: &[IpAddr],
+) -> Result<SocketAddr, ()> {
+    let trusted = |ip: IpAddr| trusted_proxies.iter().any(|item| item.to_canonical() == ip.to_canonical());
+    if !trusted(addr.ip()) {
+        return Ok(addr);
+    }
+    // Field order is significant: later fields and later comma-separated hops
+    // are closer to the server. Never examine a prefix beyond the first untrusted hop.
+    let values = headers.get_all("X-Forwarded-For");
+    for value in values.iter().rev() {
+        for hop in value.to_str().map_err(|_| ())?.rsplit(',') {
+            let hop = hop.trim();
+            let ip = hop.parse::<IpAddr>()
+                .or_else(|_| hop.parse::<SocketAddr>().map(|socket| socket.ip()))
+                .map_err(|_| ())?.to_canonical();
+            if !trusted(ip) {
+                addr.set_ip(ip);
+                return Ok(addr);
+            }
+        }
+    }
+    Err(())
+}
+
+#[cfg(test)]
+mod trusted_proxy_tests {
+    use super::*;
+    use tungstenite::http::{HeaderMap, HeaderValue};
+
+    /// Resolves test headers for a socket peer and an explicit trusted-proxy list.
+    fn forwarded(peer: &str, trusted: &[&str], entries: &[(&str, &str)]) -> SocketAddr {
+        let mut headers = HeaderMap::new();
+        for (name, value) in entries {
+            headers.append(
+                name.parse::<tungstenite::http::header::HeaderName>()
+                    .unwrap(),
+                value.parse().unwrap(),
+            );
+        }
+        let trusted = trusted
+            .iter()
+            .map(|ip| ip.parse().unwrap())
+            .collect::<Vec<_>>();
+        forwarded_peer_addr(peer.parse().unwrap(), &headers, &trusted).unwrap()
+    }
+
+    /// Checks that untrusted peers cannot replace their socket address.
+    #[test]
+    fn untrusted_peers_cannot_select_their_address() {
+        for trusted in [vec![], vec!["192.0.2.1"], vec!["::1"]] {
+            let peer = "127.0.0.1:40000";
+            assert_eq!(
+                forwarded(
+                    peer,
+                    &trusted,
+                    &[("X-Real-IP", "192.0.2.10"), ("X-Forwarded-For", "::1")]
+                ),
+                peer.parse().unwrap()
+            );
+        }
+        assert_eq!(
+            forwarded(
+                "[::127.0.0.1]:40000",
+                &["127.0.0.1"],
+                &[("X-Real-IP", "192.0.2.10")]
+            ),
+            "[::127.0.0.1]:40000".parse().unwrap()
+        );
+    }
+
+    /// Rejects spoofed prefixes and conflicting X-Real-IP headers.
+    #[test]
+    fn forwarded_chain_selects_nearest_untrusted_hop() {
+        for port in [40000, 40001] {
+            let peer = format!("127.0.0.1:{port}");
+            assert_eq!(forwarded(&peer, &["127.0.0.1", "192.0.2.2"], &[
+                ("X-Real-IP", "203.0.113.99"),
+                ("X-Forwarded-For", "203.0.113.99, 192.0.2.10, 192.0.2.2"),
+            ]), format!("192.0.2.10:{port}").parse().unwrap());
+        }
+        assert_eq!(forwarded("[::1]:40000", &["::1"], &[("X-Forwarded-For", "::ffff:192.0.2.10")]),
+            "192.0.2.10:40000".parse().unwrap());
+    }
+
+    /// Resolves ordered fields, ports, and spoofed prefixes without trusting them.
+    #[test]
+    fn multiple_fields_and_forwarded_ports() {
+        let peer = "127.0.0.1:40000";
+        assert_eq!(forwarded(peer, &["127.0.0.1", "192.0.2.2"], &[
+            ("X-Forwarded-For", "203.0.113.99"),
+            ("X-Forwarded-For", "192.0.2.10:54321, 192.0.2.2")]), "192.0.2.10:40000".parse().unwrap());
+        assert_eq!(forwarded(peer, &["127.0.0.1"], &[("X-Forwarded-For", "[2001:db8::1]:54321")]),
+            "[2001:db8::1]:40000".parse().unwrap());
+        assert_eq!(forwarded(peer, &[], &[("X-Forwarded-For", "bad"), ("X-Forwarded-For", "bad")]),
+            peer.parse().unwrap());
+        assert_eq!(forwarded(peer, &["127.0.0.1"], &[("X-Forwarded-For", "bad, 192.0.2.10")]),
+            "192.0.2.10:40000".parse().unwrap());
+    }
+
+    /// Checks the trust boundary across fields and IPv4-mapped proxy addresses.
+    #[test]
+    fn ordered_fields_stop_at_the_first_untrusted_hop() {
+        let peer = "127.0.0.1:41000";
+        let trusted = &["127.0.0.1", "192.0.2.2"];
+        let entries = &[("X-Forwarded-For", "bad, 203.0.113.10"),
+            ("X-Forwarded-For", "192.0.2.2:1234"),
+            ("X-Forwarded-For", "[::ffff:192.0.2.2]:4321")];
+        assert_eq!(forwarded(peer, trusted, entries), "203.0.113.10:41000".parse().unwrap());
+        assert_eq!(forwarded(peer, &[], entries), peer.parse().unwrap());
+        let mut headers = HeaderMap::new();
+        headers.insert("X-Forwarded-For", HeaderValue::from_static("192.0.2.2"));
+        assert!(forwarded_peer_addr(peer.parse().unwrap(), &headers, &["127.0.0.1".parse().unwrap(), "192.0.2.2".parse().unwrap()]).is_err());
+        assert_eq!(forwarded(peer, trusted, &[("X-Forwarded-For", "::ffff:198.51.100.7")]),
+            "198.51.100.7:41000".parse().unwrap());
+    }
+
+    /// Rejects malformed or absent forwarding chains from trusted peers.
+    #[test]
+    fn malformed_examined_hops_are_rejected() {
+        let peer = "127.0.0.1:40000".parse().unwrap();
+        let proxies = ["127.0.0.1".parse().unwrap()];
+        for value in ["bad", "192.0.2.10,", "192.0.2.10:99999", "[2001:db8::1]:bad"] {
+            let mut headers = HeaderMap::new();
+            headers.insert("X-Forwarded-For", value.parse().unwrap());
+            assert!(forwarded_peer_addr(peer, &headers, &proxies).is_err());
+        }
+        let mut headers = HeaderMap::new();
+        headers.insert("X-Forwarded-For", HeaderValue::from_bytes(b"\xff").unwrap());
+        assert!(forwarded_peer_addr(peer, &headers, &proxies).is_err());
+        assert!(forwarded_peer_addr(peer, &HeaderMap::new(), &proxies).is_err());
+    }
+
+    /// Checks IPv4 and mapped IPv6 trusted proxy addresses match.
+    #[test]
+    fn mapped_ipv4_proxy_addresses_match_the_same_host() {
+        for (peer, proxy) in [("[::ffff:127.0.0.1]:40000", "127.0.0.1"), ("127.0.0.1:40000", "::ffff:127.0.0.1")] {
+            assert_eq!(forwarded(peer, &[proxy], &[("X-Forwarded-For", "192.0.2.10")]), "192.0.2.10:40000".parse().unwrap());
+        }
+    }
+
+}
+
 pub async fn listen_tcp(
     bind_addr: Option<IpAddr>,
     port: u16,

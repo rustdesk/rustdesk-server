@@ -248,6 +248,37 @@ ExecStart=/usr/bin/hbbs
 
 ---
 
+## WebSocket reverse proxies
+
+Both servers ignore `X-Real-IP` and `X-Forwarded-For` unless the actual socket
+peer is listed in `TRUSTED_PROXIES`. The default is empty (trust no proxies).
+Set it for each server using the inherited environment or `.env`, or an `hbbs`
+`--config` file, then restart. For example: `TRUSTED_PROXIES=127.0.0.1,::1`.
+Use only the exact IPv4/IPv6 addresses of your proxies as seen by the server;
+hostnames, CIDRs, wildcards and invalid entries are ignored. IPv4-mapped IPv6
+addresses match the corresponding IPv4 address. No proxy is trusted implicitly.
+
+`X-Forwarded-For` fields and their comma-separated entries are read in wire
+order from right to left, skipping explicitly trusted proxies and using the first
+untrusted address. Each trusted proxy must append the actual connecting peer or
+overwrite the chain, never pass a client-supplied chain through unchanged. Only
+trust proxies under your control that follow this rule. Plain IP addresses, IPv4
+with a port, and bracketed IPv6 with a port are supported. `X-Real-IP` is ignored.
+Missing forwarding headers, malformed examined hops, or a chain containing only
+trusted addresses reject the WebSocket handshake when the socket peer is trusted.
+This avoids treating a proxy IP as the client when client-specific blocking is
+expected. Prefixes beyond the first untrusted hop are ignored. Untrusted peers'
+forwarding headers are ignored. Configure every trusted hop by its exact address;
+dynamic load balancers require a managed allowlist or stable controlled proxy.
+
+For NGINX, `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for`
+appends the connecting peer. HAProxy `option forwardfor` can add another field.
+AWS ALB append mode can include client ports. Configure and secure all hops so
+they correctly append or overwrite headers; keep backend access limited to them.
+Existing deployments must configure `TRUSTED_PROXIES` for both servers.
+The resulting client IP is canonicalized, while the retained socket port belongs
+to the proxy-to-server connection, not the original client's port.
+
 ## Port reference
 
 | Port | Proto | Server | Purpose |

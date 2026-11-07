@@ -419,6 +419,7 @@ async fn handle_connection(
     });
 }
 
+/// Prepares a TCP or WebSocket relay stream and begins pairing.
 async fn make_pair(
     stream: TcpStream,
     mut addr: SocketAddr,
@@ -429,30 +430,15 @@ async fn make_pair(
     if ws {
         use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
         let callback = |req: &Request, response: Response| {
-            let headers = req.headers();
-            // X-Real-IP / X-Forwarded-For are trusted as-is so that the real
-            // client IP is preserved when the WebSocket port runs behind a
-            // reverse proxy (WSS). They are NOT validated: anyone who can reach
-            // this port directly can spoof an arbitrary IP, bypassing IP-based
-            // rate limiting / blocking and corrupting logged IPs. Do not expose
-            // the WebSocket port directly to untrusted networks; only the
-            // reverse proxy, which overwrites these headers, should be able to
-            // connect to it.
-            // https://github.com/rustdesk/rustdesk-server/issues/634
-            let real_ip = headers
-                .get("X-Real-IP")
-                .or_else(|| headers.get("X-Forwarded-For"))
-                .and_then(|header_value| header_value.to_str().ok());
-            if let Some(ip) = real_ip {
-                if ip.contains('.') {
-                    addr = format!("{ip}:0").parse().unwrap_or(addr);
-                } else {
-                    addr = format!("[{ip}]:0").parse().unwrap_or(addr);
-                }
-            }
+            addr = crate::common::websocket_peer_addr(addr, req.headers())?;
             Ok(response)
         };
         let ws_stream = tokio_tungstenite::accept_hdr_async(stream, callback).await?;
+        let ip = addr.ip().to_canonical().to_string();
+        if BLOCKLIST.read().await.contains(&ip) {
+            log::info!("{} blocked", ip);
+            return Ok(());
+        }
         make_pair_(ws_stream, addr, key, limiter).await;
     } else {
         make_pair_(FramedStream::from(stream, addr), addr, key, limiter).await;
