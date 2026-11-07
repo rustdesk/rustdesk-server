@@ -16,7 +16,7 @@ use hbb_common::{
         register_pk_response::Result::{TOO_FREQUENT, UUID_MISMATCH},
         *,
     },
-    tcp::FramedStream,
+    tcp::{Encrypt, FramedStream},
     timeout,
     tokio::{
         self,
@@ -31,7 +31,7 @@ use hbb_common::{
     AddrMangle, ResultType,
 };
 use ipnetwork::Ipv4Network;
-use sodiumoxide::crypto::sign;
+use sodiumoxide::crypto::{box_, sign};
 use std::{
     collections::{HashMap, VecDeque},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
@@ -51,7 +51,9 @@ const REG_TIMEOUT: i64 = 30_000;
 type TcpStreamSink = SplitSink<Framed<TcpStream, BytesCodec>, Bytes>;
 type WsSink = SplitSink<tokio_tungstenite::WebSocketStream<TcpStream>, tungstenite::Message>;
 enum Sink {
-    TcpStream(TcpStreamSink),
+    // The cipher, once the client completed the secure TCP key exchange, travels with the
+    // sink because replies are sent from wherever the sink is parked (tcp_punch).
+    TcpStream(TcpStreamSink, Option<Encrypt>),
     Ws(WsSink),
 }
 type Sender = mpsc::UnboundedSender<Data>;
@@ -899,7 +901,11 @@ impl RendezvousServer {
         if let Some(sink) = sink.as_mut() {
             if let Ok(bytes) = msg.write_to_bytes() {
                 match sink {
-                    Sink::TcpStream(s) => {
+                    Sink::TcpStream(s, enc) => {
+                        let bytes = match enc.as_mut() {
+                            Some(enc) => enc.enc(&bytes),
+                            None => bytes,
+                        };
                         allow_err!(s.send(Bytes::from(bytes)).await);
                     }
                     Sink::Ws(ws) => {
@@ -1263,8 +1269,58 @@ impl RendezvousServer {
             }
         } else {
             let (a, mut b) = Framed::new(stream, BytesCodec::new()).split();
-            sink = Some(Sink::TcpStream(a));
-            while let Ok(Some(Ok(bytes))) = timeout(30_000, b.next()).await {
+            sink = Some(Sink::TcpStream(a, None));
+            // Secure TCP, key exchange version 0: offer an ephemeral key signed with the server
+            // key. Clients that require it (RustDesk 1.5 when logged in) answer with the sealed
+            // session key; others skip this message and talk in the clear as before.
+            let mut kx_sk = None;
+            let mut rx_enc: Option<Encrypt> = None;
+            if !key.is_empty() {
+                if let Some(sk) = self.inner.sk.as_ref() {
+                    let (our_pk, our_sk) = box_::gen_keypair();
+                    let mut msg_out = RendezvousMessage::new();
+                    msg_out.set_key_exchange(KeyExchange {
+                        keys: vec![Bytes::from(sign::sign(&our_pk.0, sk))],
+                        ..Default::default()
+                    });
+                    Self::send_to_sink(&mut sink, msg_out).await;
+                    kx_sk = Some(our_sk);
+                }
+            }
+            while let Ok(Some(Ok(mut bytes))) = timeout(30_000, b.next()).await {
+                if let Some(enc) = rx_enc.as_mut() {
+                    if let Err(err) = enc.dec(&mut bytes) {
+                        log::error!("Tcp connection from {:?}: {}", addr, err);
+                        break;
+                    }
+                } else if let Some(our_sk) = kx_sk.take() {
+                    // Only the first message may complete the exchange.
+                    if let Ok(RendezvousMessage {
+                        union: Some(rendezvous_message::Union::KeyExchange(ex)),
+                        ..
+                    }) = RendezvousMessage::parse_from_bytes(&bytes)
+                    {
+                        if ex.keys.len() != 2 {
+                            log::error!("Tcp connection from {:?}: invalid key exchange", addr);
+                            break;
+                        }
+                        match Encrypt::decode(&ex.keys[1], &ex.keys[0], &our_sk) {
+                            Ok(session_key) => {
+                                let enc = Encrypt::new(session_key);
+                                if let Some(Sink::TcpStream(_, tx_enc)) = sink.as_mut() {
+                                    *tx_enc = Some(enc.clone());
+                                }
+                                rx_enc = Some(enc);
+                                log::debug!("Tcp connection from {:?} secured", addr);
+                                continue;
+                            }
+                            Err(err) => {
+                                log::error!("Tcp connection from {:?}: {}", addr, err);
+                                break;
+                            }
+                        }
+                    }
+                }
                 if !self.handle_tcp(&bytes, &mut sink, addr, key, ws).await {
                     break;
                 }
@@ -1519,5 +1575,199 @@ mod tests {
             assert_eq!(lock.front().unwrap().to_id, format!("peer{}", max % 31));
             assert_eq!(lock.back().unwrap().to_id, format!("peer{}", (max * 2 - 1) % 31));
         }
+    }
+
+    // Secure TCP key exchange on the rendezvous port.
+
+    use sodiumoxide::crypto::secretbox;
+
+    type Client = Framed<TcpStream, BytesCodec>;
+
+    // PeerMap::new() opens the database named by DB_URL. Each test server gets its own file
+    // (tests run in parallel and SQLite locks a file while creating its tables), and the lock
+    // keeps DB_URL stable until PeerMap::new() has read it.
+    static TEST_DB: Lazy<(tempfile::TempDir, TokioMutex<usize>)> =
+        Lazy::new(|| (tempfile::tempdir().unwrap(), TokioMutex::new(0)));
+
+    async fn test_peer_map() -> PeerMap {
+        let mut n = TEST_DB.1.lock().await;
+        *n += 1;
+        std::env::set_var("DB_URL", TEST_DB.0.path().join(format!("db{}.sqlite3", *n)));
+        PeerMap::new().await.unwrap()
+    }
+
+    /// A server key as hbbs loads it: the public key string and the signing secret key.
+    fn server_key() -> (String, sign::PublicKey, sign::SecretKey) {
+        let (pk, sk) = sign::gen_keypair();
+        let (key, sk) = RendezvousServer::get_server_sk(&base64::encode(&sk.0[..])).unwrap();
+        assert_eq!(key, base64::encode(&pk.0[..]));
+        (key, pk, sk.unwrap())
+    }
+
+    async fn test_server(sk: Option<sign::SecretKey>) -> RendezvousServer {
+        let (tx, _rx) = mpsc::unbounded_channel::<Data>();
+        RendezvousServer {
+            tcp_punch: Default::default(),
+            pm: test_peer_map().await,
+            tx,
+            relay_servers: Default::default(),
+            relay_servers0: Default::default(),
+            rendezvous_servers: Default::default(),
+            inner: Arc::new(Inner {
+                serial: 0,
+                version: String::new(),
+                software_url: String::new(),
+                mask: None,
+                local_ip: String::new(),
+                sk,
+            }),
+        }
+    }
+
+    /// Runs one rendezvous TCP connection handler on a loopback port and connects to it.
+    async fn connect(rs: RendezvousServer, key: &str) -> Client {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let key = key.to_owned();
+        tokio::spawn(async move {
+            let (stream, peer_addr) = listener.accept().await.unwrap();
+            let mut rs = rs;
+            allow_err!(rs.handle_listener_inner(stream, peer_addr, &key, false).await);
+        });
+        Framed::new(TcpStream::connect(addr).await.unwrap(), BytesCodec::new())
+    }
+
+    async fn recv(client: &mut Client) -> BytesMut {
+        match timeout(3_000, client.next()).await {
+            Ok(Some(Ok(bytes))) => bytes,
+            other => panic!("expected a frame, got {:?}", other.map(|x| x.map(|x| x.is_ok()))),
+        }
+    }
+
+    async fn send(client: &mut Client, bytes: Vec<u8>) {
+        client.send(Bytes::from(bytes)).await.unwrap();
+    }
+
+    async fn assert_closed(client: &mut Client) {
+        match timeout(3_000, client.next()).await {
+            Ok(None) | Ok(Some(Err(_))) => {}
+            Ok(Some(Ok(bytes))) => panic!("unexpected frame {:?}", bytes),
+            Err(_) => panic!("the server did not close the connection"),
+        }
+    }
+
+    /// Reads the server's offer and returns the ephemeral box key it signed.
+    async fn recv_offer(client: &mut Client, server_pk: &sign::PublicKey) -> box_::PublicKey {
+        let offer = recv(client).await;
+        let ex = match RendezvousMessage::parse_from_bytes(&offer).unwrap().union {
+            Some(rendezvous_message::Union::KeyExchange(ex)) => ex,
+            other => panic!("expected KeyExchange, got {:?}", other),
+        };
+        assert_eq!(ex.keys.len(), 1);
+        let eph = sign::verify(&ex.keys[0], server_pk).expect("offer signed with the server key");
+        box_::PublicKey::from_slice(&eph).unwrap()
+    }
+
+    fn key_exchange(keys: Vec<Vec<u8>>) -> Vec<u8> {
+        let mut msg = RendezvousMessage::new();
+        msg.set_key_exchange(KeyExchange {
+            keys: keys.into_iter().map(Bytes::from).collect(),
+            ..Default::default()
+        });
+        msg.write_to_bytes().unwrap()
+    }
+
+    /// The client's answer, as RustDesk 1.5 builds it: its box public key and the session key
+    /// sealed for the server's ephemeral key.
+    fn seal_session_key(eph: &box_::PublicKey) -> (Vec<u8>, secretbox::Key) {
+        let (our_pk, our_sk) = box_::gen_keypair();
+        let session_key = secretbox::gen_key();
+        let nonce = box_::Nonce([0u8; box_::NONCEBYTES]);
+        let sealed = box_::seal(&session_key.0, &nonce, eph, &our_sk);
+        (key_exchange(vec![our_pk.0.to_vec(), sealed]), session_key)
+    }
+
+    /// A request for an unregistered ID: hbbs parks the sink in tcp_punch and answers
+    /// ID_NOT_EXIST through it.
+    fn punch_hole_request(key: &str) -> Vec<u8> {
+        let mut msg = RendezvousMessage::new();
+        msg.set_punch_hole_request(PunchHoleRequest {
+            id: "kx-test-unknown-id".to_owned(),
+            licence_key: key.to_owned(),
+            ..Default::default()
+        });
+        msg.write_to_bytes().unwrap()
+    }
+
+    fn assert_id_not_exist(bytes: &[u8]) {
+        match RendezvousMessage::parse_from_bytes(bytes).unwrap().union {
+            Some(rendezvous_message::Union::PunchHoleResponse(ph)) => {
+                assert_eq!(ph.failure, punch_hole_response::Failure::ID_NOT_EXIST.into());
+            }
+            other => panic!("expected PunchHoleResponse, got {:?}", other),
+        }
+    }
+
+    #[hbb_common::tokio::test]
+    async fn tcp_key_exchange_encrypts_reply_sent_from_tcp_punch() {
+        let (key, server_pk, sk) = server_key();
+        let mut client = connect(test_server(Some(sk)).await, &key).await;
+        let eph = recv_offer(&mut client, &server_pk).await;
+        let (answer, session_key) = seal_session_key(&eph);
+        send(&mut client, answer).await;
+
+        let mut enc = Encrypt::new(session_key);
+        send(&mut client, enc.enc(&punch_hole_request(&key))).await;
+        // The reply leaves through the sink parked in tcp_punch. It must be encrypted, and with
+        // the sending counter: the server has received one encrypted frame but sent none.
+        let mut reply = recv(&mut client).await;
+        enc.dec(&mut reply).expect("reply encrypted with the session key");
+        assert_id_not_exist(&reply);
+    }
+
+    #[hbb_common::tokio::test]
+    async fn tcp_key_exchange_is_optional() {
+        let (key, server_pk, sk) = server_key();
+        let mut client = connect(test_server(Some(sk)).await, &key).await;
+        // Clients that do not secure the connection skip the offer and talk in the clear.
+        let _ = recv_offer(&mut client, &server_pk).await;
+        send(&mut client, punch_hole_request(&key)).await;
+        assert_id_not_exist(&recv(&mut client).await);
+    }
+
+    #[hbb_common::tokio::test]
+    async fn tcp_key_exchange_not_offered_without_key() {
+        let mut client = connect(test_server(None).await, "").await;
+        send(&mut client, punch_hole_request("")).await;
+        // The first frame is the reply, not an offer.
+        assert_id_not_exist(&recv(&mut client).await);
+    }
+
+    #[hbb_common::tokio::test]
+    async fn tcp_key_exchange_invalid_answer_closes_connection() {
+        let (key, server_pk, sk) = server_key();
+        let (our_pk, _) = box_::gen_keypair();
+        let invalid = [
+            // Wrong number of keys.
+            key_exchange(vec![our_pk.0.to_vec()]),
+            // A public key of the wrong length.
+            key_exchange(vec![vec![0u8; 5], vec![0u8; 48]]),
+            // A sealed key that does not open.
+            key_exchange(vec![our_pk.0.to_vec(), vec![0u8; 48]]),
+        ];
+        for answer in invalid {
+            let mut client = connect(test_server(Some(sk.clone())).await, &key).await;
+            let _ = recv_offer(&mut client, &server_pk).await;
+            send(&mut client, answer).await;
+            assert_closed(&mut client).await;
+        }
+
+        // After a valid exchange, a frame that does not decrypt also closes the connection.
+        let mut client = connect(test_server(Some(sk)).await, &key).await;
+        let eph = recv_offer(&mut client, &server_pk).await;
+        let (answer, _) = seal_session_key(&eph);
+        send(&mut client, answer).await;
+        send(&mut client, punch_hole_request(&key)).await;
+        assert_closed(&mut client).await;
     }
 }
