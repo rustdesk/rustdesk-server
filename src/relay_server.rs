@@ -547,7 +547,7 @@ async fn relay(
                     total += nb;
                     total_s += nb;
                     if !bytes.is_empty() {
-                        stream.send_raw(bytes.into()).await?;
+                        timeout(30_000, stream.send_raw(bytes.into())).await??;
                     }
                 } else {
                     break;
@@ -566,7 +566,7 @@ async fn relay(
                     total += nb;
                     total_s += nb;
                     if !bytes.is_empty() {
-                        peer.send_raw(bytes.into()).await?;
+                        timeout(30_000, peer.send_raw(bytes.into())).await??;
                     }
                 } else {
                     break;
@@ -612,6 +612,59 @@ async fn relay(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct TestStream {
+        data: Option<BytesMut>,
+        blocked: bool,
+    }
+
+    #[async_trait]
+    impl StreamTrait for TestStream {
+        /// Provides the test stream receive behavior.
+        async fn recv(&mut self) -> Option<Result<BytesMut, Error>> {
+            match self.data.take() {
+                Some(data) => Some(Ok(data)),
+                None => std::future::pending().await,
+            }
+        }
+        /// Simulates a relay write for the test stream.
+        async fn send_raw(&mut self, _: Bytes) -> ResultType<()> {
+            if self.blocked { std::future::pending().await } else { Ok(()) }
+        }
+        /// Uses non-WebSocket framing for the test stream.
+        fn is_ws(&self) -> bool { false }
+        /// Leaves the test stream unchanged when raw mode is requested.
+        fn set_raw(&mut self) {}
+    }
+
+    /// Checks that a blocked relay write ends with a timeout in the selected direction.
+    async fn check_blocked_send(from_peer: bool) {
+        let mut stream = TestStream {
+            data: if from_peer { None } else { Some(BytesMut::from(&b"x"[..])) },
+            blocked: from_peer,
+        };
+        let mut peer: Box<dyn StreamTrait> = Box::new(TestStream {
+            data: if from_peer { Some(BytesMut::from(&b"x"[..])) } else { None },
+            blocked: !from_peer,
+        });
+        let result = timeout(35_000, relay(
+            "127.0.0.1:1".parse().unwrap(), &mut stream, &mut peer,
+            Limiter::new(1_000_000.), "blocked-send-test".to_owned(),
+        )).await.expect("a blocked relay write must finish within its deadline");
+        let error = result.expect_err("the blocked write must fail");
+        assert!(error.downcast_ref::<tokio::time::error::Elapsed>().is_some());
+    }
+
+    /// Checks that stalled writes time out in either relay direction.
+    #[tokio::test]
+    async fn blocked_writes_in_both_directions_time_out() {
+        tokio::join!(check_blocked_send(false), check_blocked_send(true));
+    }
 }
 
 /// Returns the configured relay key or resolves a signing key to its public value.
