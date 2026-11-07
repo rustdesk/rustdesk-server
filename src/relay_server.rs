@@ -544,7 +544,9 @@ async fn relay(
     total_limiter: Limiter,
     id: String,
 ) -> ResultType<()> {
-    let ip = addr.ip().to_string();
+    // The dual-stack listener reports an IPv4 client as ::ffff:a.b.c.d, while the lists hold the
+    // IPv4 form that `ba` and `Ba` are given.
+    let ip = hbb_common::try_into_v4(addr).ip().to_string();
     let mut tm = std::time::Instant::now();
     let mut elapsed = 0;
     let mut total = 0;
@@ -692,6 +694,33 @@ mod tests {
     #[tokio::test]
     async fn blocked_writes_in_both_directions_time_out() {
         tokio::join!(check_blocked_send(false), check_blocked_send(true));
+    }
+
+    #[tokio::test]
+    async fn a_blocklisted_ipv4_client_on_the_dual_stack_listener_is_cut_off() {
+        let ip = "192.0.2.55";
+        BLOCKLIST.write().await.insert(ip.to_owned());
+        let mut stream = TestStream {
+            data: None,
+            blocked: false,
+        };
+        let mut peer: Box<dyn StreamTrait> = Box::new(TestStream {
+            data: None,
+            blocked: false,
+        });
+        let result = timeout(
+            10_000,
+            relay(
+                format!("[::ffff:{ip}]:1").parse().unwrap(),
+                &mut stream,
+                &mut peer,
+                Limiter::new(1_000_000.),
+                "blocklist-test".to_owned(),
+            ),
+        )
+        .await;
+        BLOCKLIST.write().await.remove(ip);
+        assert!(result.expect("the relay kept a blocklisted client").is_ok());
     }
 }
 
