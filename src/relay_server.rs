@@ -402,7 +402,12 @@ async fn handle_connection(
             if let Ok(Ok(n)) = timeout(1000, stream.read(&mut buffer[..])).await {
                 if let Ok(data) = std::str::from_utf8(&buffer[..n]) {
                     let res = check_cmd(data, limiter).await;
-                    stream.write_all(res.as_bytes()).await.ok();
+                    if let Err(err) = timeout(1000, stream.write_all(res.as_bytes()))
+                        .await
+                        .unwrap_or_else(|elapsed| Err(elapsed.into()))
+                    {
+                        log::warn!("Failed to send the console reply: {err}");
+                    }
                 }
             }
         });
