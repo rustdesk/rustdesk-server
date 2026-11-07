@@ -418,7 +418,12 @@ pub async fn listen_signal() -> Result<()> {
     .await?
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+pub async fn listen_signal() -> Result<()> {
+    crate::windows_service::wait_for_stop().await
+}
+
+#[cfg(not(any(unix, windows)))]
 pub async fn listen_signal() -> Result<()> {
     let () = std::future::pending().await;
     unreachable!();

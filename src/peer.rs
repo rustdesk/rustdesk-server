@@ -74,8 +74,12 @@ impl PeerMap {
             let mut db = "db_v2.sqlite3".to_owned();
             #[cfg(all(windows, not(debug_assertions)))]
             {
-                if let Some(path) = hbb_common::config::Config::icon_path().parent() {
-                    db = format!("{}\\{}", path.to_str().unwrap_or("."), db);
+                // Native services use their explicit data directory, never a
+                // service-account profile shared with another installation.
+                if !crate::windows_service::is_service() {
+                    if let Some(path) = hbb_common::config::Config::icon_path().parent() {
+                        db = format!("{}\\{}", path.to_str().unwrap_or("."), db);
+                    }
                 }
             }
             #[cfg(not(windows))]

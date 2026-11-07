@@ -5,15 +5,29 @@ use flexi_logger::*;
 use hbb_common::{config::RELAY_PORT, ResultType};
 use relay_server::*;
 mod version;
+#[cfg(windows)]
+mod windows_service;
 
 fn main() -> ResultType<()> {
-    let _logger = Logger::try_with_env_or_str("info")?
+    #[cfg(windows)]
+    if windows_service::dispatch("hbbr", run)? {
+        return Ok(());
+    }
+    run()
+}
+
+fn run() -> ResultType<()> {
+    let logger = Logger::try_with_env_or_str("info")?
         .log_to_stdout()
         .format(opt_format)
-        .write_mode(WriteMode::Async)
-        .start()?;
+        .write_mode(WriteMode::Async);
+    #[cfg(windows)]
+    let logger = windows_service::configure_logger(logger, "hbbr");
+    let _logger = logger.start()?;
     let args = format!(
-        "-b, --bind=[IP] 'Sets the IP address to bind to (default: all interfaces)'
+        "--service 'Run as a native Windows service (Windows only)'
+        --data-dir=[DIR] 'Absolute data directory for Windows service mode'
+        -b, --bind=[IP] 'Sets the IP address to bind to (default: all interfaces)'
         -p, --port=[NUMBER(default={RELAY_PORT})] 'Sets the listening port'
         -k, --key=[KEY] 'Only allow the client with the same key'
         ",

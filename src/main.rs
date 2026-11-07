@@ -8,13 +8,25 @@ use hbbs::{common::*, *};
 const RMEM: usize = 0;
 
 fn main() -> ResultType<()> {
-    let _logger = Logger::try_with_env_or_str("info")?
+    #[cfg(windows)]
+    if hbbs::windows_service::dispatch("hbbs", run)? {
+        return Ok(());
+    }
+    run()
+}
+
+fn run() -> ResultType<()> {
+    let logger = Logger::try_with_env_or_str("info")?
         .log_to_stdout()
         .format(opt_format)
-        .write_mode(WriteMode::Async)
-        .start()?;
+        .write_mode(WriteMode::Async);
+    #[cfg(windows)]
+    let logger = hbbs::windows_service::configure_logger(logger, "hbbs");
+    let _logger = logger.start()?;
     let args = format!(
-        "-c --config=[FILE] +takes_value 'Sets a custom config file'
+        "--service 'Run as a native Windows service (Windows only)'
+        --data-dir=[DIR] 'Absolute data directory for Windows service mode'
+        -c --config=[FILE] +takes_value 'Sets a custom config file'
         -b, --bind=[IP] 'Sets the IP address to bind to (default: all interfaces)'
         -p, --port=[NUMBER(default={RENDEZVOUS_PORT})] 'Sets the listening port'
         -s, --serial=[NUMBER(default=0)] '[DEPRECATED] Sets configure update serial number'

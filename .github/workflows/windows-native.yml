@@ -1,0 +1,53 @@
+name: Native Windows services
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'Cargo.*'
+      - 'build.rs'
+      - '.cargo/**'
+      - 'packaging/windows/**'
+      - 'ui/setup.nsi'
+      - 'docs/windows-native-services.md'
+      - '.github/workflows/windows-native.yml'
+permissions:
+  contents: read
+jobs:
+  native-installer:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install NSIS
+        run: choco install nsis --no-progress -y
+      - name: Test native service helpers
+        run: cargo test --locked --lib windows_service::tests --target x86_64-pc-windows-msvc -- --test-threads=1
+      - name: Test runtime installer decisions
+        shell: powershell
+        run: .\packaging\windows\Test-InstallerLogic.ps1
+      - name: Build installer with latest Microsoft runtime
+        shell: powershell
+        run: .\packaging\windows\Build-Installer.ps1
+      - name: Validate installed native service lifecycle
+        shell: powershell
+        run: .\packaging\windows\Test-Installation.ps1 -InstallerPath .\target\windows-installer\RustDeskServer-Native-x64-Setup.exe
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rustdesk-native-${{ matrix.os }}
+          path: |
+            target/windows-installer/RustDeskServer-Native-x64-Setup.exe
+            target/windows-installer/payload/build-info.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rustdesk-native-logs-${{ matrix.os }}
+          path: C:/ProgramData/RustDeskServer/logs/**

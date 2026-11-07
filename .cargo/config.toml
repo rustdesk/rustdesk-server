@@ -1,5 +1,7 @@
 [target.x86_64-pc-windows-msvc]
-rustflags = ["-Ctarget-feature=+crt-static"]
+# Use Microsoft's serviced runtime so runtime security updates apply without
+# rebuilding the server. The Windows installer supplies the current v14 runtime.
+rustflags = ["-Ctarget-feature=-crt-static"]
 [target.i686-pc-windows-msvc]
 rustflags = ["-Ctarget-feature=+crt-static"]
 [target.'cfg(target_os="macos")']
