@@ -1244,10 +1244,8 @@ impl RendezvousServer {
                     .or_else(|| headers.get("X-Forwarded-For"))
                     .and_then(|header_value| header_value.to_str().ok());
                 if let Some(ip) = real_ip {
-                    if ip.contains('.') {
-                        addr = format!("{ip}:0").parse().unwrap_or(addr);
-                    } else {
-                        addr = format!("[{ip}]:0").parse().unwrap_or(addr);
+                    if let Ok(ip) = ip.parse() {
+                        addr = SocketAddr::new(ip, addr.port());
                     }
                 }
                 Ok(response)
