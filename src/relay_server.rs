@@ -444,7 +444,7 @@ async fn make_pair(
                 .and_then(|header_value| header_value.to_str().ok());
             if let Some(ip) = real_ip {
                 if let Ok(ip) = ip.parse() {
-                    addr.set_ip(ip);
+                    addr = SocketAddr::new(ip, addr.port());
                 }
             }
             Ok(response)
