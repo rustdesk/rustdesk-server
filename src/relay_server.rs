@@ -422,7 +422,9 @@ async fn handle_connection(
         return;
     }
     let ip = ip.to_string();
-    if BLOCKLIST.read().await.get(&ip).is_some() {
+    let reported = addr.ip().to_string();
+    let listed = |list: &HashSet<String>| list.contains(&ip) || list.contains(&reported);
+    if listed(&*BLOCKLIST.read().await) {
         log::info!("{} blocked", ip);
         return;
     }
@@ -545,6 +547,9 @@ async fn relay(
     id: String,
 ) -> ResultType<()> {
     let ip = addr.ip().to_string();
+    // The dual-stack listener reports an IPv4 client as ::ffff:a.b.c.d; lists may hold either form.
+    let unmapped = hbb_common::try_into_v4(addr).ip().to_string();
+    let listed = |list: &HashSet<String>| list.contains(&ip) || list.contains(&unmapped);
     let mut tm = std::time::Instant::now();
     let mut elapsed = 0;
     let mut total = 0;
@@ -608,11 +613,11 @@ async fn relay(
 
         let n = tm.elapsed().as_millis() as usize;
         if n >= 1_000 {
-            if BLOCKLIST.read().await.get(&ip).is_some() {
+            if listed(&*BLOCKLIST.read().await) {
                 log::info!("{} blocked", ip);
                 break;
             }
-            blacked = BLACKLIST.read().await.get(&ip).is_some();
+            blacked = listed(&*BLACKLIST.read().await);
             tm = std::time::Instant::now();
             let speed = total_s / n;
             if speed > highest_s {
@@ -692,6 +697,67 @@ mod tests {
     #[tokio::test]
     async fn blocked_writes_in_both_directions_time_out() {
         tokio::join!(check_blocked_send(false), check_blocked_send(true));
+    }
+
+    #[tokio::test]
+    async fn only_a_blocklisted_ipv4_client_on_the_dual_stack_listener_is_cut_off() {
+        // The plain form is what `ba` is usually given; the mapped one is what `usage` shows.
+        // A client not listed must outlive the first list check, which runs at 3 s.
+        for (entry, client, cut_off) in [
+            ("192.0.2.55", "[::ffff:192.0.2.55]:1", true),
+            ("::ffff:192.0.2.55", "[::ffff:192.0.2.55]:1", true),
+            ("192.0.2.55", "[::ffff:192.0.2.56]:1", false),
+        ] {
+            BLOCKLIST.write().await.insert(entry.to_owned());
+            let mut stream = TestStream {
+                data: None,
+                blocked: false,
+            };
+            let mut peer: Box<dyn StreamTrait> = Box::new(TestStream {
+                data: None,
+                blocked: false,
+            });
+            let result = timeout(
+                if cut_off { 10_000 } else { 4_000 },
+                relay(
+                    client.parse().unwrap(),
+                    &mut stream,
+                    &mut peer,
+                    Limiter::new(1_000_000.),
+                    "blocklist-test".to_owned(),
+                ),
+            )
+            .await;
+            BLOCKLIST.write().await.remove(entry);
+            assert!(
+                matches!((cut_off, &result), (true, Ok(Ok(()))) | (false, Err(_))),
+                "client {client}, blocklist entry {entry}: {result:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_client_blocklisted_in_either_form_is_refused_at_accept() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        for (entry, refused) in [
+            ("192.0.2.57", true),
+            ("::ffff:192.0.2.57", true),
+            ("192.0.2.58", false),
+        ] {
+            BLOCKLIST.write().await.insert(entry.to_owned());
+            let mut client = TcpStream::connect(listener.local_addr().unwrap())
+                .await
+                .unwrap();
+            let (stream, _) = listener.accept().await.unwrap();
+            let addr = "[::ffff:192.0.2.57]:1".parse().unwrap();
+            handle_connection(stream, addr, &Limiter::new(1_000_000.), "", false).await;
+            BLOCKLIST.write().await.remove(entry);
+            let read = timeout(1_000, client.read(&mut [0; 1])).await;
+            assert!(
+                matches!((refused, &read), (true, Ok(Ok(0))) | (false, Err(_))),
+                "blocklist entry {entry}: {read:?}"
+            );
+        }
     }
 }
 
