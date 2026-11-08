@@ -422,7 +422,9 @@ async fn handle_connection(
         return;
     }
     let ip = ip.to_string();
-    if BLOCKLIST.read().await.get(&ip).is_some() {
+    let reported = addr.ip().to_string();
+    let listed = |list: &HashSet<String>| list.contains(&ip) || list.contains(&reported);
+    if listed(&*BLOCKLIST.read().await) {
         log::info!("{} blocked", ip);
         return;
     }
@@ -698,9 +700,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_blocklisted_ipv4_client_on_the_dual_stack_listener_is_cut_off() {
+    async fn only_a_blocklisted_ipv4_client_on_the_dual_stack_listener_is_cut_off() {
         // The plain form is what `ba` is usually given; the mapped one is what `usage` shows.
-        for entry in ["192.0.2.55", "::ffff:192.0.2.55"] {
+        // A client not listed must outlive the first list check, which runs at 3 s.
+        for (entry, client, cut_off) in [
+            ("192.0.2.55", "[::ffff:192.0.2.55]:1", true),
+            ("::ffff:192.0.2.55", "[::ffff:192.0.2.55]:1", true),
+            ("192.0.2.55", "[::ffff:192.0.2.56]:1", false),
+        ] {
             BLOCKLIST.write().await.insert(entry.to_owned());
             let mut stream = TestStream {
                 data: None,
@@ -711,9 +718,9 @@ mod tests {
                 blocked: false,
             });
             let result = timeout(
-                10_000,
+                if cut_off { 10_000 } else { 4_000 },
                 relay(
-                    "[::ffff:192.0.2.55]:1".parse().unwrap(),
+                    client.parse().unwrap(),
                     &mut stream,
                     &mut peer,
                     Limiter::new(1_000_000.),
@@ -722,9 +729,35 @@ mod tests {
             )
             .await;
             BLOCKLIST.write().await.remove(entry);
-            assert!(
+            assert_eq!(
                 matches!(result, Ok(Ok(()))),
-                "the relay kept a client blocklisted as {entry}"
+                cut_off,
+                "client {client}, blocklist entry {entry}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_client_blocklisted_in_either_form_is_refused_at_accept() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        for (entry, refused) in [
+            ("192.0.2.57", true),
+            ("::ffff:192.0.2.57", true),
+            ("192.0.2.58", false),
+        ] {
+            BLOCKLIST.write().await.insert(entry.to_owned());
+            let mut client = TcpStream::connect(listener.local_addr().unwrap())
+                .await
+                .unwrap();
+            let (stream, _) = listener.accept().await.unwrap();
+            let addr = "[::ffff:192.0.2.57]:1".parse().unwrap();
+            handle_connection(stream, addr, &Limiter::new(1_000_000.), "", false).await;
+            BLOCKLIST.write().await.remove(entry);
+            let read = timeout(1_000, client.read(&mut [0; 1])).await;
+            assert_eq!(
+                matches!(read, Ok(Ok(0))),
+                refused,
+                "blocklist entry {entry}"
             );
         }
     }
