@@ -729,10 +729,9 @@ mod tests {
             )
             .await;
             BLOCKLIST.write().await.remove(entry);
-            assert_eq!(
-                matches!(result, Ok(Ok(()))),
-                cut_off,
-                "client {client}, blocklist entry {entry}"
+            assert!(
+                matches!((cut_off, &result), (true, Ok(Ok(()))) | (false, Err(_))),
+                "client {client}, blocklist entry {entry}: {result:?}"
             );
         }
     }
@@ -754,10 +753,9 @@ mod tests {
             handle_connection(stream, addr, &Limiter::new(1_000_000.), "", false).await;
             BLOCKLIST.write().await.remove(entry);
             let read = timeout(1_000, client.read(&mut [0; 1])).await;
-            assert_eq!(
-                matches!(read, Ok(Ok(0))),
-                refused,
-                "blocklist entry {entry}"
+            assert!(
+                matches!((refused, &read), (true, Ok(Ok(0))) | (false, Err(_))),
+                "blocklist entry {entry}: {read:?}"
             );
         }
     }
