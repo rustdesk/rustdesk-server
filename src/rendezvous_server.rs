@@ -830,14 +830,13 @@ impl RendezvousServer {
                 }
                 ph.nat_type = NatType::SYMMETRIC.into(); // will force relay
             }
-            let same_intranet: bool = !ws
-                && (peer_is_lan && is_lan || {
-                    match (peer_addr, addr) {
-                        (SocketAddr::V4(a), SocketAddr::V4(b)) => a.ip() == b.ip(),
-                        (SocketAddr::V6(a), SocketAddr::V6(b)) => a.ip() == b.ip(),
-                        _ => false,
-                    }
-                });
+            let same_intranet = is_same_intranet(
+                ws,
+                ALWAYS_USE_RELAY.load(Ordering::SeqCst),
+                peer_is_lan && is_lan,
+                peer_addr,
+                addr,
+            );
             let socket_addr = AddrMangle::encode(addr).into();
             if same_intranet {
                 log::debug!(
@@ -1491,9 +1490,39 @@ async fn create_tcp_listener(bind_addr: Option<IpAddr>, port: i32) -> ResultType
     Ok(s)
 }
 
+// Peers behind the same NAT are normally told to connect over the LAN
+// (FetchLocalAddr). That path never relays, so skip it when relaying is forced.
+fn is_same_intranet(
+    ws: bool,
+    force_relay: bool,
+    both_lan: bool,
+    peer_addr: SocketAddr,
+    addr: SocketAddr,
+) -> bool {
+    !ws && !force_relay
+        && (both_lan || {
+            match (peer_addr, addr) {
+                (SocketAddr::V4(a), SocketAddr::V4(b)) => a.ip() == b.ip(),
+                (SocketAddr::V6(a), SocketAddr::V6(b)) => a.ip() == b.ip(),
+                _ => false,
+            }
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn always_use_relay_disables_same_intranet_local_addr() {
+        let a: SocketAddr = "203.0.113.7:1111".parse().unwrap();
+        let b: SocketAddr = "203.0.113.7:2222".parse().unwrap();
+        assert!(is_same_intranet(false, false, false, a, b));
+        assert!(!is_same_intranet(false, true, false, a, b));
+        assert!(!is_same_intranet(false, true, true, a, b));
+        assert!(is_same_intranet(false, false, true, a, "198.51.100.1:1".parse().unwrap()));
+        assert!(!is_same_intranet(true, false, true, a, b));
+    }
 
     #[test]
     fn max_message_kb_falls_back_to_default_and_is_capped() {
