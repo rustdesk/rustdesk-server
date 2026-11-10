@@ -435,9 +435,9 @@ pub fn check_software_update() {
 
 #[tokio::main(flavor = "current_thread")]
 async fn check_software_update_() -> hbb_common::ResultType<()> {
-    let (request, url) = hbb_common::version_check_request(hbb_common::VER_TYPE_RUSTDESK_SERVER.to_string());
+    let request = server_version_check_request();
     let latest_release_response = reqwest::Client::builder().build()?
-        .post(url)
+        .post("https://api.rustdesk.com/version/latest")
         .json(&request)
         .send()
         .await?;
@@ -452,10 +452,30 @@ async fn check_software_update_() -> hbb_common::ResultType<()> {
     Ok(())
 }
 
+fn server_version_check_request() -> hbb_common::VersionCheckRequest {
+    let system = hbb_common::sysinfo::System::new();
+    // The client fingerprint helper initializes and may write client config.
+    hbb_common::VersionCheckRequest {
+        os: system.distribution_id(),
+        os_version: system.os_version().unwrap_or_default(),
+        arch: std::env::consts::ARCH.to_owned(),
+        typ: hbb_common::VER_TYPE_RUSTDESK_SERVER.to_owned(),
+        ..Default::default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::net::{Ipv4Addr, Ipv6Addr};
+
+    #[test]
+    fn update_request_has_server_metadata_without_a_client_identity() {
+        let request = serde_json::to_value(server_version_check_request()).unwrap();
+        assert_eq!(request["typ"], hbb_common::VER_TYPE_RUSTDESK_SERVER);
+        assert_eq!(request["arch"], std::env::consts::ARCH);
+        assert_eq!(request["device_id"], serde_json::json!([]));
+    }
 
     #[test]
     fn argument_names_ignore_case_and_separator() {
