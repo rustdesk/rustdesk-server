@@ -4,3 +4,5 @@ pub mod common;
 mod database;
 mod peer;
 mod version;
+#[cfg(windows)]
+pub mod windows_service;

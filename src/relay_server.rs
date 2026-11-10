@@ -99,10 +99,15 @@ pub async fn start_with_bind(
     let main_task = async move {
         loop {
             log::info!("Start");
+            let listener = crate::common::listen_tcp(bind_addr, port).await?;
+            let websocket = crate::common::listen_tcp(bind_addr, port2).await?;
+            let console = crate::common::listen_console(bind_addr, port).await?;
+            #[cfg(windows)]
+            crate::windows_service::ready()?;
             io_loop(
-                crate::common::listen_tcp(bind_addr, port).await?,
-                crate::common::listen_tcp(bind_addr, port2).await?,
-                crate::common::listen_console(bind_addr, port).await?,
+                listener,
+                websocket,
+                console,
                 &key,
             )
             .await;

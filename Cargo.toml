@@ -64,6 +64,9 @@ reqwest = { git = "https://github.com/rustdesk-org/reqwest", features = ["blocki
 [build-dependencies]
 hbb_common = { path = "libs/hbb_common" }
 
+[target.'cfg(windows)'.dependencies]
+windows-service = "0.8.1"
+
 [workspace]
 members = ["libs/hbb_common"]
 exclude = ["ui"]

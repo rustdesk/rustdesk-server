@@ -14,6 +14,10 @@
 
 Self-host your own RustDesk server, it is free and open source.
 
+**Windows Server 2016 / 2019 / 2022 / 2025:** see [native Windows services and
+installer](docs/windows-native-services.md). This fork installs `hbbs` and `hbbr`
+directly as Windows services without NSSM or the legacy GUI.
+
 > [!IMPORTANT]
 > **Need more features?** [RustDesk Server Pro](https://rustdesk.com/pricing.html) might suit you better.
 >

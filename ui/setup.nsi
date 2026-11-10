@@ -1,178 +1,169 @@
-﻿Unicode true
-
-####################################################################
-# Includes
-
-!include nsDialogs.nsh
+Unicode true
 !include MUI2.nsh
-!include x64.nsh
 !include LogicLib.nsh
-
-####################################################################
-# File Info
-
-!define APP_NAME "RustDeskServer"
-!define PRODUCT_NAME "rustdesk_server"
-!define PRODUCT_DESCRIPTION "Installer for ${PRODUCT_NAME}"
-!define COPYRIGHT "Copyright © 2021"
-!define VERSION "1.1.17"
-
-VIProductVersion "${VERSION}.0"
-VIAddVersionKey "ProductName" "${PRODUCT_NAME}"
-VIAddVersionKey "ProductVersion" "${VERSION}"
-VIAddVersionKey "FileDescription" "${PRODUCT_DESCRIPTION}"
-VIAddVersionKey "LegalCopyright" "${COPYRIGHT}"
-VIAddVersionKey "FileVersion" "${VERSION}"
-
-####################################################################
-# Installer Attributes
-
-Name "${APP_NAME}"
-Outfile "${APP_NAME}.Setup.exe"
-Caption "Setup - ${APP_NAME}"
-BrandingText "${APP_NAME}"
-
-ShowInstDetails show
+!include x64.nsh
+!include WinVer.nsh
+!include nsDialogs.nsh
+!include FileFunc.nsh
+!ifndef PAYLOAD
+  !error "Build using packaging/windows/Build-Installer.ps1"
+!endif
+!ifndef OUTPUT
+  !define OUTPUT "RustDeskServer-Native-x64-Setup.exe"
+!endif
+Name "RustDesk Server (Native Windows Services)"
+OutFile "${OUTPUT}"
+InstallDir "$PROGRAMFILES64\RustDeskServer"
+InstallDirRegKey HKLM "Software\RustDeskServerNative" "InstallDir"
 RequestExecutionLevel admin
-SetOverwrite on
- 
-InstallDir "$PROGRAMFILES64\${APP_NAME}"
-
-####################################################################
-# Pages
-
-!define MUI_ICON "icons\icon.ico"
+SetCompressor /SOLID lzma
+ShowInstDetails show
+VIProductVersion "1.1.17.0"
+VIAddVersionKey "ProductName" "RustDesk Server Native"
+VIAddVersionKey "FileDescription" "RustDesk Server installer for Windows Server 2016, 2019, 2022 and 2025"
+VIAddVersionKey "FileVersion" "1.1.17.0"
+VIAddVersionKey "LegalCopyright" "RustDesk contributors"
+Var RelayAddress
+Var RelayInput
+Var Scope
+Var InternetCheck
+Var Dialog
+Var Result
+Var Parameters
 !define MUI_ABORTWARNING
-!define MUI_LANGDLL_ALLLANGUAGES
-!define MUI_FINISHPAGE_SHOWREADME ""
-!define MUI_FINISHPAGE_SHOWREADME_TEXT "Create Startup Shortcut"
-!define MUI_FINISHPAGE_SHOWREADME_FUNCTION CreateStartupShortcut
-!define MUI_FINISHPAGE_RUN "$INSTDIR\${PRODUCT_NAME}.exe"
-
+!define MUI_FINISHPAGE_NOREBOOTSUPPORT
+!define MUI_FINISHPAGE_RUN "$WINDIR\System32\notepad.exe"
+!define MUI_FINISHPAGE_RUN_PARAMETERS '$\"$INSTDIR\Connection-Details.txt$\"'
+!define MUI_FINISHPAGE_RUN_TEXT "Show connection details"
+!insertmacro MUI_PAGE_WELCOME
+!insertmacro MUI_PAGE_LICENSE "${PAYLOAD}\LICENSE"
 !insertmacro MUI_PAGE_DIRECTORY
+Page custom Configure ConfigureLeave
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
+!insertmacro MUI_UNPAGE_CONFIRM
+!insertmacro MUI_UNPAGE_INSTFILES
+!insertmacro MUI_LANGUAGE "English"
 
-####################################################################
-# Language
+Function .onInit
+  ${IfNot} ${RunningX64}
+    MessageBox MB_ICONSTOP "This installer requires 64-bit Windows." /SD IDOK
+    Abort
+  ${EndIf}
+  ${IfNot} ${AtLeastWin10}
+    MessageBox MB_ICONSTOP "Windows Server 2016 or later is required." /SD IDOK
+    Abort
+  ${EndIf}
+  SetRegView 64
+  StrCpy $Scope "Preserve"
+  StrCpy $RelayAddress ""
+  ${GetParameters} $Parameters
+  ${GetOptions} $Parameters "/RELAY=" $RelayAddress
+  ${GetOptions} $Parameters "/SCOPE=" $Result
+  ${If} $Result != ""
+    StrCpy $Scope $Result
+  ${EndIf}
+FunctionEnd
 
-!insertmacro MUI_LANGUAGE "English" ; The first language is the default language
-!insertmacro MUI_LANGUAGE "French"
-!insertmacro MUI_LANGUAGE "German"
-!insertmacro MUI_LANGUAGE "Spanish"
-!insertmacro MUI_LANGUAGE "SpanishInternational"
-!insertmacro MUI_LANGUAGE "SimpChinese"
-!insertmacro MUI_LANGUAGE "TradChinese"
-!insertmacro MUI_LANGUAGE "Japanese"
-!insertmacro MUI_LANGUAGE "Korean"
-!insertmacro MUI_LANGUAGE "Italian"
-!insertmacro MUI_LANGUAGE "Dutch"
-!insertmacro MUI_LANGUAGE "Danish"
-!insertmacro MUI_LANGUAGE "Swedish"
-!insertmacro MUI_LANGUAGE "Norwegian"
-!insertmacro MUI_LANGUAGE "NorwegianNynorsk"
-!insertmacro MUI_LANGUAGE "Finnish"
-!insertmacro MUI_LANGUAGE "Greek"
-!insertmacro MUI_LANGUAGE "Russian"
-!insertmacro MUI_LANGUAGE "Portuguese"
-!insertmacro MUI_LANGUAGE "PortugueseBR"
-!insertmacro MUI_LANGUAGE "Polish"
-!insertmacro MUI_LANGUAGE "Ukrainian"
-!insertmacro MUI_LANGUAGE "Czech"
-!insertmacro MUI_LANGUAGE "Slovak"
-!insertmacro MUI_LANGUAGE "Croatian"
-!insertmacro MUI_LANGUAGE "Bulgarian"
-!insertmacro MUI_LANGUAGE "Hungarian"
-!insertmacro MUI_LANGUAGE "Thai"
-!insertmacro MUI_LANGUAGE "Romanian"
-!insertmacro MUI_LANGUAGE "Latvian"
-!insertmacro MUI_LANGUAGE "Macedonian"
-!insertmacro MUI_LANGUAGE "Estonian"
-!insertmacro MUI_LANGUAGE "Turkish"
-!insertmacro MUI_LANGUAGE "Lithuanian"
-!insertmacro MUI_LANGUAGE "Slovenian"
-!insertmacro MUI_LANGUAGE "Serbian"
-!insertmacro MUI_LANGUAGE "SerbianLatin"
-!insertmacro MUI_LANGUAGE "Arabic"
-!insertmacro MUI_LANGUAGE "Farsi"
-!insertmacro MUI_LANGUAGE "Hebrew"
-!insertmacro MUI_LANGUAGE "Indonesian"
-!insertmacro MUI_LANGUAGE "Mongolian"
-!insertmacro MUI_LANGUAGE "Luxembourgish"
-!insertmacro MUI_LANGUAGE "Albanian"
-!insertmacro MUI_LANGUAGE "Breton"
-!insertmacro MUI_LANGUAGE "Belarusian"
-!insertmacro MUI_LANGUAGE "Icelandic"
-!insertmacro MUI_LANGUAGE "Malay"
-!insertmacro MUI_LANGUAGE "Bosnian"
-!insertmacro MUI_LANGUAGE "Kurdish"
-!insertmacro MUI_LANGUAGE "Irish"
-!insertmacro MUI_LANGUAGE "Uzbek"
-!insertmacro MUI_LANGUAGE "Galician"
-!insertmacro MUI_LANGUAGE "Afrikaans"
-!insertmacro MUI_LANGUAGE "Catalan"
-!insertmacro MUI_LANGUAGE "Esperanto"
-!insertmacro MUI_LANGUAGE "Asturian"
-!insertmacro MUI_LANGUAGE "Basque"
-!insertmacro MUI_LANGUAGE "Pashto"
-!insertmacro MUI_LANGUAGE "ScotsGaelic"
-!insertmacro MUI_LANGUAGE "Georgian"
-!insertmacro MUI_LANGUAGE "Vietnamese"
-!insertmacro MUI_LANGUAGE "Welsh"
-!insertmacro MUI_LANGUAGE "Armenian"
-!insertmacro MUI_LANGUAGE "Corsican"
-!insertmacro MUI_LANGUAGE "Tatar"
-!insertmacro MUI_LANGUAGE "Hindi"
+Function Configure
+  !insertmacro MUI_HEADER_TEXT "Server connection" "Configure the server address and Windows Firewall."
+  nsDialogs::Create 1018
+  Pop $Dialog
+  ${NSD_CreateLabel} 0 0 100% 28u "Relay hostname or IP address (optional). Use the address clients can reach. Leave blank to preserve an existing setting."
+  Pop $Result
+  ${NSD_CreateText} 0 30u 100% 13u "$RelayAddress"
+  Pop $RelayInput
+  ${NSD_CreateCheckbox} 0 55u 100% 24u "Enable internet access (unchecked preserves existing scope)"
+  Pop $InternetCheck
+  ${If} $Scope == "Internet"
+    ${NSD_Check} $InternetCheck
+  ${EndIf}
+  ${NSD_CreateLabel} 0 86u 100% 52u "New installations default to local-subnet access on Domain/Private networks. Upgrades preserve the existing firewall scope. Internet access also needs router or cloud firewall configuration. Browser ports remain closed."
+  Pop $Result
+  nsDialogs::Show
+FunctionEnd
 
-####################################################################
-# Sections
+Function ConfigureLeave
+  ${NSD_GetText} $RelayInput $RelayAddress
+  ${NSD_GetState} $InternetCheck $Result
+  ${If} $Result == ${BST_CHECKED}
+    StrCpy $Scope "Internet"
+  ${ElseIf} $Scope == "Internet"
+    StrCpy $Scope "LAN"
+  ${EndIf}
+  StrCpy $Result 0
+  loop:
+    StrCpy $Dialog $RelayAddress 1 $Result
+    StrCmp $Dialog "" done
+    StrCmp $Dialog '$\"' invalid
+    StrCmp $Dialog "$\r" invalid
+    StrCmp $Dialog "$\n" invalid
+    IntOp $Result $Result + 1
+    Goto loop
+  invalid:
+    MessageBox MB_ICONSTOP "Enter a hostname or IP address without quotes or line breaks."
+    Abort
+  done:
+FunctionEnd
 
 Section "Install"
+  SetRegView 64
   SetShellVarContext all
-  nsExec::Exec 'sc stop hbbr'
-  nsExec::Exec 'sc stop hbbs'
-  nsExec::Exec 'taskkill /F /IM ${PRODUCT_NAME}.exe'
-  Sleep 500
-
-  SetOutPath $INSTDIR
-  File /r "setup\*.*"
-  WriteUninstaller $INSTDIR\uninstall.exe
-
-  CreateDirectory "$SMPROGRAMS\${APP_NAME}"
-  CreateShortCut "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk" "$INSTDIR\${PRODUCT_NAME}.exe"
-  CreateShortCut "$SMPROGRAMS\${APP_NAME}\Uninstall.lnk" "$INSTDIR\uninstall.exe"
-  CreateShortCut "$DESKTOP\${APP_NAME}.lnk" "$INSTDIR\${PRODUCT_NAME}.exe"
-
-  nsExec::Exec 'netsh advfirewall firewall add rule name="${APP_NAME}" dir=in action=allow program="$INSTDIR\bin\hbbs.exe" enable=yes'
-  nsExec::Exec 'netsh advfirewall firewall add rule name="${APP_NAME}" dir=out action=allow program="$INSTDIR\bin\hbbs.exe" enable=yes'
-  nsExec::Exec 'netsh advfirewall firewall add rule name="${APP_NAME}" dir=in action=allow program="$INSTDIR\bin\hbbr.exe" enable=yes'
-  nsExec::Exec 'netsh advfirewall firewall add rule name="${APP_NAME}" dir=out action=allow program="$INSTDIR\bin\hbbr.exe" enable=yes'
-  ExecWait 'powershell.exe -NoProfile -windowstyle hidden try { [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12 } catch {}; Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile "$$env:TEMP\MicrosoftEdgeWebview2Setup.exe" ; Start-Process -FilePath "$$env:TEMP\MicrosoftEdgeWebview2Setup.exe" -ArgumentList ($\'/silent$\', $\'/install$\') -Wait'
+  InitPluginsDir
+  SetOutPath "$PLUGINSDIR\payload"
+  File "${PAYLOAD}\hbbs.exe"
+  File "${PAYLOAD}\hbbr.exe"
+  File "${PAYLOAD}\vc_redist.x64.exe"
+  File "${PAYLOAD}\Install-Services.ps1"
+  File "${PAYLOAD}\build-info.json"
+  File "${PAYLOAD}\README.txt"
+  File "${PAYLOAD}\LICENSE"
+  ${DisableX64FSRedirection}
+  nsExec::ExecToLog '"$WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\payload\Install-Services.ps1" -Mode Install -InstallDir "$INSTDIR" -PayloadDir "$PLUGINSDIR\payload" -RelayServer "$RelayAddress" -NetworkScope "$Scope"'
+  Pop $Result
+  ${EnableX64FSRedirection}
+  ${If} $Result == 3010
+    SetRebootFlag true
+    SetErrorLevel 3010
+  ${ElseIf} $Result != 0
+    MessageBox MB_ICONSTOP "Setup failed. See the details above and RustDeskServer-Setup logs in your temporary folder." /SD IDOK
+    SetErrorLevel 1
+    Abort
+  ${EndIf}
+  SetOutPath "$INSTDIR"
+  CopyFiles /SILENT "$PLUGINSDIR\payload\build-info.json" "$INSTDIR"
+  CopyFiles /SILENT "$PLUGINSDIR\payload\README.txt" "$INSTDIR"
+  CopyFiles /SILENT "$PLUGINSDIR\payload\LICENSE" "$INSTDIR"
+  WriteUninstaller "$INSTDIR\Uninstall.exe"
+  WriteRegStr HKLM "Software\RustDeskServerNative" "InstallDir" "$INSTDIR"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RustDeskServerNative" "DisplayName" "RustDesk Server (Native Services)"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RustDeskServerNative" "DisplayVersion" "1.1.17"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RustDeskServerNative" "UninstallString" '$\"$INSTDIR\Uninstall.exe$\"'
+  WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RustDeskServerNative" "NoModify" 1
+  WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RustDeskServerNative" "NoRepair" 1
 SectionEnd
 
 Section "Uninstall"
-  SetShellVarContext all
-  nsExec::Exec 'sc stop hbbr'
-  nsExec::Exec 'sc stop hbbs'
-  nsExec::Exec 'taskkill /F /IM ${PRODUCT_NAME}.exe'
-  Sleep 500
-
-  RMDir /r "$SMPROGRAMS\${APP_NAME}"
-  Delete "$SMSTARTUP\${APP_NAME}.lnk"
-  Delete "$DESKTOP\${APP_NAME}.lnk"
-  nsExec::Exec 'sc delete hbbr'
-  nsExec::Exec 'sc delete hbbs'
-  nsExec::Exec 'netsh advfirewall firewall delete rule name="${APP_NAME}"'
-  RMDir /r "$INSTDIR\bin"
-  RMDir /r "$INSTDIR\logs"
-  RMDir /r "$INSTDIR\service"
-  Delete "$INSTDIR\${PRODUCT_NAME}.exe"
-  Delete "$INSTDIR\uninstall.exe"
+  SetRegView 64
+  ${DisableX64FSRedirection}
+  nsExec::ExecToLog '"$WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\Install-Services.ps1" -Mode Uninstall -InstallDir "$INSTDIR"'
+  Pop $Result
+  ${EnableX64FSRedirection}
+  ${If} $Result != 0
+    MessageBox MB_ICONSTOP "Services could not be removed. Files have been retained; inspect the setup log." /SD IDOK
+    SetErrorLevel 1
+    Abort
+  ${EndIf}
+  Delete "$INSTDIR\hbbs.exe"
+  Delete "$INSTDIR\hbbr.exe"
+  Delete "$INSTDIR\Install-Services.ps1"
+  Delete "$INSTDIR\Connection-Details.txt"
+  Delete "$INSTDIR\native-install.json"
+  Delete "$INSTDIR\build-info.json"
+  Delete "$INSTDIR\README.txt"
+  Delete "$INSTDIR\LICENSE"
+  Delete "$INSTDIR\Uninstall.exe"
+  RMDir "$INSTDIR"
+  DeleteRegKey HKLM "Software\RustDeskServerNative"
+  DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RustDeskServerNative"
 SectionEnd
-
-####################################################################
-# Functions
-
-Function CreateStartupShortcut
-  CreateShortCut "$SMSTARTUP\${APP_NAME}.lnk" "$INSTDIR\${PRODUCT_NAME}.exe"
-FunctionEnd

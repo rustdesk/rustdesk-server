@@ -297,6 +297,8 @@ impl RendezvousServer {
                 }
             }
         };
+        #[cfg(windows)]
+        crate::windows_service::ready()?;
         let listen_signal = listen_signal();
         tokio::select!(
             res = main_task => res,
