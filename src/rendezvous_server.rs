@@ -304,6 +304,7 @@ impl RendezvousServer {
         )
     }
 
+    /// Serves rendezvous listeners and scheduled maintenance until a listener fails.
     async fn io_loop(
         &mut self,
         rx: &mut Receiver,
@@ -315,8 +316,10 @@ impl RendezvousServer {
         key: &str,
     ) -> LoopFailure {
         let mut timer_check_relay = interval(Duration::from_millis(CHECK_RELAY_TIMEOUT));
+        let mut timer_cleanup = interval(Duration::from_secs(60));
         loop {
             tokio::select! {
+                _ = timer_cleanup.tick() => { self.pm.prune().await; }
                 _ = timer_check_relay.tick() => {
                     if self.relay_servers0.len() > 1 {
                         let rs = self.relay_servers0.clone();
@@ -402,6 +405,7 @@ impl RendezvousServer {
         }
     }
 
+    /// Processes a UDP rendezvous request and sends any applicable response.
     #[inline]
     async fn handle_udp(
         &mut self,
@@ -432,6 +436,9 @@ impl RendezvousServer {
                     if rk.uuid.is_empty() || rk.pk.is_empty() {
                         return Ok(());
                     }
+                    if rk.uuid.len() > 1024 || rk.pk.len() != sign::PUBLICKEYBYTES {
+                        return send_rk_res(socket, addr, UUID_MISMATCH).await;
+                    }
                     let id = rk.id;
                     let ip = addr.ip().to_string();
                     if id.len() < 6 || id.len() > MAX_PEER_ID_LEN {
@@ -439,7 +446,10 @@ impl RendezvousServer {
                     } else if !self.check_ip_blocker(&ip, &id).await {
                         return send_rk_res(socket, addr, TOO_FREQUENT).await;
                     }
-                    let peer = self.pm.get_or(&id).await;
+                    let peer = match self.pm.get_or(&id).await {
+                        Some(peer) => peer,
+                        None => return send_rk_res(socket, addr, TOO_FREQUENT).await,
+                    };
                     let (changed, ip_changed) = {
                         let peer = peer.read().await;
                         if peer.uuid.is_empty() {
@@ -493,10 +503,10 @@ impl RendezvousServer {
                                 ips.insert(ip.clone(), 1);
                             } else if let Some(v) = ips.get_mut(&ip) {
                                 *v += 1;
-                            } else {
+                            } else if ips.len() < 128 {
                                 ips.insert(ip.clone(), 1);
                             }
-                        } else {
+                        } else if lock.len() < *MAX_PEER_CACHE_ENTRIES {
                             lock.insert(
                                 id.clone(),
                                 (Instant::now(), HashMap::from([(ip.clone(), 1)])),
@@ -975,6 +985,7 @@ impl RendezvousServer {
         Ok(())
     }
 
+    /// Applies the per-IP registration rate and distinct-device limits.
     async fn check_ip_blocker(&self, ip: &str, id: &str) -> bool {
         let mut lock = IP_BLOCKER.lock().await;
         let now = Instant::now();
@@ -1000,6 +1011,7 @@ impl RendezvousServer {
             }
             counter.1 = now;
         } else {
+            if lock.len() >= *MAX_IP_CACHE_ENTRIES { return false; }
             lock.insert(ip.to_owned(), ((0, now), (Default::default(), now)));
         }
         true
