@@ -18,8 +18,8 @@ impl deadpool::managed::Manager for DbPool {
     type Type = SqliteConnection;
     type Error = SqlxError;
     async fn create(&self) -> Result<SqliteConnection, SqlxError> {
-        let mut opt = SqliteConnectOptions::from_str(&self.url).unwrap();
-        opt.log_statements(log::LevelFilter::Debug);
+        let opt = SqliteConnectOptions::from_str(&self.url)?
+            .log_statements(log::LevelFilter::Debug);
         SqliteConnection::connect_with(&opt).await
     }
     async fn recycle(
@@ -140,6 +140,33 @@ impl Database {
         .execute(self.pool.get().await?.deref_mut())
         .await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod sqlite_driver_tests {
+    use super::*;
+    use deadpool::managed::Manager;
+    use hbb_common::tokio;
+
+    #[hbb_common::tokio::test]
+    async fn existing_schema_can_be_read_and_updated() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("existing.sqlite3");
+        std::fs::copy(concat!(env!("CARGO_MANIFEST_DIR"), "/db_v2.sqlite3"), &path).unwrap();
+        let db = Database::new(path.to_str().unwrap()).await.unwrap();
+        let guid = db.insert_peer("driver-upgrade-test", &[1], &[2], "{}").await.unwrap();
+        assert_eq!(db.get_peer("driver-upgrade-test").await.unwrap().unwrap().pk, vec![2]);
+        db.update_pk(&guid, "driver-upgrade-test", &[3], "{\"ip\":\"127.0.0.1\"}").await.unwrap();
+        let peer = db.get_peer("driver-upgrade-test").await.unwrap().unwrap();
+        assert_eq!(peer.pk, vec![3]);
+        assert_eq!(peer.guid, guid);
+    }
+
+    #[hbb_common::tokio::test]
+    async fn invalid_connection_options_return_an_error() {
+        let manager = DbPool { url: "sqlite://unused?mode=invalid".to_owned() };
+        assert!(manager.create().await.is_err());
     }
 }
 
