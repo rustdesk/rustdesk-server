@@ -61,6 +61,7 @@ type RelayServers = Vec<String>;
 const CHECK_RELAY_TIMEOUT: u64 = 3_000;
 static ALWAYS_USE_RELAY: AtomicBool = AtomicBool::new(false);
 const MAX_RELAY_UUID_LEN: usize = 128;
+const IP_NOT_ALLOWED: &str = "Your IP is not allowed to connect";
 
 // The peer sends this uuid to whatever relay_server names, so keep control bytes out of it.
 fn validate_relay_uuid(value: &str) -> Result<(), &'static str> {
@@ -237,6 +238,7 @@ impl RendezvousServer {
                 "N"
             }
         );
+        crate::ip_whitelist::log_config();
         if test_addr.to_lowercase() != "no" {
             let test_addr = if test_addr.is_empty() {
                 listener.local_addr()?
@@ -591,6 +593,17 @@ impl RendezvousServer {
                     if let Some(sink) = sink.take() {
                         self.tcp_punch.lock().await.insert(try_into_v4(addr), sink);
                     }
+                    if !crate::ip_whitelist::is_allowed(try_into_v4(addr).ip()).await {
+                        log::warn!("Drop RequestRelay from {addr} to {}: IP not allowed", rf.id);
+                        let mut msg_out = RendezvousMessage::new();
+                        msg_out.set_relay_response(RelayResponse {
+                            uuid: rf.uuid,
+                            refuse_reason: IP_NOT_ALLOWED.to_owned(),
+                            ..Default::default()
+                        });
+                        allow_err!(self.send_to_tcp_sync(msg_out, addr).await);
+                        return true;
+                    }
                     if let Some(peer) = self.pm.get_in_memory(&rf.id).await {
                         let mut msg_out = RendezvousMessage::new();
                         rf.socket_addr = AddrMangle::encode(addr).into();
@@ -787,6 +800,15 @@ impl RendezvousServer {
             let mut msg_out = RendezvousMessage::new();
             msg_out.set_punch_hole_response(PunchHoleResponse {
                 failure: punch_hole_response::Failure::LICENSE_MISMATCH.into(),
+                ..Default::default()
+            });
+            return Ok((msg_out, None));
+        }
+        if !crate::ip_whitelist::is_allowed(try_into_v4(addr).ip()).await {
+            log::warn!("Punch hole request from {} for peer {} denied: IP not allowed", addr, ph.id);
+            let mut msg_out = RendezvousMessage::new();
+            msg_out.set_punch_hole_response(PunchHoleResponse {
+                other_failure: IP_NOT_ALLOWED.to_owned(),
                 ..Default::default()
             });
             return Ok((msg_out, None));
