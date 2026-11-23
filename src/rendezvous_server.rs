@@ -595,10 +595,8 @@ impl RendezvousServer {
                 }
                 Some(rendezvous_message::Union::RequestRelay(mut rf)) => {
                     if let Err(err) = validate_relay_uuid(&rf.uuid) {
-                        log::warn!(
-                            "Drop RequestRelay from {addr}: {err} (length {})",
-                            rf.uuid.len()
-                        );
+                        // Redacted: nothing derived from the UUID is logged.
+                        log::warn!("Drop RequestRelay from {addr}: {err}");
                         return false;
                     }
                     // there maybe several attempt, so sink can be none
@@ -616,10 +614,8 @@ impl RendezvousServer {
                 }
                 Some(rendezvous_message::Union::RelayResponse(mut rr)) => {
                     if let Err(err) = validate_relay_response(&rr.uuid, &rr.relay_server) {
-                        log::warn!(
-                            "Drop RelayResponse from {addr}: {err} (length {})",
-                            rr.uuid.len()
-                        );
+                        // Redacted: nothing derived from the UUID is logged.
+                        log::warn!("Drop RelayResponse from {addr}: {err}");
                         return false;
                     }
                     let addr_b = AddrMangle::decode(&rr.socket_addr);
@@ -1543,7 +1539,7 @@ mod tests {
             "a_b-c",
             max_len.as_str(),
         ] {
-            assert_eq!(validate_relay_uuid(value), Ok(()), "rejected {value:?}");
+            assert_eq!(validate_relay_uuid(value), Ok(()), "rejected a UUID");
         }
         let too_long = "a".repeat(129);
         for value in [
