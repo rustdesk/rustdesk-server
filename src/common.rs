@@ -590,6 +590,9 @@ mod tests {
             // The child process isolates the umask from other tests.
             unsafe { hbb_common::libc::umask(TEST_UMASK) };
             assert_private_key_file_permissions();
+            // The checks end at umask 0o777; restore it so files the process
+            // writes at exit (such as coverage profiles) stay readable.
+            unsafe { hbb_common::libc::umask(TEST_UMASK) };
             println!("{CHILD_COMPLETED}");
             return;
         }
