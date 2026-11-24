@@ -1,8 +1,10 @@
 name: Repository validation
 on:
   pull_request:
+    paths-ignore: ['docs/**', '**/*.md']
   push:
     branches: [master]
+    paths-ignore: ['docs/**', '**/*.md']
   merge_group:
   workflow_dispatch:
   workflow_call:
@@ -22,7 +24,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        check: [format, clippy, test, audit, coverage, sbom]
+        check: [clippy, test, audit, coverage, sbom]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -41,17 +43,25 @@ jobs:
           sudo apt-get install -y build-essential pkg-config libsodium-dev libssl-dev libclang-dev autoconf automake libtool
       - name: Install the release Rust toolchain
         run: rustup toolchain install 1.90.0 --profile minimal --component rustfmt --component clippy
-      - name: Generate version source through the native build
-        if: matrix.check == 'format'
-        run: cargo +1.90.0 check --locked --workspace
-      - name: Check formatting without rewriting source
-        if: matrix.check == 'format'
-        run: cargo +1.90.0 fmt --all -- --check
       - name: Check Rust diagnostics
         if: matrix.check == 'clippy'
         env:
           CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
         run: cargo +1.90.0 clippy --locked --workspace --all-targets --all-features -- -D warnings
+      # The clippy build generates src/version.rs, which rustfmt needs.
+      - name: Check formatting without rewriting source
+        if: matrix.check == 'clippy'
+        run: cargo +1.90.0 fmt --all -- --check
+      - name: Restore pinned Rust tools
+        id: rust-tools
+        if: matrix.check == 'audit' || matrix.check == 'coverage' || matrix.check == 'sbom'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/rust-tools
+          key: rust-tools-${{ runner.os }}-1.90.0-${{ matrix.check }}-audit-0.22.2-auditable-0.7.7-llvm-cov-0.9.1-cyclonedx-0.5.9
+      - name: Use pinned Rust tools
+        if: matrix.check == 'audit' || matrix.check == 'coverage' || matrix.check == 'sbom'
+        run: echo "$HOME/.cache/rust-tools/bin" >> "$GITHUB_PATH"
       - name: Run workspace tests
         if: matrix.check == 'test'
         env:
@@ -62,8 +72,16 @@ jobs:
       - name: Install the pinned RustSec auditor
         if: matrix.check == 'audit'
         run: |
-          cargo +1.90.0 install cargo-audit --version 0.22.2 --locked
-          cargo +1.90.0 install cargo-auditable --version 0.7.7 --locked
+          test -x ~/.cache/rust-tools/bin/cargo-audit || cargo +1.90.0 install cargo-audit --version 0.22.2 --locked --root ~/.cache/rust-tools
+          test -x ~/.cache/rust-tools/bin/cargo-auditable || cargo +1.90.0 install cargo-auditable --version 0.7.7 --locked --root ~/.cache/rust-tools
+      # actions/cache saves only when the job succeeds; save the auditor now
+      # so an audit finding does not force a rebuild on every run.
+      - name: Save the pinned RustSec auditor
+        if: matrix.check == 'audit' && steps.rust-tools.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/rust-tools
+          key: rust-tools-${{ runner.os }}-1.90.0-${{ matrix.check }}-audit-0.22.2-auditable-0.7.7-llvm-cov-0.9.1-cyclonedx-0.5.9
       - name: Audit complete dependency metadata in the server binaries
         if: matrix.check == 'audit'
         env:
@@ -80,7 +98,7 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
         run: |
           rustup component add llvm-tools-preview --toolchain 1.90.0
-          cargo +1.90.0 install cargo-llvm-cov --version 0.9.1 --locked
+          test -x ~/.cache/rust-tools/bin/cargo-llvm-cov || cargo +1.90.0 install cargo-llvm-cov --version 0.9.1 --locked --root ~/.cache/rust-tools
           mkdir -p artifacts
           python3 -m venv "$RUNNER_TEMP/python-coverage"
           "$RUNNER_TEMP/python-coverage/bin/pip" install coverage==7.10.7
@@ -94,7 +112,7 @@ jobs:
       - name: Generate the complete resolved dependency SBOM
         if: matrix.check == 'sbom'
         run: |
-          cargo +1.90.0 install cargo-cyclonedx --version 0.5.9 --locked
+          test -x ~/.cache/rust-tools/bin/cargo-cyclonedx || cargo +1.90.0 install cargo-cyclonedx --version 0.5.9 --locked --root ~/.cache/rust-tools
           cargo +1.90.0 cyclonedx --all --all-features --format json --spec-version 1.5
           mkdir -p artifacts
           find . -name '*.cdx.json' -not -path './target/*' -exec cp {} artifacts/ \;
