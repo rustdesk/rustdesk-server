@@ -31,5 +31,19 @@
       ".github/workflows/ios.yml"
     ],
     "removal_reason": "Packaged standalone lock is not used by this workspace; root Cargo.lock resolves and audits both patched crates. Packaged upstream CI workflows are omitted because they do not build these dependencies in this fork."
+  },
+  {
+    "crate": "tokio-tungstenite",
+    "version": "0.30.0",
+    "registry_package_checksum": "17a073bfed563fa236697a068031408a93cd9522e08abf9933ead3e73411bd71",
+    "changed_files": [
+      "BIFROST-PATCH.md",
+      "src/lib.rs"
+    ],
+    "removed_files": [
+      "Cargo.lock",
+      ".cargo_vcs_info.json"
+    ],
+    "removal_reason": "Packaged standalone lock is not used by this workspace; root Cargo.lock resolves and audits the patched crate. Packaging VCS metadata is not source."
   }
 ]
