@@ -42,23 +42,23 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config libsodium-dev libssl-dev libclang-dev autoconf automake libtool
       - name: Install the release Rust toolchain
-        run: rustup toolchain install 1.90.0 --profile minimal --component rustfmt --component clippy
+        run: rustup toolchain install 1.91.1 --profile minimal --component rustfmt --component clippy
       - name: Check Rust diagnostics
         if: matrix.check == 'clippy'
         env:
           CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
-        run: cargo +1.90.0 clippy --locked --workspace --all-targets --all-features -- -D warnings
+        run: cargo +1.91.1 clippy --locked --workspace --all-targets --all-features -- -D warnings
       # The clippy build generates src/version.rs, which rustfmt needs.
       - name: Check formatting without rewriting source
         if: matrix.check == 'clippy'
-        run: cargo +1.90.0 fmt --all -- --check
+        run: cargo +1.91.1 fmt --all -- --check
       - name: Restore pinned Rust tools
         id: rust-tools
         if: matrix.check == 'audit' || matrix.check == 'coverage' || matrix.check == 'sbom'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/rust-tools
-          key: rust-tools-${{ runner.os }}-1.90.0-${{ matrix.check }}-audit-0.22.2-auditable-0.7.7-llvm-cov-0.9.1-cyclonedx-0.5.9
+          key: rust-tools-${{ runner.os }}-1.91.1-${{ matrix.check }}-audit-0.22.2-auditable-0.7.7-llvm-cov-0.9.1-cyclonedx-0.5.9
       - name: Use pinned Rust tools
         if: matrix.check == 'audit' || matrix.check == 'coverage' || matrix.check == 'sbom'
         run: echo "$HOME/.cache/rust-tools/bin" >> "$GITHUB_PATH"
@@ -67,13 +67,13 @@ jobs:
         env:
           CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
         run: |
-          cargo +1.90.0 test --locked --workspace --all-features
-          cargo +1.90.0 test --locked -p dtls --lib
+          cargo +1.91.1 test --locked --workspace --all-features
+          cargo +1.91.1 test --locked -p dtls --lib
       - name: Install the pinned RustSec auditor
         if: matrix.check == 'audit'
         run: |
-          test -x ~/.cache/rust-tools/bin/cargo-audit || cargo +1.90.0 install cargo-audit --version 0.22.2 --locked --root ~/.cache/rust-tools
-          test -x ~/.cache/rust-tools/bin/cargo-auditable || cargo +1.90.0 install cargo-auditable --version 0.7.7 --locked --root ~/.cache/rust-tools
+          test -x ~/.cache/rust-tools/bin/cargo-audit || cargo +1.91.1 install cargo-audit --version 0.22.2 --locked --root ~/.cache/rust-tools
+          test -x ~/.cache/rust-tools/bin/cargo-auditable || cargo +1.91.1 install cargo-auditable --version 0.7.7 --locked --root ~/.cache/rust-tools
       # actions/cache saves only when the job succeeds; save the auditor now
       # so an audit finding does not force a rebuild on every run.
       - name: Save the pinned RustSec auditor
@@ -81,24 +81,24 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/rust-tools
-          key: rust-tools-${{ runner.os }}-1.90.0-${{ matrix.check }}-audit-0.22.2-auditable-0.7.7-llvm-cov-0.9.1-cyclonedx-0.5.9
+          key: rust-tools-${{ runner.os }}-1.91.1-${{ matrix.check }}-audit-0.22.2-auditable-0.7.7-llvm-cov-0.9.1-cyclonedx-0.5.9
       - name: Audit complete dependency metadata in the server binaries
         if: matrix.check == 'audit'
         env:
           CARGO_PROFILE_DEV_DEBUG: '0'
         run: |
-          cargo +1.90.0 auditable build --locked --bins
+          cargo +1.91.1 auditable build --locked --bins
           python3 scripts/check_auditable.py target/debug/hbbs target/debug/hbbr target/debug/rustdesk-utils
-          cargo +1.90.0 audit --deny warnings --file Cargo.lock
-          cargo +1.90.0 audit --deny warnings bin target/debug/hbbs target/debug/hbbr target/debug/rustdesk-utils
+          cargo +1.91.1 audit --deny warnings --file Cargo.lock
+          cargo +1.91.1 audit --deny warnings bin target/debug/hbbs target/debug/hbbr target/debug/rustdesk-utils
       - name: Measure workspace coverage
         if: matrix.check == 'coverage'
         env:
           SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
         run: |
-          rustup component add llvm-tools-preview --toolchain 1.90.0
-          test -x ~/.cache/rust-tools/bin/cargo-llvm-cov || cargo +1.90.0 install cargo-llvm-cov --version 0.9.1 --locked --root ~/.cache/rust-tools
+          rustup component add llvm-tools-preview --toolchain 1.91.1
+          test -x ~/.cache/rust-tools/bin/cargo-llvm-cov || cargo +1.91.1 install cargo-llvm-cov --version 0.9.1 --locked --root ~/.cache/rust-tools
           mkdir -p artifacts
           python3 -m venv "$RUNNER_TEMP/python-coverage"
           "$RUNNER_TEMP/python-coverage/bin/pip" install coverage==7.10.7
@@ -106,14 +106,14 @@ jobs:
           coverage run -m unittest discover -s tests -p 'test_*.py'
           coverage combine
           coverage xml
-          cargo +1.90.0 llvm-cov --locked --workspace --all-features --remap-path-prefix --ignore-filename-regex '(^|/)(target/|src/version\.rs$)' --lcov --output-path artifacts/lcov.info
-          cargo +1.90.0 clippy --locked --workspace --all-targets --all-features --message-format=json > artifacts/clippy.json
+          cargo +1.91.1 llvm-cov --locked --workspace --all-features --remap-path-prefix --ignore-filename-regex '(^|/)(target/|src/version\.rs$)' --lcov --output-path artifacts/lcov.info
+          cargo +1.91.1 clippy --locked --workspace --all-targets --all-features --message-format=json > artifacts/clippy.json
           python3 scripts/sonar_evidence.py write
       - name: Generate the complete resolved dependency SBOM
         if: matrix.check == 'sbom'
         run: |
-          test -x ~/.cache/rust-tools/bin/cargo-cyclonedx || cargo +1.90.0 install cargo-cyclonedx --version 0.5.9 --locked --root ~/.cache/rust-tools
-          cargo +1.90.0 cyclonedx --all --all-features --format json --spec-version 1.5
+          test -x ~/.cache/rust-tools/bin/cargo-cyclonedx || cargo +1.91.1 install cargo-cyclonedx --version 0.5.9 --locked --root ~/.cache/rust-tools
+          cargo +1.91.1 cyclonedx --all --all-features --format json --spec-version 1.5
           mkdir -p artifacts
           find . -name '*.cdx.json' -not -path './target/*' -exec cp {} artifacts/ \;
           test -n "$(find artifacts -name '*.cdx.json' -print -quit)"
@@ -173,8 +173,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config libsodium-dev libssl-dev libclang-dev autoconf automake libtool
-          rustup toolchain install 1.90.0 --profile minimal
-          rustup default 1.90.0
+          rustup toolchain install 1.91.1 --profile minimal
+          rustup default 1.91.1
       - name: Initialize source analysis
         uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4
         with:
@@ -215,8 +215,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config libsodium-dev libssl-dev libclang-dev autoconf automake libtool
-          rustup toolchain install 1.90.0 --profile minimal
-          rustup default 1.90.0
+          rustup toolchain install 1.91.1 --profile minimal
+          rustup default 1.91.1
       - name: Scan authored source with measured coverage
         uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9
         env:
@@ -269,11 +269,11 @@ jobs:
         shell: bash
         run: python scripts/apply_common_patch.py
       - name: Install the release Rust toolchain
-        run: rustup toolchain install 1.90.0 --profile minimal
+        run: rustup toolchain install 1.91.1 --profile minimal
       - name: Build and exercise the Windows sodium bindings
         env:
           CARGO_BUILD_JOBS: '1'
-        run: cargo +1.90.0 test --locked -p libsodium-sys-stable --lib
+        run: cargo +1.91.1 test --locked -p libsodium-sys-stable --lib
   admission:
     name: Repository / admission
     if: always()

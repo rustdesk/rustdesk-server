@@ -1,7 +1,18 @@
 diff --git a/Cargo.toml b/Cargo.toml
-index 6ad3012..510a1d1 100644
+index 6ad3012..ee180a3 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
+@@ -11,8 +11,8 @@ default = []
+ webrtc = ["dep:webrtc"]
+ 
+ [dependencies]
+-# new flexi_logger failed on rustc 1.75
+-flexi_logger = { version = "0.27", features = ["async"] }
++# flexi_logger 0.32 replaces the unmaintained chrono with jiff; needs rustc >= 1.91
++flexi_logger = { version = "0.32", features = ["async"] }
+ protobuf = { version = "3.7", features = ["with-bytes"] }
+ tokio = { version = "1.44", features = ["full"] }
+ tokio-util = { version = "0.7", features = ["full"] }
 @@ -21,7 +21,7 @@ bytes = { version = "1.10", features = ["serde"] }
  log = "0.4"
  env_logger = "0.11"
@@ -19,7 +30,8 @@ index 6ad3012..510a1d1 100644
 +libsodium-rs = "=0.2.5"
  regex = "1.11"
  tokio-socks = { git = "https://github.com/rustdesk-org/tokio-socks" }
- chrono = "0.4"
+-chrono = "0.4"
++jiff = "1"
  backtrace = "0.3"
  libc = "0.2"
 -dlopen = "0.1"
@@ -68,7 +80,7 @@ index 6ad3012..510a1d1 100644
 +users = { package = "uzers", version = "0.12.2" }
  x11 = "2.21"
 diff --git a/examples/webrtc.rs b/examples/webrtc.rs
-index 2c993ca..b253537 100644
+index 2c993ca..f19bda7 100644
 --- a/examples/webrtc.rs
 +++ b/examples/webrtc.rs
 @@ -3,10 +3,10 @@ extern crate hbb_common;
@@ -83,6 +95,15 @@ index 2c993ca..b253537 100644
  use tokio::time::Duration;
  
  #[cfg(not(feature = "webrtc"))]
+@@ -51,7 +51,7 @@ async fn main() -> Result<()> {
+                     record.file().unwrap_or("unknown"),
+                     record.line().unwrap_or(0),
+                     record.level(),
+-                    chrono::Local::now().format("%H:%M:%S.%6f"),
++                    jiff::ZonedDateTime::now().strftime("%H:%M:%S.%6f"),
+                     record.args()
+                 )
+             })
 @@ -74,7 +74,7 @@ async fn main() -> Result<()> {
          // Wait for the answer to be pasted
          println!(
@@ -757,10 +778,10 @@ index 3dcc1c6..c72cb76 100644
      } else {
          bail!("{path:?} not exists");
 diff --git a/src/lib.rs b/src/lib.rs
-index 2b35642..7599beb 100644
+index 2b35642..0d48b59 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -30,11 +30,11 @@ pub mod config;
+@@ -30,23 +30,20 @@ pub mod config;
  pub mod fs;
  pub mod mem;
  pub use lazy_static;
@@ -773,7 +794,10 @@ index 2b35642..7599beb 100644
  pub use tokio_socks;
  pub use tokio_socks::IntoTargetAddr;
  pub use tokio_socks::TargetAddr;
-@@ -45,8 +45,6 @@ pub use libc;
+ pub mod password_security;
+-pub use chrono;
+ pub use directories_next;
+ pub use libc;
  pub mod keyboard;
  pub use base64;
  #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -782,7 +806,7 @@ index 2b35642..7599beb 100644
  pub use machine_uid;
  pub use serde_derive;
  pub use serde_json;
-@@ -58,9 +56,9 @@ pub use uuid;
+@@ -58,9 +55,9 @@ pub use uuid;
  pub mod fingerprint;
  pub use flexi_logger;
  pub mod stream;
@@ -793,7 +817,7 @@ index 2b35642..7599beb 100644
  #[cfg(any(target_os = "android", target_os = "ios"))]
  pub use rustls_platform_verifier;
  pub use stream::Stream;
-@@ -68,9 +66,9 @@ pub use whoami;
+@@ -68,9 +65,9 @@ pub use whoami;
  pub mod tls;
  pub mod verifier;
  pub use async_recursion;
@@ -804,7 +828,7 @@ index 2b35642..7599beb 100644
  #[cfg(target_os = "linux")]
  pub use x11;
  
-@@ -122,7 +120,6 @@ pub type ResultType<F, E = anyhow::Error> = anyhow::Result<F, E>;
+@@ -122,7 +119,6 @@ pub type ResultType<F, E = anyhow::Error> = anyhow::Result<F, E>;
  
  /// Certain router and firewalls scan the packet and if they
  /// find an IP address belonging to their pool that they use to do the NAT mapping/translation, so here we mangle the ip address
@@ -812,7 +836,7 @@ index 2b35642..7599beb 100644
  pub struct AddrMangle();
  
  #[inline]
-@@ -189,7 +186,7 @@ impl AddrMangle {
+@@ -189,7 +185,7 @@ impl AddrMangle {
          let mut padded = [0u8; 16];
          padded[..bytes.len()].copy_from_slice(bytes);
          let number = u128::from_le_bytes(padded);
@@ -821,7 +845,7 @@ index 2b35642..7599beb 100644
          let ip = (((number >> 49) - tm) as u32).to_le_bytes();
          let port = (number & 0xFFFFFF) - (tm & 0xFFFF);
          SocketAddr::V4(SocketAddrV4::new(
-@@ -229,7 +226,7 @@ pub fn gen_version() {
+@@ -229,7 +225,7 @@ pub fn gen_version() {
      println!("cargo:rerun-if-changed=Cargo.toml");
      use std::io::prelude::*;
      let mut file = File::create("./src/version.rs").unwrap();
@@ -830,7 +854,16 @@ index 2b35642..7599beb 100644
          let ab: Vec<&str> = line.split('=').map(|x| x.trim()).collect();
          if ab.len() == 2 && ab[0] == "version" {
              file.write_all(format!("pub const VERSION: &str = {};\n", ab[1]).as_bytes())
-@@ -432,7 +429,10 @@ pub fn init_log(_is_async: bool, _name: &str) -> Option<flexi_logger::LoggerHand
+@@ -238,7 +234,7 @@ pub fn gen_version() {
+         }
+     }
+     // generate build date
+-    let build_date = format!("{}", chrono::Local::now().format("%Y-%m-%d %H:%M"));
++    let build_date = format!("{}", jiff::ZonedDateTime::now().strftime("%Y-%m-%d %H:%M"));
+     file.write_all(
+         format!("#[allow(dead_code)]\npub const BUILD_DATE: &str = \"{build_date}\";\n").as_bytes(),
+     )
+@@ -432,7 +428,10 @@ pub fn init_log(_is_async: bool, _name: &str) -> Option<flexi_logger::LoggerHand
          #[cfg(debug_assertions)]
          {
              use env_logger::*;
@@ -842,7 +875,7 @@ index 2b35642..7599beb 100644
          }
          #[cfg(not(debug_assertions))]
          {
-@@ -447,7 +447,9 @@ pub fn init_log(_is_async: bool, _name: &str) -> Option<flexi_logger::LoggerHand
+@@ -447,7 +446,9 @@ pub fn init_log(_is_async: bool, _name: &str) -> Option<flexi_logger::LoggerHand
                  path.push(_name);
              }
              use flexi_logger::*;
@@ -853,7 +886,7 @@ index 2b35642..7599beb 100644
                  logger_holder = x
                      .log_to_file(FileSpec::default().directory(path))
                      .write_mode(if _is_async {
-@@ -631,3 +633,35 @@ mod test {
+@@ -631,3 +632,35 @@ mod test {
          assert_eq!(get_version_number("1.2.3"), 1002030);
      }
  }

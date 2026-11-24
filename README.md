@@ -33,14 +33,14 @@ Self-host your own RustDesk server, it is free and open source.
 
 ## How to build manually
 
-Use Rust 1.90.0 and install the native build prerequisites listed in
+Use Rust 1.91.1 and install the native build prerequisites listed in
 `.github/workflows/repo-validation.yml`. Apply the recorded common-library patch
 before building; its script rejects modified or incompatible preimages.
 
 ```bash
 git submodule update --init --recursive
 python3 scripts/apply_common_patch.py
-cargo +1.90.0 build --locked --release
+cargo +1.91.1 build --locked --release
 ```
 
 Three executables will be generated in target/release.

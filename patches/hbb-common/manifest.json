@@ -1,14 +1,14 @@
 {
   "revision": "69cea8dafee147848ae88702029f4bf7df7224c3",
-  "patch_sha256": "390e6baaeab6ead17a3f36f6bc90655c879b941dd0ad64614f0c8b35da3b4a50",
+  "patch_sha256": "beaeb61c33030e7904209fd05a961f1c2044f357b0d3cd48143006b297c52ada",
   "files": {
     "Cargo.toml": {
       "before": "54f297e75dfa0748c7d06d1e251811e369b6f9aa7d566716c150efad2720556f",
-      "after": "a710d09ce783d3e169374884ae2c98e9957e7f8acfde841ef68653f3c43f8e81"
+      "after": "c332d05242416151fdb450e9182063902fcdc70d01766014734b1dd98201a433"
     },
     "examples/webrtc.rs": {
       "before": "d892faf0748e4e49fbb57baae41f36ebd630925107489a5b17372dc6e9ea1c03",
-      "after": "020517a7bb7cdc7d6c8fb4bf0fae83e9377dd8d08862ae94a2ab1722cad4382b"
+      "after": "4a0467754a360aa4b23096fe36aeee00eca4269382b4d41e6a9b19c825195e11"
     },
     "src/config.rs": {
       "before": "119c3f587eadbf22a5cad29d1501bf2cff68ad2faecec62c861d721d0e524184",
@@ -28,7 +28,7 @@
     },
     "src/lib.rs": {
       "before": "71fe3406431ff01d8b2c2282028da99936d321787e2147db6fa999663c9f4b49",
-      "after": "49f8c23748b0906d3631797e4c857fdf510e19f3910348e91bcddda39626ca57"
+      "after": "558898d4c24d2a31dd9631162bd45715723cea6b18858f407738008c66e91198"
     },
     "src/password_security.rs": {
       "before": "06de2ef3230b9ed9209cd1b93cec32dbf107eb27d60d7eff44382c5ace4e5bd5",

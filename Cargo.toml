@@ -3,7 +3,7 @@ name = "hbbs"
 version = "1.1.17"
 authors = ["rustdesk <info@rustdesk.com>"]
 edition = "2021"
-rust-version = "1.90"
+rust-version = "1.91"
 build = "build.rs"
 default-run = "hbbs"
 
@@ -30,13 +30,13 @@ deadpool = { version = "0.8", default-features = false, features = ["managed", "
 async-trait = "0.1"
 async-speed-limit = { git = "https://github.com/open-trade/async-speed-limit" }
 uuid = { version = "1.0", features = ["v4"] }
-chrono = "0.4"
+jiff = "1"
 once_cell = "1.8"
 libsodium-rs = "=0.2.5"
 tempfile = "=3.27.0"
 tokio-tungstenite = "0.30"
 tungstenite = "0.30"
-flexi_logger = { version = "0.27", features = ["async", "dont_minimize_extra_stacks"] }
+flexi_logger = { version = "0.32", features = ["async", "dont_minimize_extra_stacks"] }
 ipnetwork = "0.20"
 local-ip-address = "0.5.1"
 dns-lookup = "1.0.8"

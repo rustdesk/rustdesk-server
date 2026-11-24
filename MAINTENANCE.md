@@ -6,16 +6,16 @@ qualify the other; each has its own dependency lockfile and common-library patch
 
 ## Local source checks
 
-Initialize recursive submodules, then run these commands with Rust 1.90.0 and
+Initialize recursive submodules, then run these commands with Rust 1.91.1 and
 the repository's native build prerequisites installed:
 
 ```sh
 python3 -m unittest discover -s tests -p 'test_*.py'
 python3 scripts/apply_common_patch.py
-cargo +1.90.0 check --locked --workspace
-cargo +1.90.0 fmt --all -- --check
-cargo +1.90.0 clippy --locked --workspace --all-targets --all-features -- -D warnings
-cargo +1.90.0 test --locked --workspace --all-features
+cargo +1.91.1 check --locked --workspace
+cargo +1.91.1 fmt --all -- --check
+cargo +1.91.1 clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo +1.91.1 test --locked --workspace --all-features
 ```
 
 The native check generates `src/version.rs` for the formatting check. The common

@@ -19,7 +19,7 @@ def identity():
         "head": head,
         "base": os.environ["BASE_SHA"],
         "patch_manifest": hashlib.sha256((ROOT / "patches/hbb-common/manifest.json").read_bytes()).hexdigest(),
-        "toolchain": "1.90.0",
+        "toolchain": "1.91.1",
         "features": "workspace/all-features",
         "reports": {name: hashlib.sha256((ROOT / "artifacts" / name).read_bytes()).hexdigest() for name in REPORTS},
     }

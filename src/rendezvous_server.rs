@@ -1149,8 +1149,9 @@ impl RendezvousServer {
                     for (_, e) in lock.iter().enumerate().skip(start).take(page_size) {
                         let age = e.tm.elapsed();
                         let event_system = std::time::SystemTime::now() - age;
-                        let event_iso = chrono::DateTime::<chrono::Utc>::from(event_system)
-                            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+                        let event_iso = jiff::Timestamp::try_from(event_system)
+                            .map(|ts| ts.strftime("%Y-%m-%dT%H:%M:%SZ").to_string())
+                            .unwrap_or_default();
                         let _ = writeln!(
                             res,
                             "{} {} -> {}@{}",

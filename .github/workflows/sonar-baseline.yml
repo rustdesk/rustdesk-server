@@ -43,10 +43,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config libsodium-dev libssl-dev libclang-dev autoconf automake libtool
-          rustup toolchain install 1.90.0 --profile minimal
-          rustup component add llvm-tools-preview --toolchain 1.90.0
-          cargo +1.90.0 install cargo-llvm-cov --version 0.9.1 --locked
-          rustup default 1.90.0
+          rustup toolchain install 1.91.1 --profile minimal
+          rustup component add llvm-tools-preview --toolchain 1.91.1
+          cargo +1.91.1 install cargo-llvm-cov --version 0.9.1 --locked
+          rustup default 1.91.1
           python3 - <<'PYTHON'
           from pathlib import Path
           properties = []
@@ -61,7 +61,7 @@ jobs:
           PYTHON
           cd baseline
           mkdir -p artifacts
-          cargo +1.90.0 llvm-cov --locked --workspace --all-features --remap-path-prefix --ignore-filename-regex '(^|/)(target/|src/version\.rs$)' --lcov --output-path artifacts/lcov.info
+          cargo +1.91.1 llvm-cov --locked --workspace --all-features --remap-path-prefix --ignore-filename-regex '(^|/)(target/|src/version\.rs$)' --lcov --output-path artifacts/lcov.info
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         if: steps.baseline.outputs.needed == 'true'
         with:
