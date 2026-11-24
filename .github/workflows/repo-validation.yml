@@ -53,6 +53,7 @@ jobs:
         if: matrix.check == 'clippy'
         run: cargo +1.90.0 fmt --all -- --check
       - name: Restore pinned Rust tools
+        id: rust-tools
         if: matrix.check == 'audit' || matrix.check == 'coverage' || matrix.check == 'sbom'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -73,6 +74,14 @@ jobs:
         run: |
           test -x ~/.cache/rust-tools/bin/cargo-audit || cargo +1.90.0 install cargo-audit --version 0.22.2 --locked --root ~/.cache/rust-tools
           test -x ~/.cache/rust-tools/bin/cargo-auditable || cargo +1.90.0 install cargo-auditable --version 0.7.7 --locked --root ~/.cache/rust-tools
+      # actions/cache saves only when the job succeeds; save the auditor now
+      # so an audit finding does not force a rebuild on every run.
+      - name: Save the pinned RustSec auditor
+        if: matrix.check == 'audit' && steps.rust-tools.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/rust-tools
+          key: rust-tools-${{ runner.os }}-1.90.0-${{ matrix.check }}-audit-0.22.2-auditable-0.7.7-llvm-cov-0.9.1-cyclonedx-0.5.9
       - name: Audit complete dependency metadata in the server binaries
         if: matrix.check == 'audit'
         env:
