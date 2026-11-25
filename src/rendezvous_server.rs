@@ -211,6 +211,7 @@ impl RendezvousServer {
             }),
         };
         log::info!("mask: {:?}", rs.inner.mask);
+        log::info!("initiator networks: {:?}", crate::common::initiator_networks());
         log::info!("local-ip: {:?}", rs.inner.local_ip);
         std::env::set_var("PORT_FOR_API", port.to_string());
         rs.parse_relay_servers(&get_arg("relay-servers"));
@@ -568,6 +569,7 @@ impl RendezvousServer {
         addr: SocketAddr,
         key: &str,
         ws: bool,
+        allowed: bool,
     ) -> bool {
         if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(bytes) {
             match msg_in.union {
@@ -576,7 +578,7 @@ impl RendezvousServer {
                     if let Some(sink) = sink.take() {
                         self.tcp_punch.lock().await.insert(try_into_v4(addr), sink);
                     }
-                    allow_err!(self.handle_tcp_punch_hole_request(addr, ph, key, ws).await);
+                    allow_err!(self.handle_tcp_punch_hole_request(addr, ph, key, ws, allowed).await);
                     return true;
                 }
                 Some(rendezvous_message::Union::RequestRelay(mut rf)) => {
@@ -590,6 +592,16 @@ impl RendezvousServer {
                     // there maybe several attempt, so sink can be none
                     if let Some(sink) = sink.take() {
                         self.tcp_punch.lock().await.insert(try_into_v4(addr), sink);
+                    }
+                    if !allowed {
+                        log::warn!("Relay request from {} for peer {} refused: outside initiator networks", addr, rf.id);
+                        let mut msg_out = RendezvousMessage::new();
+                        msg_out.set_relay_response(RelayResponse {
+                            refuse_reason: crate::common::INITIATOR_REFUSED.to_owned(),
+                            ..Default::default()
+                        });
+                        allow_err!(self.send_to_tcp_sync(msg_out, addr).await);
+                        return true;
                     }
                     if let Some(peer) = self.pm.get_in_memory(&rf.id).await {
                         let mut msg_out = RendezvousMessage::new();
@@ -780,6 +792,7 @@ impl RendezvousServer {
         ph: PunchHoleRequest,
         key: &str,
         ws: bool,
+        allowed: bool,
     ) -> ResultType<(RendezvousMessage, Option<SocketAddr>)> {
         let mut ph = ph;
         if !key.is_empty() && ph.licence_key != key {
@@ -787,6 +800,16 @@ impl RendezvousServer {
             let mut msg_out = RendezvousMessage::new();
             msg_out.set_punch_hole_response(PunchHoleResponse {
                 failure: punch_hole_response::Failure::LICENSE_MISMATCH.into(),
+                ..Default::default()
+            });
+            return Ok((msg_out, None));
+        }
+        // After the key, so that a wrong key is still reported as such.
+        if !allowed {
+            log::warn!("Punch hole request from {} for peer {} refused: outside initiator networks", addr, ph.id);
+            let mut msg_out = RendezvousMessage::new();
+            msg_out.set_punch_hole_response(PunchHoleResponse {
+                other_failure: crate::common::INITIATOR_REFUSED.to_owned(),
                 ..Default::default()
             });
             return Ok((msg_out, None));
@@ -947,8 +970,9 @@ impl RendezvousServer {
         ph: PunchHoleRequest,
         key: &str,
         ws: bool,
+        allowed: bool,
     ) -> ResultType<()> {
-        let (msg, to_addr) = self.handle_punch_hole_request(addr, ph, key, ws).await?;
+        let (msg, to_addr) = self.handle_punch_hole_request(addr, ph, key, ws, allowed).await?;
         if let Some(addr) = to_addr {
             self.tx.send(Data::Msg(msg.into(), addr))?;
         } else {
@@ -964,7 +988,8 @@ impl RendezvousServer {
         ph: PunchHoleRequest,
         key: &str,
     ) -> ResultType<()> {
-        let (msg, to_addr) = self.handle_punch_hole_request(addr, ph, key, false).await?;
+        let allowed = crate::common::initiator_allowed(addr);
+        let (msg, to_addr) = self.handle_punch_hole_request(addr, ph, key, false, allowed).await?;
         self.tx.send(Data::Msg(
             msg.into(),
             match to_addr {
@@ -1251,6 +1276,8 @@ impl RendezvousServer {
         key: &str,
         ws: bool,
     ) -> ResultType<()> {
+        // Judged on the real TCP peer address, before any X-Real-IP header replaces it.
+        let allowed = crate::common::initiator_allowed(addr);
         let mut sink;
         if ws {
             use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
@@ -1290,7 +1317,7 @@ impl RendezvousServer {
             sink = Some(Sink::Ws(a));
             while let Ok(Some(Ok(msg))) = timeout(30_000, b.next()).await {
                 if let tungstenite::Message::Binary(bytes) = msg {
-                    if !self.handle_tcp(&bytes, &mut sink, addr, key, ws).await {
+                    if !self.handle_tcp(&bytes, &mut sink, addr, key, ws, allowed).await {
                         break;
                     }
                 }
@@ -1301,7 +1328,7 @@ impl RendezvousServer {
             let (a, mut b) = framed.split();
             sink = Some(Sink::TcpStream(a));
             while let Ok(Some(Ok(bytes))) = timeout(30_000, b.next()).await {
-                if !self.handle_tcp(&bytes, &mut sink, addr, key, ws).await {
+                if !self.handle_tcp(&bytes, &mut sink, addr, key, ws, allowed).await {
                     break;
                 }
             }

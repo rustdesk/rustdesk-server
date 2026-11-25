@@ -46,6 +46,7 @@ in the inherited process environment.
 | *(config file)* | `-c`, `--config` | *(none)* | Path to an extra INI config file (see precedence above). |
 | `TEST_HBBS` 🅴 | *(none)* | *(auto)* | UDP self‑test target checked at start‑up. Set to `no` to skip the check (useful behind some NATs/proxies), or to an explicit `host:port`. |
 | `ALWAYS_USE_RELAY` 🅴 | *(none)* | `N` | `Y` forces every session through a relay (disables direct/hole‑punched connections). At runtime, send `always-use-relay Y` or `always-use-relay N` to the `hbbs` [loopback console](#runtime-console). |
+| `INITIATOR_NETWORKS` | *(none)* | *(empty)* | Comma-separated CIDR networks allowed to request sessions (connection or relay), e.g. `100.64.0.0/10,fd7a:115c:a1e0::/48` for a Tailscale tailnet. A request from elsewhere gets a reason the client displays; the key is checked first, so a wrong key is still reported as such. Peers still register and answer from anywhere. The real TCP peer address is checked, never `X-Real-IP`. Empty: no restriction. An invalid entry stops the server. Supported by `.env` and the inherited environment. |
 | `DB_URL` 🅴 | *(none)* | `./db_v2.sqlite3` | Path/URL of the SQLite database file. See [Database](#database). |
 | `MAX_DATABASE_CONNECTIONS` 🅴 | *(none)* | `1` | Size of the SQLite connection pool. |
 | `MAX_PUNCH_REQUESTS` 🅴 | *(none)* | `100000` | Number of punch-request records kept in memory for the `punch-requests` [console](#runtime-console) command; the oldest is dropped when full. `0` disables recording. |
@@ -65,6 +66,7 @@ in the inherited process environment.
 | `KEY` | `-k`, `--key` | *(empty)* | The empty default intentionally disables relay key validation, avoiding key-pair setup and mismatch failures. To enable relay key validation, use the same non-empty key as `hbbs`; `-` / `_` have the same behavior and load or generate a key pair. An empty key allows clients without a matching key to use the relay, so choose this tradeoff deliberately on an exposed server. |
 | `BIND` | `-b`, `--bind` | all interfaces | **Available since 1.1.17.** Local IPv4 or IPv6 address on which the relay TCP and WebSocket listeners bind. Supported by `.env` and the inherited environment; `hbbr` does not support `--config`. |
 | `PORT` | `-p`, `--port` | `21117` | Relay listening port. `hbbr` also binds `PORT+2` for WebSocket relay. **Note:** when set via the `PORT` env var (not `-p`), `hbbr` listens on `PORT + 1`, so a shared `PORT=21116` makes `hbbs`=21116 and `hbbr`=21117. |
+| `INITIATOR_NETWORKS` | *(none)* | *(empty)* | Same networks as `hbbs`: two relay legs are paired only if at least one of them comes from these networks (real TCP peer address). Empty: no restriction. |
 
 ### Relay bandwidth / QoS
 

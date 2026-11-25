@@ -10,8 +10,60 @@ use std::{
     io::Read,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
+    sync::OnceLock,
     time::{Instant, SystemTime},
 };
+
+/// Reason shown by the client when a session is requested from outside `INITIATOR_NETWORKS`.
+pub const INITIATOR_REFUSED: &str =
+    "This server only accepts sessions requested from its allowed networks";
+
+/// Parses `INITIATOR_NETWORKS`: comma-separated CIDR networks, e.g.
+/// `100.64.0.0/10,fd7a:115c:a1e0::/48` for a Tailscale tailnet. Empty: no restriction.
+pub fn parse_initiator_networks(value: &str) -> Result<Vec<ipnetwork::IpNetwork>, String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| {
+            entry
+                .parse::<ipnetwork::IpNetwork>()
+                .map_err(|err| format!("invalid INITIATOR_NETWORKS entry {entry:?}: {err}"))
+        })
+        .collect()
+}
+
+/// Networks allowed to request a session (punch hole or relay), read once from
+/// `INITIATOR_NETWORKS`. Registration and answers from the requested peer are never restricted.
+/// An unparsable entry stops the program, so that a typo cannot silently leave the server open.
+pub fn initiator_networks() -> &'static [ipnetwork::IpNetwork] {
+    static NETWORKS: OnceLock<Vec<ipnetwork::IpNetwork>> = OnceLock::new();
+    NETWORKS.get_or_init(|| {
+        match parse_initiator_networks(&get_arg("initiator-networks")) {
+            Ok(networks) => networks,
+            Err(err) => {
+                // The logger may not be ready yet.
+                eprintln!("Fatal error: {err}");
+                std::process::exit(1);
+            }
+        }
+    })
+}
+
+/// Whether `addr` may request a session: no restriction, or inside one of `networks`.
+/// Always pass the real TCP peer address, never one taken from an `X-Real-IP` header.
+pub fn is_allowed_initiator(networks: &[ipnetwork::IpNetwork], addr: SocketAddr) -> bool {
+    if networks.is_empty() {
+        return true;
+    }
+    let ip = hbb_common::try_into_v4(addr).ip();
+    networks.iter().any(|network| network.contains(ip))
+}
+
+/// [`is_allowed_initiator`] with the configured [`initiator_networks`].
+pub fn initiator_allowed(addr: SocketAddr) -> bool {
+    is_allowed_initiator(initiator_networks(), addr)
+}
 
 pub fn parse_bind_address(value: &str) -> Result<Option<IpAddr>> {
     let value = value.trim();
@@ -456,6 +508,26 @@ async fn check_software_update_() -> hbb_common::ResultType<()> {
 mod tests {
     use super::*;
     use std::net::{Ipv4Addr, Ipv6Addr};
+
+    #[test]
+    fn initiator_networks_parse_and_match() {
+        assert!(parse_initiator_networks("").unwrap().is_empty());
+        assert!(parse_initiator_networks(" , ").unwrap().is_empty());
+        assert!(parse_initiator_networks("100.64.0.0/10,not-a-network").is_err());
+        let networks = parse_initiator_networks(" 100.64.0.0/10 , fd7a:115c:a1e0::/48 ").unwrap();
+        assert_eq!(networks.len(), 2);
+        let v4 = |a, b, c, d| SocketAddr::new(IpAddr::V4(Ipv4Addr::new(a, b, c, d)), 1);
+        assert!(is_allowed_initiator(&networks, v4(100, 101, 2, 3)));
+        assert!(!is_allowed_initiator(&networks, v4(203, 0, 113, 7)));
+        // IPv4-mapped IPv6, as seen on a dual-stack listener.
+        let mapped = Ipv4Addr::new(100, 101, 2, 3).to_ipv6_mapped();
+        assert!(is_allowed_initiator(&networks, SocketAddr::new(IpAddr::V6(mapped), 1)));
+        let v6 = |s: &str| SocketAddr::new(IpAddr::V6(s.parse::<Ipv6Addr>().unwrap()), 1);
+        assert!(is_allowed_initiator(&networks, v6("fd7a:115c:a1e0::1234")));
+        assert!(!is_allowed_initiator(&networks, v6("2001:db8::1")));
+        // No restriction when no network is configured.
+        assert!(is_allowed_initiator(&[], v4(203, 0, 113, 7)));
+    }
 
     #[test]
     fn argument_names_ignore_case_and_separator() {
