@@ -211,7 +211,8 @@ impl RendezvousServer {
             }),
         };
         log::info!("mask: {:?}", rs.inner.mask);
-        log::info!("initiator networks: {:?}", crate::common::initiator_networks());
+        let initiator_networks = crate::common::initiator_networks();
+        log::info!("initiator networks: {:?}", initiator_networks);
         log::info!("local-ip: {:?}", rs.inner.local_ip);
         std::env::set_var("PORT_FOR_API", port.to_string());
         rs.parse_relay_servers(&get_arg("relay-servers"));

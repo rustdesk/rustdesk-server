@@ -64,7 +64,8 @@ pub async fn start_with_bind(
     key: &str,
 ) -> ResultType<()> {
     let key = get_server_sk(key)?;
-    log::info!("initiator networks: {:?}", crate::common::initiator_networks());
+    let initiator_networks = crate::common::initiator_networks();
+    log::info!("initiator networks: {:?}", initiator_networks);
     if let Ok(mut file) = std::fs::File::open(BLACKLIST_FILE) {
         let mut contents = String::new();
         if file.read_to_string(&mut contents).is_ok() {
@@ -973,6 +974,77 @@ mod message_size_tests {
             .expect("relay did not forward the websocket message")
             .unwrap();
         assert_eq!(&got[..], &big[..]);
+    }
+}
+
+#[cfg(test)]
+mod initiator_tests {
+    use super::*;
+
+    /// Serves one relay leg, judged allowed or not as `INITIATOR_NETWORKS` would.
+    async fn serve_leg(allowed: bool) -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (stream, addr) = listener.accept().await.unwrap();
+            allow_err!(make_pair(stream, addr, "", <Limiter>::new(f64::INFINITY), false, allowed).await);
+        });
+        addr
+    }
+
+    async fn request_relay(addr: SocketAddr, uuid: &str) -> FramedStream {
+        let mut leg = FramedStream::from(TcpStream::connect(addr).await.unwrap(), addr);
+        let mut msg = RendezvousMessage::new();
+        msg.set_request_relay(RequestRelay {
+            uuid: uuid.to_owned(),
+            ..Default::default()
+        });
+        leg.send_bytes(msg.write_to_bytes().unwrap().into()).await.unwrap();
+        leg
+    }
+
+    async fn wait_for(uuid: &str, parked: bool) {
+        timeout(5_000, async {
+            while PEERS.lock().await.contains_key(uuid) != parked {
+                sleep(0.01).await;
+            }
+        })
+        .await
+        .expect("relay leg state never changed");
+    }
+
+    /// Whether a leg was closed by the relay, as opposed to still open after the timeout.
+    async fn closed(leg: &mut FramedStream) -> bool {
+        matches!(timeout(5_000, leg.next()).await, Ok(None) | Ok(Some(Err(_))))
+    }
+
+    /// Parks a first leg, sends the second one, and tells whether a frame crosses the relay.
+    /// When it does not, both legs must have been closed.
+    async fn pairs(first_allowed: bool, second_allowed: bool) -> bool {
+        let uuid = format!("initiator-{first_allowed}-{second_allowed}");
+        let first_addr = serve_leg(first_allowed).await;
+        let second_addr = serve_leg(second_allowed).await;
+        let mut first = request_relay(first_addr, &uuid).await;
+        wait_for(&uuid, true).await;
+        let mut second = request_relay(second_addr, &uuid).await;
+        wait_for(&uuid, false).await;
+        if second.send_bytes(Bytes::from_static(b"session")).await.is_ok() {
+            if let Ok(Some(Ok(bytes))) = timeout(5_000, first.next()).await {
+                assert_eq!(&bytes[..], b"session");
+                return true;
+            }
+        }
+        assert!(closed(&mut first).await, "refused waiting leg was left open");
+        assert!(closed(&mut second).await, "refused pairing leg was left open");
+        false
+    }
+
+    #[hbb_common::tokio::test]
+    async fn relay_pairs_only_when_a_leg_is_allowed() {
+        assert!(pairs(true, true).await, "two allowed legs");
+        assert!(pairs(true, false).await, "allowed leg first");
+        assert!(pairs(false, true).await, "allowed leg second");
+        assert!(!pairs(false, false).await, "two outside legs");
     }
 }
 

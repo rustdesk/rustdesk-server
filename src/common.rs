@@ -19,9 +19,10 @@ pub const INITIATOR_REFUSED: &str =
     "This server only accepts sessions requested from its allowed networks";
 
 /// Parses `INITIATOR_NETWORKS`: comma-separated CIDR networks, e.g.
-/// `100.64.0.0/10,fd7a:115c:a1e0::/48` for a Tailscale tailnet. Empty: no restriction.
+/// `100.64.0.0/10,fd7a:115c:a1e0::/48` for a Tailscale tailnet. Empty or blank: no restriction.
+/// A non-blank value that yields no network (such as `,`) is an error, not "no restriction".
 pub fn parse_initiator_networks(value: &str) -> Result<Vec<ipnetwork::IpNetwork>, String> {
-    value
+    let networks = value
         .split(',')
         .map(str::trim)
         .filter(|entry| !entry.is_empty())
@@ -30,7 +31,11 @@ pub fn parse_initiator_networks(value: &str) -> Result<Vec<ipnetwork::IpNetwork>
                 .parse::<ipnetwork::IpNetwork>()
                 .map_err(|err| format!("invalid INITIATOR_NETWORKS entry {entry:?}: {err}"))
         })
-        .collect()
+        .collect::<Result<Vec<_>, _>>()?;
+    if networks.is_empty() && !value.trim().is_empty() {
+        return Err(format!("invalid INITIATOR_NETWORKS value {value:?}: no network"));
+    }
+    Ok(networks)
 }
 
 /// Networks allowed to request a session (punch hole or relay), read once from
@@ -512,7 +517,10 @@ mod tests {
     #[test]
     fn initiator_networks_parse_and_match() {
         assert!(parse_initiator_networks("").unwrap().is_empty());
-        assert!(parse_initiator_networks(" , ").unwrap().is_empty());
+        assert!(parse_initiator_networks("  ").unwrap().is_empty());
+        // Delimiters only: a typo, which must not silently mean "no restriction".
+        assert!(parse_initiator_networks(" , ").is_err());
+        assert!(parse_initiator_networks(",,,").is_err());
         assert!(parse_initiator_networks("100.64.0.0/10,not-a-network").is_err());
         let networks = parse_initiator_networks(" 100.64.0.0/10 , fd7a:115c:a1e0::/48 ").unwrap();
         assert_eq!(networks.len(), 2);
