@@ -29,6 +29,7 @@ pub fn parse_initiator_networks(value: &str) -> Result<Vec<ipnetwork::IpNetwork>
         .map(|entry| {
             entry
                 .parse::<ipnetwork::IpNetwork>()
+                .map(ipv4_form)
                 .map_err(|err| format!("invalid INITIATOR_NETWORKS entry {entry:?}: {err}"))
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -36,6 +37,19 @@ pub fn parse_initiator_networks(value: &str) -> Result<Vec<ipnetwork::IpNetwork>
         return Err(format!("invalid INITIATOR_NETWORKS value {value:?}: no network"));
     }
     Ok(networks)
+}
+
+/// Peers are compared in IPv4 form when they have one (`try_into_v4`), so an IPv4-mapped IPv6
+/// network such as `::ffff:100.64.0.0/106` is turned into its IPv4 form, or it would never match.
+fn ipv4_form(network: ipnetwork::IpNetwork) -> ipnetwork::IpNetwork {
+    if let ipnetwork::IpNetwork::V6(v6) = network {
+        if let (Some(ip), Some(prefix)) = (v6.ip().to_ipv4_mapped(), v6.prefix().checked_sub(96)) {
+            if let Ok(v4) = ipnetwork::Ipv4Network::new(ip, prefix) {
+                return ipnetwork::IpNetwork::V4(v4);
+            }
+        }
+    }
+    network
 }
 
 /// Networks allowed to request a session (punch hole or relay), read once from
@@ -533,6 +547,11 @@ mod tests {
         let v6 = |s: &str| SocketAddr::new(IpAddr::V6(s.parse::<Ipv6Addr>().unwrap()), 1);
         assert!(is_allowed_initiator(&networks, v6("fd7a:115c:a1e0::1234")));
         assert!(!is_allowed_initiator(&networks, v6("2001:db8::1")));
+        // An IPv4-mapped IPv6 network matches like its IPv4 form.
+        let mapped_networks = parse_initiator_networks("::ffff:100.64.0.0/106").unwrap();
+        assert!(is_allowed_initiator(&mapped_networks, v4(100, 101, 2, 3)));
+        assert!(is_allowed_initiator(&mapped_networks, SocketAddr::new(IpAddr::V6(mapped), 1)));
+        assert!(!is_allowed_initiator(&mapped_networks, v4(203, 0, 113, 7)));
         // No restriction when no network is configured.
         assert!(is_allowed_initiator(&[], v4(203, 0, 113, 7)));
     }
