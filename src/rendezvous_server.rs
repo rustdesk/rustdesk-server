@@ -83,6 +83,15 @@ fn validate_relay_response(uuid: &str, relay_server: &str) -> Result<(), &'stati
     validate_relay_uuid(uuid)
 }
 
+fn relay_request_for_peer(request: RequestRelay, addr: SocketAddr) -> RequestRelay {
+    RequestRelay {
+        socket_addr: AddrMangle::encode(addr).into(),
+        // The peer treats a forwarded policy as a server authorization.
+        control_permissions: MessageField::none(),
+        ..request
+    }
+}
+
 // An online query for about 5000 ids is the largest message a client sends here.
 const DEFAULT_MAX_MESSAGE_KB: usize = 64;
 // A knob that can be turned to unbounded is not a bound.
@@ -579,7 +588,7 @@ impl RendezvousServer {
                     allow_err!(self.handle_tcp_punch_hole_request(addr, ph, key, ws).await);
                     return true;
                 }
-                Some(rendezvous_message::Union::RequestRelay(mut rf)) => {
+                Some(rendezvous_message::Union::RequestRelay(rf)) => {
                     if let Err(err) = validate_relay_uuid(&rf.uuid) {
                         log::warn!(
                             "Drop RequestRelay from {addr}: {err} (length {})",
@@ -593,8 +602,7 @@ impl RendezvousServer {
                     }
                     if let Some(peer) = self.pm.get_in_memory(&rf.id).await {
                         let mut msg_out = RendezvousMessage::new();
-                        rf.socket_addr = AddrMangle::encode(addr).into();
-                        msg_out.set_request_relay(rf);
+                        msg_out.set_request_relay(relay_request_for_peer(rf, addr));
                         let peer_addr = peer.read().await.socket_addr;
                         self.tx.send(Data::Msg(msg_out.into(), peer_addr)).ok();
                     }
@@ -1514,6 +1522,21 @@ mod tests {
         });
         let len = msg.write_to_bytes().unwrap().len();
         assert!(len <= DEFAULT_MAX_MESSAGE_KB << 10, "{len}");
+    }
+
+    #[test]
+    fn forwarded_relay_request_omits_controller_permissions() {
+        const KEYBOARD_ENABLED: u64 = 2;
+        let addr = (Ipv4Addr::LOCALHOST, 12345).into();
+        let mut request = RequestRelay::new();
+        request.uuid = "relay-session".into();
+        let policy = request.control_permissions.mut_or_insert_default();
+        policy.permissions = KEYBOARD_ENABLED;
+
+        let forwarded = relay_request_for_peer(request, addr);
+        assert!(forwarded.control_permissions.is_none());
+        assert_eq!(forwarded.uuid, "relay-session");
+        assert_eq!(AddrMangle::decode(&forwarded.socket_addr), addr);
     }
 
     #[test]
