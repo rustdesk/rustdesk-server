@@ -30,7 +30,9 @@ use std::{
 };
 
 type Usage = (usize, usize, usize, usize);
-type WaitingPeer = (Arc<()>, Box<dyn StreamTrait>);
+/// A waiting relay leg: its generation, its stream, and whether it comes from
+/// `INITIATOR_NETWORKS` (read together with the stream when pairing).
+type WaitingPeer = (Arc<()>, Box<dyn StreamTrait>, bool);
 
 lazy_static::lazy_static! {
     static ref PEERS: Mutex<HashMap<String, WaitingPeer>> = Default::default();
@@ -62,6 +64,8 @@ pub async fn start_with_bind(
     key: &str,
 ) -> ResultType<()> {
     let key = get_server_sk(key)?;
+    let initiator_networks = crate::common::initiator_networks();
+    log::info!("initiator networks: {:?}", initiator_networks);
     if let Ok(mut file) = std::fs::File::open(BLACKLIST_FILE) {
         let mut contents = String::new();
         if file.read_to_string(&mut contents).is_ok() {
@@ -428,10 +432,12 @@ async fn handle_connection(
         log::info!("{} blocked", ip);
         return;
     }
+    // Judged on the real TCP peer address, before any X-Real-IP header replaces it.
+    let allowed = crate::common::initiator_allowed(addr);
     let key = key.to_owned();
     let limiter = limiter.clone();
     tokio::spawn(async move {
-        allow_err!(make_pair(stream, addr, &key, limiter, ws).await);
+        allow_err!(make_pair(stream, addr, &key, limiter, ws, allowed).await);
     });
 }
 
@@ -442,6 +448,7 @@ async fn make_pair(
     key: &str,
     limiter: Limiter,
     ws: bool,
+    allowed: bool,
 ) -> ResultType<()> {
     if ws {
         use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
@@ -476,15 +483,21 @@ async fn make_pair(
             tokio_tungstenite::accept_hdr_async_with_config(stream, callback, Some(ws_config)),
         )
         .await??;
-        make_pair_(ws_stream, addr, key, limiter).await;
+        make_pair_(ws_stream, addr, key, limiter, allowed).await;
     } else {
-        make_pair_(FramedStream::from(stream, addr), addr, key, limiter).await;
+        make_pair_(FramedStream::from(stream, addr), addr, key, limiter, allowed).await;
     }
     Ok(())
 }
 
 /// Checks a configured relay key and pairs a request with a waiting connection.
-async fn make_pair_(stream: impl StreamTrait, addr: SocketAddr, key: &str, limiter: Limiter) {
+async fn make_pair_(
+    stream: impl StreamTrait,
+    addr: SocketAddr,
+    key: &str,
+    limiter: Limiter,
+    allowed: bool,
+) {
     let mut stream = stream;
     stream.set_max_packet_length(MAX_RELAY_REQUEST_LEN);
     if let Ok(Some(Ok(bytes))) = timeout(30_000, stream.recv()).await {
@@ -496,8 +509,14 @@ async fn make_pair_(stream: impl StreamTrait, addr: SocketAddr, key: &str, limit
                 }
                 if !rf.uuid.is_empty() {
                     let mut peers = PEERS.lock().await;
-                    if let Some((_, mut peer)) = peers.remove(&rf.uuid) {
+                    if let Some((_, mut peer, peer_allowed)) = peers.remove(&rf.uuid) {
                         drop(peers);
+                        // A relayed session needs at least one leg from INITIATOR_NETWORKS:
+                        // otherwise both legs are dropped here.
+                        if !allowed && !peer_allowed {
+                            log::warn!("Relay request {} from {} refused: neither side in initiator networks", rf.uuid, addr);
+                            return;
+                        }
                         log::info!("Relayrequest {} from {} got paired", rf.uuid, addr);
                         let id = format!("{}:{}", addr.ip(), addr.port());
                         USAGE.write().await.insert(id.clone(), Default::default());
@@ -520,7 +539,7 @@ async fn make_pair_(stream: impl StreamTrait, addr: SocketAddr, key: &str, limit
                     } else {
                         log::info!("New relay request {} from {}", rf.uuid, addr);
                         let generation = Arc::new(());
-                        peers.insert(rf.uuid.clone(), (generation.clone(), Box::new(stream)));
+                        peers.insert(rf.uuid.clone(), (generation.clone(), Box::new(stream), allowed));
                         drop(peers);
                         sleep(30.).await;
                         expire_waiter(&mut *PEERS.lock().await, &rf.uuid, &generation);
@@ -533,7 +552,7 @@ async fn make_pair_(stream: impl StreamTrait, addr: SocketAddr, key: &str, limit
 
 /// Removes a waiting connection only if it still owns the requested pair ID.
 fn expire_waiter(peers: &mut HashMap<String, WaitingPeer>, id: &str, generation: &Arc<()>) {
-    if peers.get(id).map(|(current, _)| Arc::ptr_eq(current, generation)).unwrap_or(false) {
+    if peers.get(id).map(|(current, _, _)| Arc::ptr_eq(current, generation)).unwrap_or(false) {
         peers.remove(id);
     }
 }
@@ -863,7 +882,7 @@ mod message_size_tests {
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
             let (stream, addr) = listener.accept().await.unwrap();
-            allow_err!(make_pair(stream, addr, "", <Limiter>::new(f64::INFINITY), ws).await);
+            allow_err!(make_pair(stream, addr, "", <Limiter>::new(f64::INFINITY), ws, true).await);
         });
         addr
     }
@@ -959,6 +978,77 @@ mod message_size_tests {
 }
 
 #[cfg(test)]
+mod initiator_tests {
+    use super::*;
+
+    /// Serves one relay leg, judged allowed or not as `INITIATOR_NETWORKS` would.
+    async fn serve_leg(allowed: bool) -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (stream, addr) = listener.accept().await.unwrap();
+            allow_err!(make_pair(stream, addr, "", <Limiter>::new(f64::INFINITY), false, allowed).await);
+        });
+        addr
+    }
+
+    async fn request_relay(addr: SocketAddr, uuid: &str) -> FramedStream {
+        let mut leg = FramedStream::from(TcpStream::connect(addr).await.unwrap(), addr);
+        let mut msg = RendezvousMessage::new();
+        msg.set_request_relay(RequestRelay {
+            uuid: uuid.to_owned(),
+            ..Default::default()
+        });
+        leg.send_bytes(msg.write_to_bytes().unwrap().into()).await.unwrap();
+        leg
+    }
+
+    async fn wait_for(uuid: &str, parked: bool) {
+        timeout(5_000, async {
+            while PEERS.lock().await.contains_key(uuid) != parked {
+                sleep(0.01).await;
+            }
+        })
+        .await
+        .expect("relay leg state never changed");
+    }
+
+    /// Whether a leg was closed by the relay, as opposed to still open after the timeout.
+    async fn closed(leg: &mut FramedStream) -> bool {
+        matches!(timeout(5_000, leg.next()).await, Ok(None) | Ok(Some(Err(_))))
+    }
+
+    /// Parks a first leg, sends the second one, and tells whether a frame crosses the relay.
+    /// When it does not, both legs must have been closed.
+    async fn pairs(first_allowed: bool, second_allowed: bool) -> bool {
+        let uuid = format!("initiator-{first_allowed}-{second_allowed}");
+        let first_addr = serve_leg(first_allowed).await;
+        let second_addr = serve_leg(second_allowed).await;
+        let mut first = request_relay(first_addr, &uuid).await;
+        wait_for(&uuid, true).await;
+        let mut second = request_relay(second_addr, &uuid).await;
+        wait_for(&uuid, false).await;
+        if second.send_bytes(Bytes::from_static(b"session")).await.is_ok() {
+            if let Ok(Some(Ok(bytes))) = timeout(5_000, first.next()).await {
+                assert_eq!(&bytes[..], b"session");
+                return true;
+            }
+        }
+        assert!(closed(&mut first).await, "refused waiting leg was left open");
+        assert!(closed(&mut second).await, "refused pairing leg was left open");
+        false
+    }
+
+    #[hbb_common::tokio::test]
+    async fn relay_pairs_only_when_a_leg_is_allowed() {
+        assert!(pairs(true, true).await, "two allowed legs");
+        assert!(pairs(true, false).await, "allowed leg first");
+        assert!(pairs(false, true).await, "allowed leg second");
+        assert!(!pairs(false, false).await, "two outside legs");
+    }
+}
+
+#[cfg(test)]
 mod waiter_tests {
     use super::*;
 
@@ -983,7 +1073,7 @@ mod waiter_tests {
         let old = Arc::new(());
         let current = Arc::new(());
         let mut peers: HashMap<String, WaitingPeer> = HashMap::new();
-        peers.insert("pair".to_owned(), (current.clone(), Box::new(TestStream)));
+        peers.insert("pair".to_owned(), (current.clone(), Box::new(TestStream), false));
         expire_waiter(&mut peers, "pair", &old);
         assert!(peers.contains_key("pair"));
         expire_waiter(&mut peers, "pair", &current);
