@@ -86,8 +86,9 @@ fn validate_relay_response(uuid: &str, relay_server: &str) -> Result<(), &'stati
 fn relay_request_for_peer(request: RequestRelay, addr: SocketAddr) -> RequestRelay {
     RequestRelay {
         socket_addr: AddrMangle::encode(addr).into(),
-        // The peer treats a forwarded policy as a server authorization.
+        // The peer expects permission overrides and audit context to come from the server.
         control_permissions: MessageField::none(),
+        controlled_context: MessageField::none(),
         ..request
     }
 }
@@ -1525,16 +1526,19 @@ mod tests {
     }
 
     #[test]
-    fn forwarded_relay_request_omits_controller_permissions() {
+    fn forwarded_relay_request_omits_permissions_and_audit_context() {
         const KEYBOARD_ENABLED: u64 = 2;
         let addr = (Ipv4Addr::LOCALHOST, 12345).into();
         let mut request = RequestRelay::new();
         request.uuid = "relay-session".into();
         let policy = request.control_permissions.mut_or_insert_default();
         policy.permissions = KEYBOARD_ENABLED;
+        let context = request.controlled_context.mut_or_insert_default();
+        context.conn_audit_ref = "audit-ref".into();
 
         let forwarded = relay_request_for_peer(request, addr);
         assert!(forwarded.control_permissions.is_none());
+        assert!(forwarded.controlled_context.is_none());
         assert_eq!(forwarded.uuid, "relay-session");
         assert_eq!(AddrMangle::decode(&forwarded.socket_addr), addr);
     }
